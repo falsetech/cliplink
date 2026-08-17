@@ -15,11 +15,12 @@ import {
   formatHistoryTime,
   truncatePreview,
 } from "@/lib/cliplink/format";
-import { createPollingTransport, createRoomRequest } from "@/lib/cliplink/http";
+import { createRoomRequest } from "@/lib/cliplink/http";
 import { buildRoomUrl, normalizeRoomCode } from "@/lib/cliplink/room-code";
 import { getSessionSenderId } from "@/lib/cliplink/session";
 import type { RoomCode, RoomStatus, SessionClip } from "@/lib/cliplink/types";
 import { validateRoomCode } from "@/lib/cliplink/validation";
+import { createWebSocketTransport } from "@/lib/cliplink/ws";
 import { cn } from "@/lib/utils";
 
 type ToastTone = "success" | "info" | "error";
@@ -30,7 +31,7 @@ type ToastItem = {
   tone: ToastTone;
 };
 
-const transport = createPollingTransport();
+const transport = createWebSocketTransport();
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");

@@ -1,4 +1,5 @@
 import { errorResponse, noStoreJson } from "@/lib/cliplink/errors";
+import { publishClip } from "@/lib/cliplink/pubsub";
 import { checkRateLimit, getClientIp } from "@/lib/cliplink/rate-limit";
 import { createClipId, storage } from "@/lib/cliplink/storage";
 import type {
@@ -80,6 +81,8 @@ export async function POST(
   if (!room) {
     return errorResponse(404, "room_not_found", "Room not found.");
   }
+
+  await publishClip(code, clip);
 
   const response: CreateClipResponse = { clip };
   return noStoreJson(response, { status: 201 });

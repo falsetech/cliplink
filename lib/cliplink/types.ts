@@ -59,6 +59,11 @@ export type PollClipsResponse = {
 
 export type StreamDisconnectReason = "error" | "closed";
 
+export type WsServerMessage =
+  | { type: "ready" }
+  | { type: "clip"; clip: Clip }
+  | { type: "error"; reason: string };
+
 export type TransportClient = {
   connect: (roomCode: RoomCode) => Promise<GetRoomResponse>;
   sendClip: (
