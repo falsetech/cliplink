@@ -26,3 +26,12 @@ export function noStoreJson(data: unknown, init?: ResponseInit) {
     },
   });
 }
+
+export function storageErrorResponse(error: unknown) {
+  console.error("Storage backend error", error);
+  return errorResponse(
+    503,
+    "storage_unavailable",
+    "Storage is temporarily unavailable. Please try again.",
+  );
+}

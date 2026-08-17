@@ -1,4 +1,8 @@
-import { errorResponse, noStoreJson } from "@/lib/cliplink/errors";
+import {
+  errorResponse,
+  noStoreJson,
+  storageErrorResponse,
+} from "@/lib/cliplink/errors";
 import { publishClip } from "@/lib/cliplink/pubsub";
 import { checkRateLimit, getClientIp } from "@/lib/cliplink/rate-limit";
 import { createClipId, storage } from "@/lib/cliplink/storage";
@@ -24,7 +28,13 @@ export async function GET(
 
   const after = Number(new URL(request.url).searchParams.get("after") ?? "0");
   const afterId = Number.isFinite(after) && after >= 0 ? after : 0;
-  const clips = await storage.getClipsAfter(code, afterId);
+
+  let clips;
+  try {
+    clips = await storage.getClipsAfter(code, afterId);
+  } catch (error) {
+    return storageErrorResponse(error);
+  }
 
   if (!clips) {
     return errorResponse(404, "room_not_found", "Room not found.");
@@ -77,7 +87,13 @@ export async function POST(
     ts: Date.now(),
   };
 
-  const room = await storage.appendClip(code, clip);
+  let room;
+  try {
+    room = await storage.appendClip(code, clip);
+  } catch (error) {
+    return storageErrorResponse(error);
+  }
+
   if (!room) {
     return errorResponse(404, "room_not_found", "Room not found.");
   }

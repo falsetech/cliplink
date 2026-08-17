@@ -1,4 +1,8 @@
-import { errorResponse, noStoreJson } from "@/lib/cliplink/errors";
+import {
+  errorResponse,
+  noStoreJson,
+  storageErrorResponse,
+} from "@/lib/cliplink/errors";
 import { storage } from "@/lib/cliplink/storage";
 import type { GetRoomResponse } from "@/lib/cliplink/types";
 import { validateRoomCode } from "@/lib/cliplink/validation";
@@ -12,7 +16,13 @@ export async function GET(
     return errorResponse(400, "invalid_room_code", "Invalid room code.");
   }
 
-  const room = await storage.getRoom(code);
+  let room;
+  try {
+    room = await storage.getRoom(code);
+  } catch (error) {
+    return storageErrorResponse(error);
+  }
+
   if (!room) {
     return errorResponse(404, "room_not_found", "Room not found.");
   }

@@ -1,4 +1,8 @@
-import { errorResponse, noStoreJson } from "@/lib/cliplink/errors";
+import {
+  errorResponse,
+  noStoreJson,
+  storageErrorResponse,
+} from "@/lib/cliplink/errors";
 import { storage } from "@/lib/cliplink/storage";
 import type { CreateRoomRequest, CreateRoomResponse } from "@/lib/cliplink/types";
 import { validateRoomTtl } from "@/lib/cliplink/validation";
@@ -19,7 +23,13 @@ export async function POST(request: Request) {
     return errorResponse(400, "invalid_ttl", ttl.message);
   }
 
-  const room = await storage.createRoom(ttl.ttlSeconds);
+  let room;
+  try {
+    room = await storage.createRoom(ttl.ttlSeconds);
+  } catch (error) {
+    return storageErrorResponse(error);
+  }
+
   const response: CreateRoomResponse = {
     code: room.code,
     ttlSeconds: ttl.ttlSeconds,
