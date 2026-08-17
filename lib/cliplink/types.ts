@@ -27,8 +27,13 @@ export type ApiError = {
   details?: string;
 };
 
+export type CreateRoomRequest = {
+  ttlSeconds?: number;
+};
+
 export type CreateRoomResponse = {
   code: RoomCode;
+  ttlSeconds: number;
 };
 
 export type GetRoomResponse = {
