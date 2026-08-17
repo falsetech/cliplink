@@ -224,12 +224,4 @@ Error Handling
 6. Implement client-side error handling for network issues
 7. Create user-friendly error states in UI
 
-Browser Support
-
-Ensure compatibility with modern browsers as per Next.js requirements:
-- Chrome/Edge (latest 2 versions)
-- Firefox (latest 2 versions)
-- Safari (latest 2 versions)
-- Mobile browsers (iOS Safari, Chrome Mobile)
-
 ```
