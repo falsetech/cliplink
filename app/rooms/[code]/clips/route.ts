@@ -43,7 +43,7 @@ export async function POST(
   }
 
   const clientIp = getClientIp(request);
-  const rateLimit = checkRateLimit(`${clientIp}:${code}`);
+  const rateLimit = await checkRateLimit(`${clientIp}:${code}`);
   if (!rateLimit.ok) {
     return errorResponse(
       429,
