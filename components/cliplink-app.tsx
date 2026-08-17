@@ -705,7 +705,7 @@ export default function CliplinkApp() {
     <>
       <div className="flex min-h-screen flex-col">
         <header
-          className="sticky top-0 z-30 flex items-center justify-between border-b border-[var(--border)] px-[14px] py-3 backdrop-blur-[14px] sm:px-5 sm:py-[14px] md:px-8 md:py-[18px]"
+          className="sticky top-0 z-30 flex items-center justify-between border-b px-3.5 py-3 backdrop-blur-[14px] sm:px-5 sm:py-[14px] md:px-8 md:py-[18px]"
           style={headerSurfaceStyle}
         >
           <div
