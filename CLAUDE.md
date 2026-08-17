@@ -15,8 +15,7 @@ This is a Next.js 15 application (not the standard Next.js, it has breaking chan
 - **Run single test**: `npm test -- -t <pattern>`
 - **Test with coverage**: `npm test -- --coverage`
 - **Format**: `npm run format`
-- **Format check**: `npm run format:check`  
-
+- **Format check**: `npm run format:check`
 
 ## Architecture
 
@@ -46,8 +45,7 @@ src/
 - **Database**: Prisma ORM (with SQLite as default, Postgres in development)
 - **Authentication**: NextAuth.js (credentials strategy with cookies and headers)
 - **AI Integration**: Vercel AI SDK for AI features
-- **Validation**: Zod schemas for validation  
-
+- **Validation**: Zod schemas for validation
 
 ### Important Dependencies
 
@@ -60,8 +58,7 @@ Based on `package.json`:
 - Prisma ORM
 - NextAuth.js for authentication
 - Vercel AI SDK for AI features
-- Zod for schema validation  
-
+- Zod for schema validation
 
 ## Development Guidelines
 
@@ -73,8 +70,7 @@ Based on `package.json`:
 4. **Props**: Use proper TypeScript interfaces for component props
 5. **Accessibility**: Ensure components are accessible (ARIA attributes where needed)
 6. **Naming**: Use descriptive, PascalCase names for components and camelCase for props
-7. **Error Handling**: Implement error boundaries in critical components  
-
+7. **Error Handling**: Implement error boundaries in critical components
 
 ### Page Development
 
@@ -83,8 +79,7 @@ Based on `package.json`:
 3. **Metadata**: Implement proper SEO metadata for each page
 4. **Navigation**: Use consistent navigation patterns (navbar, footer, breadcrumbs)
 5. **Loading States**: Implement loading and error states for async operations
-6. **Responsive Design**: Ensure mobile-first responsive design with Tailwind  
-
+6. **Responsive Design**: Ensure mobile-first responsive design with Tailwind
 
 ### API Routes (if applicable)
 
@@ -94,8 +89,7 @@ Based on `package.json`:
 4. Consider caching strategies where appropriate
 5. Implement proper authentication for protected routes
 6. Use consistent response formats (JSON with appropriate status codes)
-7. Log appropriate debug/trace events for monitoring  
-
+7. Log appropriate debug/trace events for monitoring
 
 ### Authentication Implementation
 
@@ -104,16 +98,14 @@ Based on `package.json`:
 3. Create login/logout routes with proper CSRF protection
 4. Implement middleware for protecting routes that require authentication
 5. Handle OAuth providers as configured in .env.local
-6. Validate user sessions on route requests  
-
+6. Validate user sessions on route requests
 
 ### State Management (if applicable)
 
 1. Use the store implementation from `src/store/` if present
 2. Follow established patterns for state actions
 3. Keep state management modular and testable
-4. Consider React Context for simple state needs  
-
+4. Consider React Context for simple state needs
 
 ## Common Tasks
 
@@ -123,8 +115,7 @@ Based on `package.json`:
 2. Define proper TypeScript types for props
 3. Use Tailwind CSS for styling
 4. Add error handling and accessibility attributes
-5. Create or update tests as needed  
-
+5. Create or update tests as needed
 
 ### Adding a New Page
 
@@ -133,8 +124,7 @@ Based on `package.json`:
 3. Follow layout.tsx structure with consistent navigation
 4. Implement proper SEO metadata
 5. Use appropriate API routes if needed
-6. Create tests for critical functionality  
-
+6. Create tests for critical functionality
 
 ### Adding an AI Feature
 
@@ -142,16 +132,14 @@ Based on `package.json`:
 2. Define proper streaming responses for better UX
 3. Handle streaming errors appropriately
 4. Implement rate limiting for AI calls
-5. Cache AI responses where appropriate  
-
+5. Cache AI responses where appropriate
 
 ### Adding Database Schema
 
 1. Update Prisma schema in `prisma/schema.prisma`
 2. Run migrations: `npm run db:migrate`
 3. Generate Prisma client: `npm run db:generate`
-4. Ensure proper relationships and constraints  
-
+4. Ensure proper relationships and constraints
 
 ### Fixing TypeScript Errors
 
@@ -159,8 +147,7 @@ Based on `package.json`:
 2. Fix types in component props and functions
 3. Ensure proper imports and exports
 4. Check for missing type definitions
-5. Use type assertions sparingly and document them  
-
+5. Use type assertions sparingly and document them
 
 ### Updating Dependencies
 
@@ -168,8 +155,7 @@ Based on `package.json`:
 2. Consider compatibility with ESM/ESM packages
 3. Follow semantic versioning best practices
 4. Update `package-lock.json` or `yarn.lock` as appropriate
-5. Test thoroughly after dependency updates  
-
+5. Test thoroughly after dependency updates
 
 ## Environment Variables
 
@@ -179,8 +165,11 @@ The project uses environment variables (typically in `.env.local`):
 - API keys for external services
 - Authentication credentials
 - Configuration flags
-- NextAuth configuration  
+- NextAuth configuration
 
+## Conventions
+
+- Commit messages: no `Co-Authored-By` trailers.
 
 Example .env.local:
 
