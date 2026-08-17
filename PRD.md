@@ -1,10 +1,10 @@
 # CLIPLINK — Product Requirements Document
 
-**Version**: 1.4  
-**Status**: M2 complete  
+**Version**: 1.5  
+**Status**: M3 complete; M4 transport pulled forward  
 **Author**: bkht  
-**Date**: 2026-03-28  
-**Last Updated**: 2026-03-28
+**Date**: 2026-08-17  
+**Last Updated**: 2026-08-17
 
 ---
 
@@ -75,20 +75,22 @@ Implemented and deployed:
 - "Paste from device" clipboard read action
 - History list with `↑ OUT` / `↓ IN`, timestamps, preview, and one-click copy
 - Toast notifications and subtle full-screen receive flash
-- HTTP polling transport at 1.5s fallback
+- HTTP polling transport as the realtime fallback
 - API routes for room creation, room fetch, clip creation, and polling
 - Session-local sender identity and session-local visible history
-- Basic per-IP clip rate limiting in the API layer
-- Cloudflare deployment via OpenNext
-- Cloudflare KV-backed room storage in production
-- SSE realtime stream with polling fallback and reconnect behavior
+- Atomic per-IP clip rate limiting via Upstash Redis (fails open on Redis errors)
+- Vercel deployment, no custom adapter required
+- Upstash Redis-backed room storage in production (hash + sorted set per room)
+- WebSocket realtime transport backed by Upstash Redis pub/sub, with polling fallback and reconnect/backoff behavior
 - QR code sharing from the room view
 - Mobile-responsive landing and room layouts
+- Configurable per-room TTL (1h–24h bounds, 6h default)
+- Custom domain support (ops step via `vercel domains add`)
 
 Not yet implemented:
 
-- Durable Object / WebSocket transport
 - End-to-end encryption
+- File/image transfer
 
 ### 6.1 Rooms
 
@@ -136,30 +138,33 @@ Not yet implemented:
 - Next.js 16 App Router application
 - Interactive room experience implemented as a client component
 - Navigator Clipboard API for auto-copy on receive
-- SSE is the primary realtime transport in the deployed app
+- WebSocket is the primary realtime transport in the deployed app
 - HTTP polling remains in place as the fallback transport and compatibility layer
-- Transport abstraction is in place so SSE can later be replaced by WebSockets in M4 without rewriting the room UI
+- The `TransportClient` abstraction let WebSockets replace SSE without any change to the room UI's retry/backoff/fallback state machine — same pattern that will apply to any future transport swap
 - M0 prototype remains in `prototype.html` as the original single-file reference
 
-### 7.2 Backend (v1 target)
+### 7.2 Backend
 
-| Layer     | Current implementation                     | Notes                                           |
-| --------- | ------------------------------------------ | ----------------------------------------------- |
-| Runtime   | Next.js App Router via OpenNext            | Deployed to Cloudflare Workers                  |
-| Storage   | Cloudflare KV in production                 | In-memory fallback remains for local/dev        |
-| Transport | SSE with polling fallback                   | SSE is live; polling remains for resilience     |
-| Hosting   | Cloudflare Workers deployment               | OpenNext build/deploy pipeline is working       |
+| Layer     | Current implementation           | Notes                                       |
+| --------- | --------------------------------- | -------------------------------------------- |
+| Runtime   | Next.js App Router on Vercel      | No custom adapter needed                    |
+| Storage   | Upstash Redis in production       | In-memory fallback remains for local/dev    |
+| Transport | WebSocket with polling fallback   | Cross-instance fanout via Redis pub/sub     |
+| Hosting   | Vercel deployment                 | Standard Next.js build/output               |
 
 ### 7.3 Data Model
 
+Per room `code`, two Redis keys:
+
 ```ts
-// Room stored in KV under key: `room:{code}`
-type Room = {
+// room:<code>:meta — hash
+type RoomMeta = {
   code: string;
   createdAt: number;
-  clips: Clip[];
+  ttlSeconds: number; // configurable per room, 1h–24h bounds
 };
 
+// room:<code>:clips — sorted set, member = JSON-serialized Clip, score = clip.id
 type Clip = {
   id: number; // timestamp-based
   text: string;
@@ -168,94 +173,67 @@ type Clip = {
 };
 ```
 
-Room TTL in KV: **6 hours** from last activity. Clips capped at 50 per room.
-
-Current implementation note: the storage adapter enforces clip caps and TTL semantics locally and now uses a real Cloudflare KV binding in production.
+Room TTL defaults to **6 hours**, configurable per room between 1h and 24h, applied via native Redis `EXPIRE`/`PEXPIRE`. TTL is refreshed on write (`appendClip`/`touchRoom`), not on every read — an open tab passively polling no longer keeps a room alive indefinitely, unlike the prior KV-backed implementation. Clips capped at 50 per room via `ZREMRANGEBYRANK` on each append.
 
 ### 7.4 API Routes
 
-| Method | Route                          | Description                             |
-| ------ | ------------------------------ | --------------------------------------- |
-| `POST` | `/rooms`                       | Create a new room, returns `{ code }`   |
-| `GET`  | `/rooms/:code`                 | Get room data                           |
-| `POST` | `/rooms/:code/clips`           | Send a new clip                         |
-| `GET`  | `/rooms/:code/clips?after=:id` | Poll for new clips since `id`           |
-| `GET`  | `/rooms/:code/stream`          | SSE stream for real-time updates (v1.1) |
+| Method | Route                          | Description                                    |
+| ------ | ------------------------------ | ----------------------------------------------- |
+| `POST` | `/rooms`                       | Create a new room, returns `{ code, ttlSeconds }`, optional `ttlSeconds` body |
+| `GET`  | `/rooms/:code`                 | Get room data                                   |
+| `POST` | `/rooms/:code/clips`           | Send a new clip, publishes to the room's pub/sub channel |
+| `GET`  | `/rooms/:code/clips?after=:id` | Poll for new clips since `id`                   |
+| `GET`  | `/rooms/:code/socket`          | WebSocket upgrade for realtime clip delivery    |
 
-Current implementation status:
+All routes implemented. The prior SSE route (`GET /rooms/:code/stream`) has been removed — WebSocket now covers "fast," polling covers "fallback."
 
-- Implemented: `POST /rooms`, `GET /rooms/:code`, `POST /rooms/:code/clips`, `GET /rooms/:code/clips?after=:id`, `GET /rooms/:code/stream`
+### 7.5 Transport
 
-### 7.5 Transport upgrade path
-
-The transport layer evolves in three stages. The client interface stays the same across all three — only the underlying connection mechanism changes.
+The client interface (`TransportClient`) is unchanged across every stage — only the underlying connection mechanism changes.
 
 ```
-M1  →  HTTP polling      (1.5s interval, stateless Workers + KV)
-M2  →  SSE              (real-time push, still stateless Workers)
-M4  →  WebSockets       (full-duplex, Cloudflare Durable Objects)
+M1  →  HTTP polling      (1.5s interval, stateless Workers + KV)          [superseded]
+M2  →  SSE               (real-time push, stateless Workers + KV)         [superseded]
+M3+ →  WebSocket + pub/sub (Vercel Functions + Upstash Redis pub/sub)     [current]
 ```
 
-#### Stage 1 — HTTP Polling (M1)
+#### Current — WebSocket + Redis pub/sub
 
-Client polls `GET /rooms/:code/clips?after=:id` every 1.5 seconds. Simple, stateless, works with plain KV. Latency: up to 1.5s.
-
-#### Stage 2 — Server-Sent Events (M2)
-
-SSE is a long-lived HTTP GET that allows the server to push events to the client. It fits CLIPLINK's asymmetric model cleanly:
-
-- Clips are **sent** via `POST /rooms/:code/clips` (client → server, unchanged)
-- New clips are **pushed** via `GET /rooms/:code/stream` SSE stream (server → client)
-
-SSE works with stateless Cloudflare Workers using a `TransformStream`. No Durable Objects needed. The Worker holds the stream open and flushes a new event whenever a clip is written to KV (polled internally at ~200ms or triggered via KV notification). Latency: ~200–300ms.
+`GET /rooms/:code/socket` upgrades to a WebSocket via `@vercel/functions`' `experimental_upgradeWebSocket`. Vercel Functions have no instance affinity across connections — a WS held by one instance won't see a clip POSTed to another — so cross-instance fanout goes through an Upstash Redis pub/sub channel per room (`room:<code>:events`), published on every successful clip POST.
 
 ```ts
-// Worker SSE handler sketch
-return new Response(readable, {
-  headers: {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-  },
+// clip POST handler, after storage.appendClip succeeds
+await publishClip(code, clip);
+```
+
+The socket route subscribes to the room's channel *before* fetching backlog (buffering anything that arrives mid-fetch), then flushes backlog followed by buffered live messages, deduped by clip id — avoiding the gap where a clip published between backlog-read and subscribe would otherwise be lost.
+
+```ts
+// app/rooms/[code]/socket/route.ts sketch
+return experimental_upgradeWebSocket((ws) => {
+  const unsubscribe = subscribeRoom(code, (clip) => sendIfNew(ws, clip));
+  // ...fetch backlog, flush buffered, send { type: "ready" }
+  ws.on("close", () => unsubscribe());
 });
 ```
 
-SSE reconnects automatically on drop (built into the browser `EventSource` API), and the client falls back to polling while retrying the stream. This is the current launch transport.
+Latency: sub-100ms cross-device, since delivery is push-based rather than polled. Reconnects use exponential backoff (2s → 15s cap) with an immediate fall back to HTTP polling while retrying, handled entirely in the room UI's existing state machine — the transport itself just reports open/clip/disconnect via callbacks.
 
-#### Stage 3 — WebSockets via Durable Objects (M4)
+#### Superseded stages (M1 polling, M2 SSE)
 
-When usage justifies it, WebSockets replace SSE for true full-duplex, sub-100ms delivery.
-
-```
-Browser A ──WS──┐
-Browser B ──WS──┤── Durable Object (room:X7KP2M) ──── KV (persistence)
-Browser C ──WS──┘
-```
-
-Each room maps to a single **Durable Object** instance, co-located at one edge node globally. All devices in that room maintain a persistent WebSocket connection to that DO. When a clip arrives, the DO broadcasts it to all connected sockets in a single loop — no polling, no KV read on receive.
-
-```ts
-// DO broadcast sketch
-async broadcast(clip: Clip) {
-  for (const [id, socket] of this.sessions) {
-    socket.send(JSON.stringify({ type: 'clip', data: clip }));
-  }
-}
-```
-
-Latency: ~50–80ms cross-device. Cost: Durable Objects are billed per request + duration — negligible at low scale, non-trivial at high concurrency. Defer until polling/SSE becomes a bottleneck.
+Both prior stages ran on stateless Cloudflare Workers polling a KV-backed room blob internally (SSE polled storage every 250ms server-side to fake a push). That polling-over-KV design is what made the Cloudflare free tier's KV read quota (100k reads/day) the practical ceiling on concurrent open rooms — a single tab left open for an hour cost ~14,400 reads. The WebSocket + pub/sub design replaces internal polling with real push, eliminating that read volume entirely.
 
 #### Comparison
 
-|                 | Polling       | SSE            | WebSocket         |
-| --------------- | ------------- | -------------- | ----------------- |
-| Latency         | ~750ms avg    | ~200ms         | ~50ms             |
-| Infrastructure  | Workers + KV  | Workers + KV   | Workers + KV + DO |
-| Complexity      | Low           | Medium         | High              |
-| Stateful server | No            | No             | Yes (DO)          |
-| Full-duplex     | No            | No             | Yes               |
-| Browser support | Universal     | Universal      | Universal         |
-| Recommended for | M1 (validate) | M2–M3 (launch) | M4 (scale)        |
+|                 | Polling       | SSE (removed)  | WebSocket (current)      |
+| --------------- | ------------- | -------------- | ------------------------- |
+| Latency         | ~750ms avg    | ~200ms         | sub-100ms                 |
+| Infrastructure  | Vercel + Redis| Vercel + Redis | Vercel + Redis (pub/sub)  |
+| Complexity      | Low           | Medium         | Medium                    |
+| Stateful server | No            | No             | No (state lives in Redis) |
+| Full-duplex     | No            | No             | Yes                       |
+| Browser support | Universal     | Universal      | Universal                 |
+| Recommended for | Fallback only | —              | Primary transport         |
 
 ---
 
@@ -263,11 +241,11 @@ Latency: ~50–80ms cross-device. Cost: Durable Objects are billed per request +
 
 - Room codes are randomly generated with ~40 bits of entropy — guessing is not practical
 - No user data is stored; `senderId` is a random string generated client-side per session
-- Rooms and clips are designed to expire automatically via TTL-backed storage
-- No logs retained beyond Cloudflare's default request logging
+- Rooms and clips expire automatically via Redis TTL, configurable per room (1h–24h, 6h default)
+- No logs retained beyond Vercel's default request logging
 - HTTPS enforced at the edge
 - v2 consideration: optional end-to-end encryption using WebCrypto, key derived from room code + user passphrase
-- Current implementation includes basic per-IP clip creation rate limiting
+- Per-IP clip creation rate limiting is atomic (Upstash Redis sliding window via `@upstash/ratelimit`), fixing the earlier in-memory limiter's inconsistency across serverless instances; fails open (allows the request) if Redis is unreachable, prioritizing availability
 
 ---
 
@@ -275,12 +253,10 @@ Latency: ~50–80ms cross-device. Cost: Durable Objects are billed per request +
 
 | Metric                               | Target                   | Transport |
 | ------------------------------------ | ------------------------ | --------- |
-| Clip delivery latency (same region)  | < 200ms                  | SSE       |
 | Clip delivery latency (same region)  | < 80ms                   | WebSocket |
-| Clip delivery latency (cross-region) | < 500ms                  | SSE       |
 | Clip delivery latency (cross-region) | < 150ms                  | WebSocket |
 | Page load (cold)                     | < 1s on 3G               | —         |
-| Worker cold start                    | 0ms (Cloudflare)         | —         |
+| Function cold start                  | Low, via Vercel Fluid Compute instance reuse | — |
 | Time to first room                   | < 3s including page load | —         |
 
 ---
@@ -303,8 +279,8 @@ Latency: ~50–80ms cross-device. Cost: Durable Objects are billed per request +
 | **M0** — Prototype | Single HTML file, localStorage backend, cross-tab sync                       | Done    |
 | **M1** — Alpha     | HTTP polling app flow, room APIs, deployable Cloudflare-backed MVP           | Complete |
 | **M2** — Beta      | SSE for real-time push, mobile polish, QR code for room link                 | Complete |
-| **M3** — Launch    | Custom domain, rate limiting, abuse protection, optional room expiry control | 3 weeks |
-| **M4** — v2        | WebSocket via Durable Objects, E2E encryption option, file/image support     | TBD     |
+| **M3** — Launch    | Custom domain, rate limiting, abuse protection, optional room expiry control | Complete |
+| **M4** — v2        | WebSocket realtime transport, E2E encryption option, file/image support     | Transport done; E2E encryption and file/image support remain |
 
 M1 shipped:
 
@@ -323,15 +299,25 @@ M2 shipped:
 - QR code sharing added to the room view
 - Mobile layout tightened for landing and in-room flows
 
+M3 shipped (bundled with a migration off Cloudflare, and pulling M4's transport goal forward — see §7.5):
+
+- Migrated storage from Cloudflare KV to Upstash Redis (hash + sorted set per room, native TTL)
+- Migrated hosting from Cloudflare Workers/OpenNext to Vercel — no adapter, `wrangler`/`open-next` config removed
+- Replaced the in-memory, isolate-broken rate limiter with an atomic Upstash Redis sliding-window limiter (`@upstash/ratelimit`), fail-open on Redis errors
+- Added configurable per-room TTL (1h–24h bounds, 6h default)
+- Custom domain supported via standard Vercel domain configuration
+- WebSocket realtime transport (M4 goal, pulled forward) backed by Upstash Redis pub/sub, replacing SSE; the SSE route and its polling-over-KV internals are removed
+- Storage error handling audited: Redis failures in the three REST routes now return a standardized `storage_unavailable` error instead of leaking a raw 500
+
 ---
 
 ## 12. Open Questions
 
 - Should rooms support a passphrase for access control, or is code-based access sufficient for v1?
-- Is 6 hours still the right room TTL, or should production use 24 hours?
+- Room TTL is now configurable (1h–24h, 6h default) — is 6h still the right *default*, or should production default to 24h? (Resolved: configurability shipped; the default value itself is still open.)
 - Is the current default rate limit of 60 clips/min/IP sufficient in production?
 - Should the room creator have any elevated permissions (e.g. ability to clear history)?
-- When does SSE become a bottleneck? Define the concurrency threshold that triggers the DO/WebSocket migration (suggested: >500 concurrent rooms)
+- Should `GET /rooms/:code` expose a computed `expiresAt`/remaining-TTL so the UI can show a countdown? Cheap to add (one Redis `TTL` command) but no UI currently consumes it.
 - Should the deployed app keep the current local-session history behavior, or add optional room restore on reload later?
 
 ---

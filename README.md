@@ -1,6 +1,6 @@
 # CLIPLINK
 
-CLIPLINK is a lightweight zero-auth clipboard sync app built with Next.js App Router and deployed to Cloudflare via OpenNext.
+CLIPLINK is a lightweight zero-auth clipboard sync app built with Next.js App Router, deployed to Vercel with Upstash Redis for storage and realtime pub/sub.
 
 ## Getting Started
 
@@ -12,25 +12,26 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
+Without Redis env vars set, the app falls back to an in-memory store for local dev (single-process only, no realtime fanout across instances). For the full experience — WebSocket realtime, atomic rate limiting — pull real Upstash credentials with `vercel env pull`.
+
+## Environment Variables
+
+Provision an Upstash Redis database via the Vercel Marketplace, then set:
+
+```bash
+UPSTASH_REDIS_REST_URL=       # REST client - storage, rate limiting
+UPSTASH_REDIS_REST_TOKEN=
+UPSTASH_REDIS_URL=            # rediss:// connection string - pub/sub (WebSocket fanout)
+```
+
 ## Deployment
 
-CLIPLINK deploys to Cloudflare Workers using OpenNext.
-
-Required Cloudflare build settings:
+CLIPLINK deploys to Vercel with zero adapter config — standard Next.js App Router build/output.
 
 ```bash
-Build command: npx @opennextjs/cloudflare build
-Deploy command: npx @opennextjs/cloudflare deploy
+vercel deploy
 ```
 
-Before deploying, make sure [wrangler.jsonc](/Users/thebkht/Projects/cliplink/wrangler.jsonc) has real KV namespace IDs for the `CLIPLINK_ROOMS` binding.
+Custom domain: `vercel domains add <domain>` once deployed.
 
-Useful local commands:
-
-```bash
-npm run build
-npm run build:worker
-npm run deploy:worker
-```
-
-The app now ships M2: SSE realtime transport with polling fallback, QR room sharing, and mobile-responsive room flows.
+The app ships M3 (custom domain, atomic rate limiting, configurable room expiry) plus a pulled-forward M4 goal: WebSocket realtime transport backed by Upstash Redis pub/sub, replacing the earlier SSE-over-KV-polling approach, with polling as the fallback transport.
