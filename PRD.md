@@ -1,7 +1,7 @@
 # CLIPLINK — Product Requirements Document
 
-**Version**: 1.5  
-**Status**: M3 complete; M4 transport pulled forward  
+**Version**: 1.6  
+**Status**: M3 complete; M4 transport and P2P file transfer shipped  
 **Author**: bkht  
 **Date**: 2026-08-17  
 **Last Updated**: 2026-08-17
@@ -86,11 +86,11 @@ Implemented and deployed:
 - Mobile-responsive landing and room layouts
 - Configurable per-room TTL (1h–24h bounds, 6h default)
 - Custom domain support (ops step via `vercel domains add`)
+- Peer-to-peer file transfer over WebRTC data channels (see §6.6, §7.6) — files are never uploaded or stored
 
 Not yet implemented:
 
-- End-to-end encryption
-- File/image transfer
+- End-to-end encryption for text clips
 
 ### 6.1 Rooms
 
@@ -128,6 +128,15 @@ Not yet implemented:
 - Shareable URL format: `cliplink.app/?room=XXXXXX`
 - In-room QR code sharing is available for handoff between devices
 - Visiting the URL directly drops the user into the room
+
+### 6.6 Files
+
+- Share any file type (zip included) up to 500 MB via the Attach button, drag and drop onto the clipboard panel, or pasting a file/image with `Cmd/Ctrl + V`; multiple files become separate offers
+- Sharing is an *offer*: every device in the room sees the file's name and size and chooses to Download; devices that join later still see open offers
+- An offer is available only while the sender's tab is open — closing it, leaving the room, or "Stop sharing" withdraws it
+- Received files are saved automatically when the download finishes; received images show an inline thumbnail and can be saved again
+- File transfer requires the realtime (WebSocket) connection; on the polling fallback, Attach and Download are disabled
+- The Files list is session-local, like clip history, and capped to 20 items
 
 ---
 
@@ -183,7 +192,7 @@ Room TTL defaults to **6 hours**, configurable per room between 1h and 24h, appl
 | `GET`  | `/rooms/:code`                 | Get room data                                   |
 | `POST` | `/rooms/:code/clips`           | Send a new clip, publishes to the room's pub/sub channel |
 | `GET`  | `/rooms/:code/clips?after=:id` | Poll for new clips since `id`                   |
-| `GET`  | `/rooms/:code/socket`          | WebSocket upgrade for realtime clip delivery    |
+| `GET`  | `/rooms/:code/socket?peer=:id` | WebSocket upgrade for realtime clip delivery and file-transfer signaling |
 
 All routes implemented. The prior SSE route (`GET /rooms/:code/stream`) has been removed — WebSocket now covers "fast," polling covers "fallback."
 
@@ -235,6 +244,22 @@ Both prior stages ran on stateless Cloudflare Workers polling a KV-backed room b
 | Browser support | Universal     | Universal      | Universal                 |
 | Recommended for | Fallback only | —              | Primary transport         |
 
+### 7.6 Peer-to-Peer File Transfer
+
+File bytes travel browser-to-browser over WebRTC data channels (DTLS-encrypted). The server only relays small signaling messages and never sees, buffers, or stores file contents — there is no blob storage and nothing is written to Redis.
+
+```
+Sender ──WS──▶ /rooms/:code/socket ──publish──▶ Redis room:<code>:signal ──▶ Receiver's socket   (signaling, a few KB)
+Sender ◀══════════════ RTCDataChannel (P2P) ══════════════▶ Receiver                              (file bytes)
+```
+
+- **Identity**: each page load picks a random `peerId`, sent as `?peer=` on the socket URL. The server stamps `from` on every relayed signal; clients cannot spoof another peer's id on the wire.
+- **Signaling channel**: clients send `{ type: "signal", to?, payload }` over the room WebSocket. The server validates it (`parseClientMessage`: known type, bounded strings, `size ≤ 500 MB`), rate-limits per socket, and publishes it on `room:<code>:signal` — the same ioredis subscriber connection as clip events. Each socket forwards signals addressed to its peer (or broadcasts, excluding the sender). Without a Redis URL, a process-local `EventEmitter` fallback is used.
+- **Protocol**: `hello` (on socket ready; peers reply with their open offers) → `file-offer` (metadata only) → `file-request` (receiver → sender) → `rtc-description` / `rtc-candidate` exchange → data channel. `file-revoke` withdraws an offer, `transfer-cancel` aborts a transfer, and a server-generated `peer-left` is published when a socket closes so receivers drop that peer's offers.
+- **Transfer**: one `RTCPeerConnection` per (receiver, file). The sender streams 64 KiB chunks with `bufferedAmount` backpressure (4 MiB high / 1 MiB low), then `"done"`; the receiver verifies the byte count, assembles a `Blob` in memory, and replies `"ack"`. A transfer fails after 20 s without progress.
+- **NAT traversal**: public STUN only (Google, Cloudflare). Roughly 10–20% of strict-NAT/corporate networks cannot connect directly and see a clear error. A TURN relay can be added without code changes via `NEXT_PUBLIC_ICE_SERVERS` (JSON `RTCIceServer[]`).
+- **Implementation**: `lib/cliplink/file-transfer.ts` (framework-free manager), `components/cliplink/use-file-transfer.ts` (React state + object URL lifecycle), `components/cliplink/file-transfers.tsx` (Files list).
+
 ---
 
 ## 8. Security & Privacy
@@ -244,6 +269,7 @@ Both prior stages ran on stateless Cloudflare Workers polling a KV-backed room b
 - Rooms and clips expire automatically via Redis TTL, configurable per room (1h–24h, 6h default)
 - No logs retained beyond Vercel's default request logging
 - HTTPS enforced at the edge
+- Files are never uploaded or stored: bytes go peer-to-peer over DTLS-encrypted WebRTC data channels, and only ephemeral signaling passes through the server (never persisted). Receiving always requires an explicit Download click; peer-supplied file names are sanitized
 - v2 consideration: optional end-to-end encryption using WebCrypto, key derived from room code + user passphrase
 - Per-IP clip creation rate limiting is atomic (Upstash Redis sliding window via `@upstash/ratelimit`), fixing the earlier in-memory limiter's inconsistency across serverless instances; fails open (allows the request) if Redis is unreachable, prioritizing availability
 
@@ -280,7 +306,7 @@ Both prior stages ran on stateless Cloudflare Workers polling a KV-backed room b
 | **M1** — Alpha     | HTTP polling app flow, room APIs, deployable Cloudflare-backed MVP           | Complete |
 | **M2** — Beta      | SSE for real-time push, mobile polish, QR code for room link                 | Complete |
 | **M3** — Launch    | Custom domain, rate limiting, abuse protection, optional room expiry control | Complete |
-| **M4** — v2        | WebSocket realtime transport, E2E encryption option, file/image support     | Transport done; E2E encryption and file/image support remain |
+| **M4** — v2        | WebSocket realtime transport, E2E encryption option, file/image support     | Transport and P2P file transfer done; E2E encryption remains |
 
 M1 shipped:
 
@@ -325,7 +351,7 @@ M3 shipped (bundled with a migration off Cloudflare, and pulling M4's transport 
 ## 13. Out of Scope (v1)
 
 - Accounts, authentication, or persistent history
-- File or image transfer
+- Server-side file storage or relaying (file transfer is peer-to-peer only)
 - Syntax highlighting or rich text
 - Mobile native apps (iOS / Android)
 - End-to-end encryption
