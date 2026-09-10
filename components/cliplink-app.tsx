@@ -798,27 +798,27 @@ export default function CliplinkApp() {
     background: "color-mix(in srgb, var(--surface) 96%, transparent)",
   };
   const buttonBaseClass =
-    "inline-flex items-center justify-center gap-2.5 rounded-[3px] border px-6 py-3.5 text-[13px] uppercase tracking-[0.05em] transition disabled:cursor-not-allowed disabled:opacity-[0.55] disabled:transform-none";
+    "inline-flex items-center justify-center gap-2.5 rounded-[3px] border px-6 py-3.5 text-[13px] uppercase tracking-wider transition disabled:cursor-not-allowed disabled:opacity-[0.55] disabled:transform-none";
   const primaryButtonClass = cx(
     buttonBaseClass,
-    "min-h-[54px] border-[var(--primary-border)] bg-[var(--primary-bg)] font-bold text-[var(--primary-text)] hover:-translate-y-px hover:bg-[var(--primary-hover-bg)] focus-visible:-translate-y-px focus-visible:bg-[var(--primary-hover-bg)] sm:min-h-[52px] md:min-h-12",
+    "min-h-13.5 border-(--primary-border) bg-(--primary-bg) font-bold text-(--primary-text) hover:-translate-y-px hover:bg-(--primary-hover-bg) focus-visible:-translate-y-px focus-visible:bg-(--primary-hover-bg) sm:min-h-13 md:min-h-12",
   );
   const secondaryButtonClass = cx(
     buttonBaseClass,
-    "min-h-[54px] border-[var(--border-active)] bg-transparent text-(--text-dim) hover:border-[var(--accent)] hover:text-(--accent) focus-visible:border-[var(--accent)] focus-visible:text-(--accent) sm:min-h-[52px] md:min-h-12",
+    "min-h-13.5 border-(--border-active) bg-transparent text-(--text-dim) hover:border-(--accent) hover:text-(--accent) focus-visible:border-(--accent) focus-visible:text-(--accent) sm:min-h-13 md:min-h-12",
   );
   const actionButtonClass =
-    "inline-flex min-h-[38px] items-center justify-center gap-1.5 rounded-[2px] border border-[var(--border-active)] bg-transparent px-3.5 py-2 text-[11px] uppercase tracking-[0.08em] text-[var(--text-dim)] transition hover:border-[var(--text-dim)] hover:text-[var(--text)] focus-visible:border-[var(--text-dim)] focus-visible:text-[var(--text)] max-[430px]:w-full";
+    "inline-flex min-h-9.5 items-center justify-center gap-1.5 rounded-xs border border-(--border-active) bg-transparent px-3.5 py-2 text-[11px] uppercase tracking-[0.08em] text-(--text-dim) transition hover:border-(--text-dim) hover:text-(--text) focus-visible:border-(--text-dim) focus-visible:text-(--text) max-[430px]:w-full";
   const panelToolClass =
-    "min-h-[30px] rounded-[2px] border border-transparent px-2.5 py-1 text-[10px] uppercase tracking-[0.08em] text-(--text-muted) transition hover:border-[var(--border-active)] hover:text-(--text) focus-visible:border-[var(--border-active)] focus-visible:text-[var(--text)]";
+    "min-h-7.5 rounded-xs border border-transparent px-2.5 py-1 text-[10px] uppercase tracking-[0.08em] text-(--text-muted) transition hover:border-(--border-active) hover:text-(--text) focus-visible:border-(--border-active) focus-visible:text-(--text)";
   const panelAccentClass =
-    "border-[var(--accent-button-border)] bg-[var(--accent-button-bg)] font-bold text-(--accent-button-text) hover:border-[var(--accent-button-hover-border)] hover:bg-[var(--accent-button-hover-bg)] focus-visible:border-[var(--accent-button-hover-border)] focus-visible:bg-[var(--accent-button-hover-bg)] hover:text-(--accent-button-text)";
+    "border-(--accent-button-border) bg-(--accent-button-bg) font-bold text-(--accent-button-text) hover:border-(--accent-button-hover-border) hover:bg-(--accent-button-hover-bg) focus-visible:border-(--accent-button-hover-border) focus-visible:bg-(--accent-button-hover-bg) hover:text-(--accent-button-text)";
 
   return (
     <>
       <div className="flex min-h-screen flex-col">
         <header
-          className="sticky top-0 z-30 flex items-center justify-between border-b px-3.5 py-3 backdrop-blur-[14px] sm:px-5 sm:py-[14px] md:px-8 md:py-[18px]"
+          className="sticky top-0 z-30 flex items-center justify-between border-b px-3.5 py-3 backdrop-blur-[14px] sm:px-5 sm:py-3.5 md:px-8 md:py-4.5"
           style={headerSurfaceStyle}
         >
           <div
@@ -826,28 +826,28 @@ export default function CliplinkApp() {
             style={{ fontFamily: "var(--font-display)" }}
           >
             CLIP
-            <span className="text-[var(--logo-accent)]">LINK</span>
+            <span className="text-(--logo-accent)">LINK</span>
           </div>
           <div className="flex items-center gap-1.5 sm:gap-2 md:gap-3">
             <div
-              className="inline-flex items-center gap-[5px] text-[9px] uppercase tracking-[0.04em] text-[var(--text-muted)] sm:gap-1.5 sm:text-[10px] sm:tracking-[0.06em] md:gap-2 md:text-[11px] md:tracking-[0.08em]"
+              className="inline-flex items-center gap-1.25 text-[9px] uppercase tracking-[0.04em] text-(--text-muted) sm:gap-1.5 sm:text-[10px] sm:tracking-[0.06em] md:gap-2 md:text-[11px] md:tracking-[0.08em]"
               aria-live="polite"
             >
               <div
                 className={cn(
-                  "h-[7px] w-[7px] rounded-full bg-[var(--text-muted)] transition-[background,box-shadow] duration-200",
+                  "h-1.75 w-1.75 rounded-full bg-(--text-muted) transition-[background,box-shadow] duration-200",
                   status === "live" &&
-                    "bg-[var(--success)] shadow-[0_0_10px_var(--success)]",
+                    "bg-(--success) shadow-[0_0_10px_var(--success)]",
                   status === "syncing" &&
-                    "animate-[pulse_1s_infinite] bg-[var(--accent)] shadow-[0_0_10px_var(--accent)]",
+                    "animate-[pulse_1s_infinite] bg-(--accent) shadow-[0_0_10px_var(--accent)]",
                   status === "error" &&
-                    "bg-[var(--danger)] shadow-[0_0_10px_rgb(255_68_68_/_35%)]",
+                    "bg-(--danger) shadow-[0_0_10px_rgb(255_68_68/35%)]",
                 )}
               />
               <span>{statusLabel(status)}</span>
             </div>
             <button
-              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full border border-[var(--border-active)] bg-white/2 p-0 text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--text)] focus-visible:border-[var(--accent)] focus-visible:text-[var(--text)] md:min-h-[34px] md:min-w-[34px] md:px-[11px] md:py-[6px]"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full border border-(--border-active) bg-white/2 p-0 text-(--text-dim) transition hover:border-(--accent) hover:text-(--text) focus-visible:border-(--accent) focus-visible:text-(--text) md:min-h-8.5 md:min-w-8.5 md:px-2.75 md:py-1.5"
               type="button"
               onClick={toggleTheme}
             >
@@ -858,35 +858,35 @@ export default function CliplinkApp() {
           </div>
         </header>
 
-        <main className="flex flex-1 justify-center px-3 py-[22px] pb-12 sm:px-4 sm:py-7 sm:pb-14 md:px-6 md:py-14 md:pb-[72px]">
-          <div className="w-full max-w-[760px]">
+        <main className="flex flex-1 justify-center px-3 py-5.5 pb-12 sm:px-4 sm:py-7 sm:pb-14 md:px-6 md:py-14 md:pb-18">
+          <div className="w-full max-w-190">
             {!joined ? (
-              <section className="mx-auto flex max-w-[720px] flex-col items-center gap-5 sm:gap-6 md:gap-9">
-                <div className="max-w-full text-center md:max-w-[700px]">
+              <section className="mx-auto flex max-w-180 flex-col items-center gap-5 sm:gap-6 md:gap-9">
+                <div className="max-w-full text-center md:max-w-175">
                   <h1
                     className={cx(
-                      "mb-4 text-[clamp(1.7rem,15vw,2.45rem)] leading-[0.98] text-[var(--text)] sm:text-[clamp(2rem,11vw,3rem)] sm:leading-[0.96] md:text-[clamp(4.8rem,7.1vw,6.35rem)] md:leading-[0.82]",
+                      "mb-4 text-[clamp(1.7rem,15vw,2.45rem)] leading-[0.98] text-(--text) sm:text-[clamp(2rem,11vw,3rem)] sm:leading-[0.96] md:text-[clamp(4.8rem,7.1vw,6.35rem)] md:leading-[0.82]",
                       mounted && resolvedTheme === "light"
                         ? "tracking-[-0.075em]"
-                        : "tracking-[-0.05em] sm:tracking-[-0.06em] md:tracking-[-0.07em]",
+                        : "tracking-tighter sm:tracking-[-0.06em] md:tracking-[-0.07em]",
                     )}
                     style={{ fontFamily: "var(--font-display)" }}
                   >
                     <span className="block md:max-w-[6.2ch] md:mx-auto">
                       Copy here.
                     </span>
-                    <em className="mt-[0.08em] block not-italic text-[var(--hero-highlight)] sm:mt-[0.04em] md:mx-auto md:max-w-[7.3ch]">
+                    <em className="mt-[0.08em] block not-italic text-(--hero-highlight) sm:mt-[0.04em] md:mx-auto md:max-w-[7.3ch]">
                       Paste anywhere.
                     </em>
                   </h1>
-                  <p className="m-0 text-[11px] leading-[1.75] text-[var(--text-dim)] sm:text-[12px] md:text-[13px] md:leading-[1.8]">
+                  <p className="m-0 text-[11px] leading-[1.75] text-(--text-dim) sm:text-[12px] md:text-[13px] md:leading-[1.8]">
                     Create a room. Share the code.
                     <br />
                     Your clipboard, synced across devices.
                   </p>
                 </div>
 
-                <div className="flex w-full max-w-full flex-col gap-3 md:max-w-[680px]">
+                <div className="flex w-full max-w-full flex-col gap-3 md:max-w-170">
                   <button
                     className={primaryButtonClass}
                     onClick={() => void createRoom()}
@@ -896,15 +896,15 @@ export default function CliplinkApp() {
                     New Room
                   </button>
 
-                  <div className="flex w-full items-center gap-2 text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)] sm:text-[11px] sm:gap-3">
-                    <span className="h-px flex-1 bg-[var(--border)]" />
+                  <div className="flex w-full items-center gap-2 text-[10px] uppercase tracking-widest text-(--text-muted) sm:text-[11px] sm:gap-3">
+                    <span className="h-px flex-1 bg-(--border)" />
                     <span>or join existing</span>
-                    <span className="h-px flex-1 bg-[var(--border)]" />
+                    <span className="h-px flex-1 bg-(--border)" />
                   </div>
 
                   <div className="flex flex-col gap-2 sm:gap-2.5 md:flex-row">
                     <input
-                      className="min-h-[54px] flex-1 rounded-[3px] border border-[var(--border-active)] bg-[var(--surface)] px-4 py-3 text-center text-[18px] font-bold uppercase tracking-[0.16em] text-[var(--text)] outline-none transition placeholder:text-[13px] placeholder:font-normal placeholder:tracking-[0.08em] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] sm:min-h-[52px]"
+                      className="min-h-13.5 flex-1 rounded-[3px] border border-(--border-active) bg-(--surface) px-4 py-3 text-center text-[18px] font-bold uppercase tracking-[0.16em] text-(--text) outline-none transition placeholder:text-[13px] placeholder:font-normal placeholder:tracking-[0.08em] placeholder:text-(--text-muted) focus:border-(--accent) sm:min-h-13"
                       type="text"
                       inputMode="text"
                       autoCapitalize="characters"
@@ -932,21 +932,21 @@ export default function CliplinkApp() {
                     </button>
                   </div>
 
-                  <p className="mt-[-4px] max-w-[640px] text-center text-[10px] leading-[1.8] text-[var(--text-muted)] md:text-[11px] md:leading-[1.7]">
+                  <p className="-mt-1 max-w-160 text-center text-[10px] leading-[1.8] text-(--text-muted) md:text-[11px] md:leading-[1.7]">
                     No sign-up, no install, no saved history. Rooms expire after
                     6 hours of inactivity.
                   </p>
                 </div>
               </section>
             ) : (
-              <section className="flex w-full flex-col gap-[18px] md:gap-6">
+              <section className="flex w-full flex-col gap-4.5 md:gap-6">
                 <div className="flex flex-col items-stretch justify-between gap-4 md:flex-row md:items-start">
                   <div className="flex flex-col items-start gap-2 md:flex-row md:flex-wrap md:items-center md:gap-3">
-                    <span className="text-[11px] uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                    <span className="text-[11px] uppercase tracking-widest text-(--text-muted)">
                       Room
                     </span>
                     <button
-                      className="cursor-pointer rounded-[2px] border border-[var(--accent-dim)] bg-transparent px-[10px] py-[6px] text-[16px] font-bold tracking-[0.14em] text-[var(--room-badge)] transition hover:bg-[var(--accent-dim)] focus-visible:bg-[var(--accent-dim)] sm:text-[18px] md:px-3 md:text-[20px] md:tracking-[0.2em]"
+                      className="cursor-pointer rounded-xs border border-(--accent-dim) bg-transparent px-2.5 py-1.5 text-[16px] font-bold tracking-[0.14em] text-(--room-badge) transition hover:bg-(--accent-dim) focus-visible:bg-(--accent-dim) sm:text-[18px] md:px-3 md:text-[20px] md:tracking-[0.2em]"
                       type="button"
                       title="Copy room link"
                       onClick={() => void copyRoomLink(roomCode!)}
@@ -975,7 +975,7 @@ export default function CliplinkApp() {
                     <button
                       className={cx(
                         actionButtonClass,
-                        "hover:border-[var(--danger)] hover:text-[var(--danger)] focus-visible:border-[var(--danger)] focus-visible:text-[var(--danger)]",
+                        "hover:border-(--danger) hover:text-(--danger) focus-visible:border-(--danger) focus-visible:text-(--danger)",
                       )}
                       type="button"
                       onClick={leaveRoom}
@@ -986,24 +986,24 @@ export default function CliplinkApp() {
                 </div>
 
                 <div
-                  className="relative overflow-hidden rounded-[4px] border border-[var(--border)] shadow-[var(--shadow)]"
+                  className="relative overflow-hidden rounded-sm border border-(--border) shadow-(--shadow)"
                   style={panelSurfaceStyle}
                   onDragOver={handleDragOver}
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop}
                 >
                   {dragActive ? (
-                    <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[4px] border-2 border-dashed border-[var(--accent)] bg-[var(--accent-dim)] px-4 text-center text-[12px] uppercase tracking-[0.1em] text-[var(--accent)] backdrop-blur-[2px]">
+                    <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-sm border-2 border-dashed border-(--accent) bg-(--accent-dim) px-4 text-center text-[12px] uppercase tracking-widest text-(--accent) backdrop-blur-[2px]">
                       {realtimeReady
                         ? "Drop to share peer-to-peer"
                         : "File transfer needs a live connection"}
                     </div>
                   ) : null}
-                  <div className="flex flex-col items-stretch justify-between gap-4 border-b border-[var(--border)] bg-[var(--surface-elevated)] px-4 py-[10px] md:flex-row md:items-center">
-                    <span className="hidden text-[10px] uppercase tracking-[0.12em] text-[var(--text-muted)] md:inline">
+                  <div className="flex flex-col items-stretch justify-between gap-4 border-b border-(--border) bg-(--surface-elevated) px-4 py-2.5 md:flex-row md:items-center">
+                    <span className="hidden text-[10px] uppercase tracking-[0.12em] text-(--text-muted) md:inline">
                       Clipboard
                     </span>
-                    <div className="flex w-full flex-wrap items-center justify-start gap-[6px] md:w-auto md:flex-nowrap md:justify-end">
+                    <div className="flex w-full flex-wrap items-center justify-start gap-1.5 md:w-auto md:flex-nowrap md:justify-end">
                       <button
                         className={cn(
                           panelToolClass,
@@ -1049,7 +1049,7 @@ export default function CliplinkApp() {
                         className={cn(
                           panelToolClass,
                           panelAccentClass,
-                          "min-w-[82px] px-4",
+                          "min-w-20.5 px-4",
                         )}
                         type="button"
                         onClick={() => void sendClip()}
@@ -1061,13 +1061,13 @@ export default function CliplinkApp() {
                   </div>
 
                   <textarea
-                    className="min-h-[200px] w-full resize-y border-0 bg-transparent px-4 py-4 text-[13px] leading-[1.7] text-[var(--text)] outline-none placeholder:text-[var(--text-muted)] sm:min-h-[200px] md:min-h-[240px] md:px-5 md:py-5 md:text-[14px]"
+                    className="min-h-50 w-full resize-y border-0 bg-transparent px-4 py-4 text-[13px] leading-[1.7] text-(--text) outline-none placeholder:text-(--text-muted) sm:min-h-50 md:min-h-60 md:px-5 md:py-5 md:text-[14px]"
                     value={editorText}
                     placeholder="Type or paste anything here, then hit Send to sync it across devices. Drop or paste files to share them peer-to-peer..."
                     onChange={(event) => setEditorText(event.target.value)}
                     onPaste={handlePaste}
                   />
-                  <div className="border-t border-[var(--border)] px-4 py-2 text-left text-[10px] tracking-[0.06em] text-[var(--text-muted)] md:text-right md:px-4">
+                  <div className="border-t border-(--border) px-4 py-2 text-left text-[10px] tracking-[0.06em] text-(--text-muted) md:text-right md:px-4">
                     {formatCharCount(editorText.length)}
                   </div>
                 </div>
@@ -1083,14 +1083,14 @@ export default function CliplinkApp() {
                   onDismiss={files.dismiss}
                 />
 
-                <div className="flex flex-col gap-[10px]">
-                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.12em] text-[var(--text-muted)]">
+                <div className="flex flex-col gap-2.5">
+                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.12em] text-(--text-muted)">
                     <span>History</span>
-                    <span className="h-px flex-1 bg-[var(--border)]" />
+                    <span className="h-px flex-1 bg-(--border)" />
                   </div>
-                  <div className="flex flex-col gap-[6px]">
+                  <div className="flex flex-col gap-1.5">
                     {history.length === 0 ? (
-                      <div className="rounded-[4px] border border-dashed border-[var(--border-active)] px-8 py-8 text-center text-[12px] tracking-[0.05em] text-[var(--text-muted)]">
+                      <div className="rounded-sm border border-dashed border-(--border-active) px-8 py-8 text-center text-[12px] tracking-wider text-(--text-muted)">
                         No clips yet. Send something.
                       </div>
                     ) : (
@@ -1098,33 +1098,33 @@ export default function CliplinkApp() {
                         <div
                           key={clip.id}
                           className={cx(
-                            "grid animate-[fade-in_0.3s_ease] grid-cols-[48px_1fr] items-start gap-[10px] rounded-[4px] border border-[var(--border)] p-3 shadow-[var(--shadow)] md:flex md:items-start md:gap-3 md:px-4 md:py-3",
+                            "grid animate-[fade-in_0.3s_ease] grid-cols-[48px_1fr] items-start gap-2.5 rounded-sm border border-(--border) p-3 shadow-(--shadow) md:flex md:items-start md:gap-3 md:px-4 md:py-3",
                             clip.direction === "incoming"
-                              ? "border-l-2 border-l-[var(--incoming-border)]"
-                              : "border-l-2 border-l-[var(--text-muted)]",
+                              ? "border-l-2 border-l-(--incoming-border)"
+                              : "border-l-2 border-l-(--text-muted)",
                           )}
                           style={panelSurfaceStyle}
                         >
-                          <div className="flex min-w-[52px] flex-col gap-1 md:min-w-[64px]">
+                          <div className="flex min-w-13 flex-col gap-1 md:min-w-16">
                             <span
                               className={cx(
-                                "text-[9px] uppercase tracking-[0.1em]",
+                                "text-[9px] uppercase tracking-widest",
                                 clip.direction === "incoming"
-                                  ? "text-[var(--incoming-text)]"
-                                  : "text-[var(--text-muted)]",
+                                  ? "text-(--incoming-text)"
+                                  : "text-(--text-muted)",
                               )}
                             >
                               {clip.direction === "incoming" ? "↓ IN" : "↑ OUT"}
                             </span>
-                            <span className="text-[9px] uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                            <span className="text-[9px] uppercase tracking-widest text-(--text-muted)">
                               {formatHistoryTime(clip.ts)}
                             </span>
                           </div>
-                          <div className="min-w-0 text-[11px] leading-[1.5] text-[var(--text-dim)] truncate md:text-[12px]">
+                          <div className="min-w-0 text-[11px] leading-normal text-(--text-dim) truncate md:text-[12px]">
                             {truncatePreview(clip.text)}
                           </div>
                           <button
-                            className="col-start-2 mt-1 min-h-8 justify-self-start rounded-[2px] border border-transparent px-2 py-1 text-[10px] text-[var(--text-muted)] transition hover:border-[var(--border-active)] hover:text-[var(--text)] focus-visible:border-[var(--border-active)] focus-visible:text-[var(--text)] md:mt-0 md:flex-shrink-0"
+                            className="col-start-2 mt-1 min-h-8 justify-self-start rounded-xs border border-transparent px-2 py-1 text-[10px] text-(--text-muted) transition hover:border-(--border-active) hover:text-(--text) focus-visible:border-(--border-active) focus-visible:text-(--text) md:mt-0 md:shrink-0"
                             type="button"
                             onClick={() => void copyHistoryItem(clip.text)}
                           >
@@ -1143,19 +1143,19 @@ export default function CliplinkApp() {
 
       <div
         className={cx(
-          "pointer-events-none fixed inset-0 z-[500] bg-[var(--flash-bg)] transition-opacity duration-150",
+          "pointer-events-none fixed inset-0 z-500 bg-(--flash-bg) transition-opacity duration-150",
           flashActive ? "opacity-100 duration-0" : "opacity-0",
         )}
       />
 
       {joined && showQrSheet ? (
         <div
-          className="fixed inset-0 z-[800] flex items-end justify-center bg-black/60 p-3 backdrop-blur-[10px] sm:p-6 sm:items-center"
+          className="fixed inset-0 z-800 flex items-end justify-center bg-black/60 p-3 backdrop-blur-[10px] sm:p-6 sm:items-center"
           role="presentation"
           onClick={closeQrSheet}
         >
           <div
-            className="flex w-full max-w-[420px] flex-col gap-[18px] rounded-t-[18px] rounded-b-[8px] border border-[var(--border-active)] p-[18px] shadow-[var(--shadow)] sm:rounded-[16px] sm:p-5"
+            className="flex w-full max-w-105 flex-col gap-4.5 rounded-t-[18px] rounded-b-lg border border-(--border-active) p-4.5 shadow-(--shadow) sm:rounded-2xl sm:p-5"
             style={panelSurfaceStyle}
             role="dialog"
             aria-modal="true"
@@ -1164,10 +1164,10 @@ export default function CliplinkApp() {
           >
             <div className="flex flex-col items-stretch gap-3 max-[430px]:items-stretch sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <p className="mb-1.5 text-[10px] uppercase tracking-[0.12em] text-[var(--text-muted)]">
+                <p className="mb-1.5 text-[10px] uppercase tracking-[0.12em] text-(--text-muted)">
                   Scan to join
                 </p>
-                <h2 className="m-0 text-[20px] tracking-[0.14em] text-[var(--accent)] sm:text-[24px]">
+                <h2 className="m-0 text-[20px] tracking-[0.14em] text-(--accent) sm:text-[24px]">
                   {roomCode}
                 </h2>
               </div>
@@ -1180,7 +1180,7 @@ export default function CliplinkApp() {
               </button>
             </div>
 
-            <div className="flex justify-center rounded-xl border border-[var(--border)] bg-white p-4">
+            <div className="flex justify-center rounded-xl border border-(--border) bg-white p-4">
               <Image
                 src={qrCodeUrl}
                 alt={`QR code for room ${roomCode}`}
@@ -1190,12 +1190,12 @@ export default function CliplinkApp() {
               />
             </div>
 
-            <p className="m-0 text-[12px] leading-[1.7] text-[var(--text-dim)]">
+            <p className="m-0 text-[12px] leading-[1.7] text-(--text-dim)">
               Scan this code or copy the link to open the room instantly on
               another device.
             </p>
 
-            <div className="flex flex-col gap-[10px] sm:flex-row">
+            <div className="flex flex-col gap-2.5 sm:flex-row">
               <button
                 className={secondaryButtonClass}
                 type="button"
@@ -1216,20 +1216,20 @@ export default function CliplinkApp() {
       ) : null}
 
       <div
-        className="fixed bottom-8 left-1/2 z-[999] flex -translate-x-1/2 flex-col items-center gap-[10px]"
+        className="fixed bottom-8 left-1/2 z-999 flex -translate-x-1/2 flex-col items-center gap-2.5"
         aria-live="polite"
       >
         {toasts.map((toast) => (
           <div
             key={toast.id}
             className={cx(
-              "min-w-[min(92vw,320px)] animate-[toast-in_0.25s_cubic-bezier(0.34,1.56,0.64,1)] rounded-[3px] border px-4 py-2.5 text-[12px] tracking-[0.04em] shadow-[var(--shadow)]",
+              "min-w-[min(92vw,320px)] animate-[toast-in_0.25s_cubic-bezier(0.34,1.56,0.64,1)] rounded-[3px] border px-4 py-2.5 text-[12px] tracking-[0.04em] shadow-(--shadow)",
               toast.tone === "success" &&
-                "border-[var(--success)] text-[var(--success)]",
+                "border-(--success) text-(--success)",
               toast.tone === "info" &&
-                "border-[var(--accent)] text-[var(--accent)]",
+                "border-(--accent) text-(--accent)",
               toast.tone === "error" &&
-                "border-[var(--danger)] text-[var(--danger)]",
+                "border-(--danger) text-(--danger)",
             )}
             style={toastSurfaceStyle}
           >

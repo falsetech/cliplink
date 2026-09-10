@@ -20,7 +20,7 @@ type FileTransfersProps = {
 };
 
 const actionClass =
-  "min-h-8 rounded-[2px] border border-transparent px-2 py-1 text-[10px] text-[var(--text-muted)] transition hover:border-[var(--border-active)] hover:text-[var(--text)] focus-visible:border-[var(--border-active)] focus-visible:text-[var(--text)] disabled:cursor-not-allowed disabled:opacity-[0.55]";
+  "min-h-8 rounded-xs border border-transparent px-2 py-1 text-[10px] text-(--text-muted) transition hover:border-(--border-active) hover:text-(--text) focus-visible:border-(--border-active) focus-visible:text-(--text) disabled:cursor-not-allowed disabled:opacity-[0.55]";
 
 const OFFLINE_HINT = "File transfer needs a live connection.";
 
@@ -149,7 +149,7 @@ export function FileTransfers({
     <div className="flex flex-col gap-2.5">
       <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.12em] text-(--text-muted)">
         <span>Files</span>
-        <span className="h-px flex-1 bg-[(--border)" />
+        <span className="h-px flex-1 bg-(--border)" />
         <span className="normal-case tracking-[0.04em]">
           peer-to-peer · never stored
         </span>
@@ -169,25 +169,25 @@ export function FileTransfers({
             <li
               key={item.id}
               className={cn(
-                "grid animate-[fade-in_0.3s_ease] grid-cols-[48px_1fr] items-start gap-[10px] rounded-[4px] border border-[var(--border)] border-l-2 p-3 shadow-[var(--shadow)] md:flex md:items-center md:gap-3 md:px-4 md:py-3",
+                "grid animate-[fade-in_0.3s_ease] grid-cols-[48px_1fr] items-start gap-2.5 rounded-sm border border-(--border) border-l-2 p-3 shadow-(--shadow) md:flex md:items-center md:gap-3 md:px-4 md:py-3",
                 incoming
-                  ? "border-l-[var(--incoming-border)]"
-                  : "border-l-[var(--text-muted)]",
+                  ? "border-l-(--incoming-border)"
+                  : "border-l-(--text-muted)",
               )}
               style={surfaceStyle}
             >
-              <div className="flex min-w-[52px] flex-col gap-1 md:min-w-[64px]">
+              <div className="flex min-w-13 flex-col gap-1 md:min-w-16">
                 <span
                   className={cn(
-                    "text-[9px] uppercase tracking-[0.1em]",
+                    "text-[9px] uppercase tracking-widest",
                     incoming
-                      ? "text-[var(--incoming-text)]"
-                      : "text-[var(--text-muted)]",
+                      ? "text-(--incoming-text)"
+                      : "text-(--text-muted)",
                   )}
                 >
                   {incoming ? "↓ FILE" : "↑ FILE"}
                 </span>
-                <span className="text-[9px] uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                <span className="text-[9px] uppercase tracking-widest text-(--text-muted)">
                   {formatHistoryTime(item.ts)}
                 </span>
               </div>
@@ -200,27 +200,27 @@ export function FileTransfers({
                     width={40}
                     height={40}
                     unoptimized
-                    className="h-10 w-10 flex-shrink-0 rounded-[3px] border border-[var(--border)] object-cover"
+                    className="h-10 w-10 shrink-0 rounded-[3px] border border-(--border) object-cover"
                   />
                 ) : null}
                 <div className="flex min-w-0 flex-1 flex-col gap-1">
                   <span
-                    className="truncate text-[11px] leading-[1.5] text-[var(--text)] md:text-[12px]"
+                    className="truncate text-[11px] leading-normal text-(--text) md:text-[12px]"
                     title={item.name}
                   >
                     {item.name}
                   </span>
                   <span
                     className={cn(
-                      "truncate text-[10px] text-[var(--text-muted)]",
-                      item.status === "failed" && "text-[var(--danger)]",
+                      "truncate text-[10px] text-(--text-muted)",
+                      item.status === "failed" && "text-(--danger)",
                     )}
                   >
                     {statusText(item)}
                   </span>
                   {showProgress ? (
                     <div
-                      className="h-[3px] w-full overflow-hidden rounded-full bg-[var(--border)]"
+                      className="h-0.75 w-full overflow-hidden rounded-full bg-(--border)"
                       role="progressbar"
                       aria-label={`Downloading ${item.name}`}
                       aria-valuemin={0}
@@ -228,7 +228,7 @@ export function FileTransfers({
                       aria-valuenow={percent}
                     >
                       <div
-                        className="h-full bg-[var(--accent)] transition-[width] duration-150"
+                        className="h-full bg-(--accent) transition-[width] duration-150"
                         style={{ width: `${percent}%` }}
                       />
                     </div>
@@ -236,7 +236,7 @@ export function FileTransfers({
                 </div>
               </div>
 
-              <div className="col-start-2 mt-1 flex gap-1 justify-self-start md:mt-0 md:flex-shrink-0">
+              <div className="col-start-2 mt-1 flex gap-1 justify-self-start md:mt-0 md:shrink-0">
                 <FileActions item={item} {...handlers} />
               </div>
             </li>
