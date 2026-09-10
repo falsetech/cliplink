@@ -1,9 +1,19 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+  type ClipboardEvent as ReactClipboardEvent,
+  type DragEvent as ReactDragEvent,
+} from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
+
+import { FileTransfers } from "@/components/cliplink/file-transfers";
+import { useFileTransfer } from "@/components/cliplink/use-file-transfer";
 
 import {
   MAX_SESSION_HISTORY,
@@ -135,6 +145,26 @@ function IconQr() {
   );
 }
 
+function IconPaperclip() {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M21 11.5L12.5 20a5.5 5.5 0 0 1-7.78-7.78l8.49-8.49a3.67 3.67 0 0 1 5.19 5.19l-8.5 8.49a1.83 1.83 0 0 1-2.59-2.59L15.1 7.1"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function IconTheme({ theme }: { theme: "dark" | "light" }) {
   if (theme === "light") {
     return (
@@ -191,7 +221,16 @@ export default function CliplinkApp() {
   const [showQrSheet, setShowQrSheet] = useState(false);
   const [mounted, setMounted] = useState(false);
 
+  const [realtimeReady, setRealtimeReady] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+
   const { resolvedTheme, setTheme } = useTheme();
+  const files = useFileTransfer({
+    peerId,
+    sendSignal: transport.sendSignal,
+    pushToast,
+  });
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const senderIdRef = useRef("");
   const lastSeenIdRef = useRef(0);
@@ -255,6 +294,21 @@ export default function CliplinkApp() {
   useEffect(() => {
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    // Dropping a file outside the panel would otherwise navigate away from the room.
+    const preventFileNavigation = (event: DragEvent) => {
+      if (event.dataTransfer?.types.includes("Files")) {
+        event.preventDefault();
+      }
+    };
+    document.addEventListener("dragover", preventFileNavigation);
+    document.addEventListener("drop", preventFileNavigation);
+    return () => {
+      document.removeEventListener("dragover", preventFileNavigation);
+      document.removeEventListener("drop", preventFileNavigation);
+    };
   }, []);
 
   function pushToast(message: string, tone: ToastTone = "info") {
@@ -371,6 +425,8 @@ export default function CliplinkApp() {
         realtimeOpenedRef.current = true;
         realtimeRetryCountRef.current = 0;
         setStatus("live");
+        setRealtimeReady(true);
+        files.announce();
         if (hadFallback) {
           pushToast("Realtime connection restored.", "success");
         }
@@ -389,8 +445,10 @@ export default function CliplinkApp() {
 
         applyIncomingClips(incoming.reverse());
       },
+      onSignal: (from, payload) => files.handleSignal(from, payload),
       onDisconnect: (reason) => {
         streamCleanupRef.current = null;
+        setRealtimeReady(false);
         if (reason === "error" && roomCodeRef.current === nextRoomCode) {
           const hadOpened = realtimeOpenedRef.current;
           realtimeOpenedRef.current = false;
@@ -554,6 +612,8 @@ export default function CliplinkApp() {
   }
 
   function leaveRoom() {
+    files.reset();
+    setRealtimeReady(false);
     stopPolling();
     stopStream();
     clearSyncReset();
@@ -657,6 +717,55 @@ export default function CliplinkApp() {
         "info",
       );
     }
+  }
+
+  function shareFiles(list: FileList | File[] | null) {
+    const selected = list ? Array.from(list) : [];
+    if (selected.length === 0) {
+      return;
+    }
+    if (!realtimeReady) {
+      pushToast("File transfer needs a live connection.", "info");
+      return;
+    }
+    files.offerFiles(selected);
+  }
+
+  function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>) {
+    const pasted = Array.from(event.clipboardData.files);
+    if (pasted.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    shareFiles(pasted);
+  }
+
+  function hasDraggedFiles(event: ReactDragEvent<HTMLElement>) {
+    return Array.from(event.dataTransfer.types).includes("Files");
+  }
+
+  function handleDragOver(event: ReactDragEvent<HTMLDivElement>) {
+    if (!hasDraggedFiles(event)) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = realtimeReady ? "copy" : "none";
+    setDragActive(true);
+  }
+
+  function handleDragLeave(event: ReactDragEvent<HTMLDivElement>) {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      setDragActive(false);
+    }
+  }
+
+  function handleDrop(event: ReactDragEvent<HTMLDivElement>) {
+    if (!hasDraggedFiles(event)) {
+      return;
+    }
+    event.preventDefault();
+    setDragActive(false);
+    shareFiles(event.dataTransfer.files);
   }
 
   async function copyHistoryItem(text: string) {
@@ -877,14 +986,51 @@ export default function CliplinkApp() {
                 </div>
 
                 <div
-                  className="overflow-hidden rounded-[4px] border border-[var(--border)] shadow-[var(--shadow)]"
+                  className="relative overflow-hidden rounded-[4px] border border-[var(--border)] shadow-[var(--shadow)]"
                   style={panelSurfaceStyle}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
                 >
+                  {dragActive ? (
+                    <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[4px] border-2 border-dashed border-[var(--accent)] bg-[var(--accent-dim)] px-4 text-center text-[12px] uppercase tracking-[0.1em] text-[var(--accent)] backdrop-blur-[2px]">
+                      {realtimeReady
+                        ? "Drop to share peer-to-peer"
+                        : "File transfer needs a live connection"}
+                    </div>
+                  ) : null}
                   <div className="flex flex-col items-stretch justify-between gap-4 border-b border-[var(--border)] bg-[var(--surface-elevated)] px-4 py-[10px] md:flex-row md:items-center">
                     <span className="hidden text-[10px] uppercase tracking-[0.12em] text-[var(--text-muted)] md:inline">
                       Clipboard
                     </span>
                     <div className="flex w-full flex-wrap items-center justify-start gap-[6px] md:w-auto md:flex-nowrap md:justify-end">
+                      <button
+                        className={cn(
+                          panelToolClass,
+                          "inline-flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-[0.55]",
+                        )}
+                        type="button"
+                        disabled={!realtimeReady}
+                        title={
+                          realtimeReady
+                            ? "Share files peer-to-peer. Nothing is uploaded or stored."
+                            : "File transfer needs a live connection."
+                        }
+                        onClick={() => fileInputRef.current?.click()}
+                      >
+                        <IconPaperclip />
+                        Attach
+                      </button>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        hidden
+                        onChange={(event) => {
+                          shareFiles(event.target.files);
+                          event.target.value = "";
+                        }}
+                      />
                       <button
                         className={panelToolClass}
                         type="button"
@@ -917,13 +1063,25 @@ export default function CliplinkApp() {
                   <textarea
                     className="min-h-[200px] w-full resize-y border-0 bg-transparent px-4 py-4 text-[13px] leading-[1.7] text-[var(--text)] outline-none placeholder:text-[var(--text-muted)] sm:min-h-[200px] md:min-h-[240px] md:px-5 md:py-5 md:text-[14px]"
                     value={editorText}
-                    placeholder="Type or paste anything here, then hit Send to sync it across devices..."
+                    placeholder="Type or paste anything here, then hit Send to sync it across devices. Drop or paste files to share them peer-to-peer..."
                     onChange={(event) => setEditorText(event.target.value)}
+                    onPaste={handlePaste}
                   />
                   <div className="border-t border-[var(--border)] px-4 py-2 text-left text-[10px] tracking-[0.06em] text-[var(--text-muted)] md:text-right md:px-4">
                     {formatCharCount(editorText.length)}
                   </div>
                 </div>
+
+                <FileTransfers
+                  items={files.items}
+                  canTransfer={realtimeReady}
+                  surfaceStyle={panelSurfaceStyle}
+                  onDownload={files.request}
+                  onCancel={files.cancel}
+                  onSave={files.save}
+                  onRevoke={files.revoke}
+                  onDismiss={files.dismiss}
+                />
 
                 <div className="flex flex-col gap-[10px]">
                   <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.12em] text-[var(--text-muted)]">
