@@ -17,7 +17,7 @@ import {
 } from "@/lib/cliplink/format";
 import { createRoomRequest } from "@/lib/cliplink/http";
 import { buildRoomUrl, normalizeRoomCode } from "@/lib/cliplink/room-code";
-import { getSessionSenderId } from "@/lib/cliplink/session";
+import { createRandomId, getSessionSenderId } from "@/lib/cliplink/session";
 import type { RoomCode, RoomStatus, SessionClip } from "@/lib/cliplink/types";
 import { validateRoomCode } from "@/lib/cliplink/validation";
 import { createWebSocketTransport } from "@/lib/cliplink/ws";
@@ -32,6 +32,10 @@ type ToastItem = {
 };
 
 const transport = createWebSocketTransport();
+
+// Identifies this page load for peer-to-peer signaling. Unlike the sender id it
+// isn't kept in sessionStorage, so duplicated tabs don't share an identity.
+const peerId = createRandomId();
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -361,7 +365,7 @@ export default function CliplinkApp() {
     stopStream();
     clearRealtimeRetry();
     realtimeOpenedRef.current = false;
-    const cleanup = transport.streamClips(nextRoomCode, lastSeenIdRef.current, {
+    const cleanup = transport.streamClips(nextRoomCode, lastSeenIdRef.current, peerId, {
       onOpen: () => {
         const hadFallback = realtimeRetryCountRef.current > 0;
         realtimeOpenedRef.current = true;

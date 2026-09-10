@@ -3,17 +3,23 @@ import {
   pollClipsRequest,
   sendClipRequest,
 } from "@/lib/cliplink/http";
-import type { RoomCode, TransportClient, WsServerMessage } from "@/lib/cliplink/types";
+import type {
+  RoomCode,
+  TransportClient,
+  WsClientMessage,
+  WsServerMessage,
+} from "@/lib/cliplink/types";
 
 export function createWebSocketTransport(): TransportClient {
   let socketCleanup: (() => void) | null = null;
+  let activeSocket: WebSocket | null = null;
 
   return {
     connect: connectRoom,
     sendClip: sendClipRequest,
     pollClips: pollClipsRequest,
 
-    streamClips(roomCode: RoomCode, afterId, handlers) {
+    streamClips(roomCode: RoomCode, afterId, peerId, handlers) {
       if (typeof window === "undefined" || typeof WebSocket === "undefined") {
         return null;
       }
@@ -21,9 +27,14 @@ export function createWebSocketTransport(): TransportClient {
       socketCleanup?.();
 
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const params = new URLSearchParams({
+        after: String(afterId),
+        peer: peerId,
+      });
       const socket = new WebSocket(
-        `${protocol}//${window.location.host}/rooms/${roomCode}/socket?after=${encodeURIComponent(String(afterId))}`,
+        `${protocol}//${window.location.host}/rooms/${roomCode}/socket?${params}`,
       );
+      activeSocket = socket;
       let isClosed = false;
 
       const fail = () => {
@@ -31,6 +42,9 @@ export function createWebSocketTransport(): TransportClient {
           return;
         }
         isClosed = true;
+        if (activeSocket === socket) {
+          activeSocket = null;
+        }
         socket.close();
         handlers.onDisconnect("error");
       };
@@ -44,6 +58,10 @@ export function createWebSocketTransport(): TransportClient {
           }
           if (message.type === "clip") {
             handlers.onClips([message.clip]);
+            return;
+          }
+          if (message.type === "signal") {
+            handlers.onSignal?.(message.from, message.payload);
             return;
           }
           if (message.type === "error") {
@@ -60,6 +78,9 @@ export function createWebSocketTransport(): TransportClient {
 
       socketCleanup = () => {
         isClosed = true;
+        if (activeSocket === socket) {
+          activeSocket = null;
+        }
         socket.removeEventListener("message", handleMessage);
         socket.removeEventListener("error", fail);
         socket.removeEventListener("close", fail);
@@ -71,6 +92,15 @@ export function createWebSocketTransport(): TransportClient {
         socketCleanup?.();
         handlers.onDisconnect("closed");
       };
+    },
+
+    sendSignal(payload, to) {
+      if (!activeSocket || activeSocket.readyState !== WebSocket.OPEN) {
+        return false;
+      }
+      const message: WsClientMessage = { type: "signal", to, payload };
+      activeSocket.send(JSON.stringify(message));
+      return true;
     },
 
     disconnect() {
