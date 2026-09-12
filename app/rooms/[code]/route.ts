@@ -7,9 +7,13 @@ import { storage } from "@/lib/cliplink/storage";
 import type { GetRoomResponse } from "@/lib/cliplink/types";
 import { validateRoomCode } from "@/lib/cliplink/validation";
 
+type RoomRouteContext = {
+  params: Promise<{ code: string }>;
+};
+
 export async function GET(
   _request: Request,
-  context: RouteContext<"/rooms/[code]">,
+  context: RoomRouteContext,
 ) {
   const { code } = await context.params;
   if (!validateRoomCode(code)) {
