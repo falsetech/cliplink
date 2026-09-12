@@ -1,0 +1,38 @@
+name: Feature request
+description: Suggest an idea for CLIPLINK
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        CLIPLINK is deliberately narrow: zero auth, zero install, ephemeral,
+        nothing persisted. User accounts, persistent history, server-side file
+        storage, and native apps are explicit non-goals.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation you are in, not the solution you want.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would you like to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This does not require user accounts or authentication
+        - label: This does not require storing data beyond a room's TTL

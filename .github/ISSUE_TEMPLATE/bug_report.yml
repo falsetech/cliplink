@@ -1,0 +1,83 @@
+name: Bug report
+description: Something in CLIPLINK does not work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please do **not** use this form for security
+        vulnerabilities — see [SECURITY.md](../blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Create a room on device A
+        2. Join with the code on device B
+        3. ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Which transport was active?
+      description: >
+        The room UI indicates whether it is connected over the realtime
+        WebSocket or has fallen back to HTTP polling. This matters — file
+        transfer is disabled entirely on the polling fallback.
+      options:
+        - WebSocket (realtime)
+        - Polling (fallback)
+        - Not sure
+        - Not applicable
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Text clip sync
+        - File transfer (WebRTC)
+        - Clipboard read/write
+        - Room creation / joining / QR
+        - UI or layout
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: browsers
+    attributes:
+      label: Browser(s) and OS
+      description: >
+        List **both** devices if the bug involves syncing between them.
+      placeholder: "Chrome 141 on macOS 27, Safari on iOS 19"
+    validations:
+      required: true
+
+  - type: input
+    id: deployment
+    attributes:
+      label: Where did this happen?
+      placeholder: "cliplink.thebkht.com, local dev (in-memory), or self-hosted"
+    validations:
+      required: true
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Console or network errors
+      description: Anything from the browser console or the server logs.
+      render: text
