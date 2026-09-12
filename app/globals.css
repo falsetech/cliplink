@@ -110,19 +110,24 @@
    --------------------------------------------------------------------------- */
 
 @theme inline {
-  --color-bg: var(--bg);
+  --color-canvas: var(--bg);
   --color-surface: var(--surface);
-  --color-surface-elevated: var(--surface-elevated);
-  --color-border-subtle: var(--border);
-  --color-border-active: var(--border-active);
+  --color-raised: var(--surface-elevated);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-active);
   --color-accent: var(--accent);
   --color-accent-dim: var(--accent-dim);
-  --color-text: var(--text);
-  --color-text-muted: var(--text-muted);
-  --color-text-dim: var(--text-dim);
+  --color-fg: var(--text);
+  --color-muted: var(--text-muted);
+  --color-dim: var(--text-dim);
   --color-danger: var(--danger);
   --color-success: var(--success);
   --color-image-edge: var(--image-edge);
+  --color-hero: var(--hero-highlight);
+  --color-logo: var(--logo-accent);
+  --color-room: var(--room-badge);
+  --color-incoming: var(--incoming-text);
+  --color-incoming-line: var(--incoming-border);
 
   --font-mono: var(--stack-mono);
   --font-display: var(--stack-display);
@@ -292,6 +297,112 @@ a {
 
   to {
     opacity: 0;
+  }
+}
+
+@keyframes toast-in-soft {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Overshoot is reserved for arrivals the user did not initiate. */
+@keyframes toast-in-arrival {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Exits mirror the path in, and are softer than the enter. */
+@keyframes toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes sheet-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(24px) scale(0.97);
+  }
+}
+
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scrim-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+/* New rows grow the list open instead of teleporting everything below them
+   down a row. Only applied to clips that arrive after hydration. */
+@keyframes row-enter {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
   }
 }
 

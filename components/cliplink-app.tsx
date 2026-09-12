@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import {
   useEffect,
   useEffectEvent,
@@ -9,12 +8,24 @@ import {
   useSyncExternalStore,
   type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 
 import { FileTransfers } from "@/components/cliplink/file-transfers";
 import { useFileTransfer } from "@/components/cliplink/use-file-transfer";
+import {
+  IconArrowUp,
+  IconCopy,
+  IconPaperclip,
+  IconPlus,
+  IconQr,
+  IconTheme,
+} from "@/components/cliplink/icons";
+import { QrSheet } from "@/components/cliplink/qr-sheet";
+import { Toasts } from "@/components/cliplink/toasts";
+import { useToasts } from "@/components/cliplink/use-toasts";
 
 import {
   MAX_SESSION_HISTORY,
@@ -26,6 +37,7 @@ import {
   formatHistoryTime,
   truncatePreview,
 } from "@/lib/cliplink/format";
+import { haptic } from "@/lib/cliplink/haptics";
 import { createRoomRequest } from "@/lib/cliplink/http";
 import { buildRoomUrl, normalizeRoomCode } from "@/lib/cliplink/room-code";
 import { createRandomId, getSessionSenderId } from "@/lib/cliplink/session";
@@ -37,22 +49,22 @@ import { cn } from "@/lib/utils";
 /** Stable no-op subscribe for the `useSyncExternalStore` hydration guard. */
 const subscribeToNothing = () => () => {};
 
-type ToastTone = "success" | "info" | "error";
-
-type ToastItem = {
-  id: number;
-  message: string;
-  tone: ToastTone;
-};
-
 const transport = createWebSocketTransport();
 
 // Identifies this page load for peer-to-peer signaling. Unlike the sender id it
 // isn't kept in sessionStorage, so duplicated tabs don't share an identity.
 const peerId = createRandomId();
 
-function cx(...parts: Array<string | false | null | undefined>) {
-  return parts.filter(Boolean).join(" ");
+/** How long the localised arrival highlight stays on the panel and new row. */
+const ARRIVAL_CUE_MS = 500;
+/** A destructive confirmation that never times out is a trap of its own. */
+const CONFIRM_WINDOW_MS = 4000;
+
+function clearTimer(ref: React.RefObject<number | null>) {
+  if (ref.current) {
+    window.clearTimeout(ref.current);
+    ref.current = null;
+  }
 }
 
 function sortClipsNewestFirst(clips: SessionClip[]) {
@@ -86,129 +98,6 @@ function statusLabel(status: RoomStatus) {
   }
 }
 
-function IconPlus() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <path
-        d="M12 5V19M5 12H19"
-        stroke="currentColor"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function IconCopy() {
-  return (
-    <svg
-      width="10"
-      height="10"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <rect
-        x="9"
-        y="9"
-        width="13"
-        height="13"
-        rx="2"
-        stroke="currentColor"
-        strokeWidth="2"
-      />
-      <path
-        d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
-        stroke="currentColor"
-        strokeWidth="2"
-      />
-    </svg>
-  );
-}
-
-function IconQr() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <path
-        d="M4 4H10V10H4V4ZM14 4H20V10H14V4ZM4 14H10V20H4V14ZM15 15H17V17H15V15ZM17 17H20V20H17V17ZM14 18H16V20H14V18ZM18 14H20V16H18V14ZM14 11H16V14H14V11ZM11 11H13V13H11V11Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
-function IconPaperclip() {
-  return (
-    <svg
-      width="11"
-      height="11"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <path
-        d="M21 11.5L12.5 20a5.5 5.5 0 0 1-7.78-7.78l8.49-8.49a3.67 3.67 0 0 1 5.19 5.19l-8.5 8.49a1.83 1.83 0 0 1-2.59-2.59L15.1 7.1"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function IconTheme({ theme }: { theme: "dark" | "light" }) {
-  if (theme === "light") {
-    return (
-      <svg
-        width="16"
-        height="16"
-        viewBox="0 0 24 24"
-        fill="none"
-        aria-hidden="true"
-      >
-        <path
-          d="M12 3V5M12 19V21M4.93 4.93L6.34 6.34M17.66 17.66L19.07 19.07M3 12H5M19 12H21M4.93 19.07L6.34 17.66M17.66 6.34L19.07 4.93M16 12A4 4 0 1 1 8 12A4 4 0 0 1 16 12Z"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    );
-  }
-
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <path
-        d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
 export default function CliplinkApp() {
   const router = useRouter();
   const pathname = usePathname();
@@ -220,9 +109,11 @@ export default function CliplinkApp() {
   const [history, setHistory] = useState<SessionClip[]>([]);
   const [status, setStatus] = useState<RoomStatus>("offline");
   const [isBusy, setIsBusy] = useState(false);
-  const [flashActive, setFlashActive] = useState(false);
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [arrivalId, setArrivalId] = useState<number | null>(null);
+  const [enteringIds, setEnteringIds] = useState<Set<number>>(new Set());
   const [showQrSheet, setShowQrSheet] = useState(false);
+  const [confirmingLeave, setConfirmingLeave] = useState(false);
+  const [clearedText, setClearedText] = useState("");
   // Hydration guard for theme-dependent rendering: false on the server and on
   // the first client render, true thereafter.
   const mounted = useSyncExternalStore(
@@ -235,12 +126,14 @@ export default function CliplinkApp() {
   const [dragActive, setDragActive] = useState(false);
 
   const { resolvedTheme, setTheme } = useTheme();
+  const { toasts, push: pushToast, dismiss: dismissToast } = useToasts();
   const files = useFileTransfer({
     peerId,
     sendSignal: transport.sendSignal,
     pushToast,
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const qrTriggerRef = useRef<HTMLButtonElement>(null);
 
   const senderIdRef = useRef("");
   const lastSeenIdRef = useRef(0);
@@ -252,6 +145,9 @@ export default function CliplinkApp() {
   const realtimeRetryRef = useRef<number | null>(null);
   const realtimeRetryCountRef = useRef(0);
   const realtimeOpenedRef = useRef(false);
+  const arrivalResetRef = useRef<number | null>(null);
+  const confirmResetRef = useRef<number | null>(null);
+  const clearedResetRef = useRef<number | null>(null);
 
   useEffect(() => {
     senderIdRef.current = getSessionSenderId();
@@ -277,29 +173,28 @@ export default function CliplinkApp() {
   }, [searchParams]);
 
   useEffect(() => {
+    const timers = [
+      syncResetRef,
+      realtimeRetryRef,
+      arrivalResetRef,
+      confirmResetRef,
+      clearedResetRef,
+    ];
+    const polling = pollingRef;
+    const stream = streamCleanupRef;
+
     return () => {
-      stopPolling();
-      stopStream();
-      clearSyncReset();
-      clearRealtimeRetry();
+      if (polling.current) {
+        window.clearInterval(polling.current);
+        polling.current = null;
+      }
+      stream.current?.();
+      stream.current = null;
+      for (const timer of timers) {
+        clearTimer(timer);
+      }
       transport.disconnect();
     };
-  }, []);
-
-  const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
-    if (
-      (event.metaKey || event.ctrlKey) &&
-      event.key === "Enter" &&
-      roomCodeRef.current
-    ) {
-      event.preventDefault();
-      void sendClip();
-    }
-  });
-
-  useEffect(() => {
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
   useEffect(() => {
@@ -316,14 +211,6 @@ export default function CliplinkApp() {
       document.removeEventListener("drop", preventFileNavigation);
     };
   }, []);
-
-  function pushToast(message: string, tone: ToastTone = "info") {
-    const id = Date.now() + Math.floor(Math.random() * 1000);
-    setToasts((current) => [...current, { id, message, tone }]);
-    window.setTimeout(() => {
-      setToasts((current) => current.filter((toast) => toast.id !== id));
-    }, 2500);
-  }
 
   function updateUrl(code: RoomCode | null) {
     const next = new URLSearchParams(searchParams.toString());
@@ -344,17 +231,11 @@ export default function CliplinkApp() {
   }
 
   function clearRealtimeRetry() {
-    if (realtimeRetryRef.current) {
-      window.clearTimeout(realtimeRetryRef.current);
-      realtimeRetryRef.current = null;
-    }
+    clearTimer(realtimeRetryRef);
   }
 
   function clearSyncReset() {
-    if (syncResetRef.current) {
-      window.clearTimeout(syncResetRef.current);
-      syncResetRef.current = null;
-    }
+    clearTimer(syncResetRef);
   }
 
   function markSyncing() {
@@ -366,11 +247,28 @@ export default function CliplinkApp() {
     }, 600);
   }
 
-  function triggerFlash() {
-    setFlashActive(false);
-    window.requestAnimationFrame(() => {
-      setFlashActive(true);
-      window.setTimeout(() => setFlashActive(false), 300);
+  /**
+   * Highlights the panel and the row that just landed. This replaces a
+   * full-viewport flash: an abrupt whole-screen brightness jump on every
+   * incoming message is a photosensitivity risk, and it drew the eye away from
+   * the thing that actually changed.
+   */
+  function markArrival(clipId: number) {
+    clearTimer(arrivalResetRef);
+    setArrivalId(clipId);
+    arrivalResetRef.current = window.setTimeout(() => {
+      setArrivalId(null);
+      arrivalResetRef.current = null;
+    }, ARRIVAL_CUE_MS);
+  }
+
+  function markEntering(ids: number[]) {
+    setEnteringIds((current) => {
+      const next = new Set(current);
+      for (const id of ids) {
+        next.add(id);
+      }
+      return next;
     });
   }
 
@@ -415,8 +313,10 @@ export default function CliplinkApp() {
 
     setHistory((current) => mergeHistory(current, clips));
     setStatus("live");
-    triggerFlash();
-    const latest = clips[0];
+    markEntering(clips.map((clip) => clip.id));
+    const latest = clips[clips.length - 1];
+    markArrival(latest.id);
+    haptic("arrive");
     void autoCopyIncoming(latest.text);
   }
 
@@ -434,7 +334,9 @@ export default function CliplinkApp() {
         setRealtimeReady(true);
         files.announce();
         if (hadFallback) {
-          pushToast("Realtime connection restored.", "success");
+          pushToast("Realtime connection restored.", "success", {
+            unprompted: true,
+          });
         }
       },
       onClips: (clips) => {
@@ -466,6 +368,7 @@ export default function CliplinkApp() {
               ? "Realtime connection dropped. Using polling for now."
               : "Realtime unavailable. Using polling for now.",
             "info",
+            { unprompted: true },
           );
         }
       },
@@ -499,7 +402,6 @@ export default function CliplinkApp() {
           text: `Join my CLIPLINK room: ${code}`,
           url,
         });
-        pushToast("Room link shared!", "success");
         return;
       }
 
@@ -510,20 +412,14 @@ export default function CliplinkApp() {
     }
   }
 
-  function openQrSheet() {
-    setShowQrSheet(true);
-  }
-
-  function closeQrSheet() {
-    setShowQrSheet(false);
-  }
-
   async function autoCopyIncoming(text: string) {
     try {
       await writeClipboard(text);
-      pushToast("Received clip — copied!", "success");
+      pushToast("Received clip — copied!", "success", { unprompted: true });
     } catch {
-      pushToast("Received clip. Clipboard access was blocked.", "info");
+      pushToast("Received clip. Clipboard access was blocked.", "info", {
+        unprompted: true,
+      });
     }
   }
 
@@ -568,6 +464,8 @@ export default function CliplinkApp() {
     setStatus("live");
     setEditorText("");
     setShowQrSheet(false);
+    // Rows present at hydration are not arrivals, so they must not animate in.
+    setEnteringIds(new Set());
     lastSeenIdRef.current = lastSeenId;
     updateUrl(nextRoomCode);
     startRealtime(nextRoomCode);
@@ -617,6 +515,27 @@ export default function CliplinkApp() {
     }
   }
 
+  /**
+   * Leaving discards the room and its history with no way back, so it asks
+   * once. The confirmation lapses on its own rather than sticking around as a
+   * second thing to dismiss.
+   */
+  function requestLeave() {
+    if (!confirmingLeave) {
+      setConfirmingLeave(true);
+      clearTimer(confirmResetRef);
+      confirmResetRef.current = window.setTimeout(() => {
+        setConfirmingLeave(false);
+        confirmResetRef.current = null;
+      }, CONFIRM_WINDOW_MS);
+      return;
+    }
+
+    clearTimer(confirmResetRef);
+    setConfirmingLeave(false);
+    leaveRoom();
+  }
+
   function leaveRoom() {
     files.reset();
     setRealtimeReady(false);
@@ -630,6 +549,7 @@ export default function CliplinkApp() {
     setJoinCode("");
     setShowQrSheet(false);
     setStatus("offline");
+    setEnteringIds(new Set());
     lastSeenIdRef.current = 0;
     realtimeRetryCountRef.current = 0;
     realtimeOpenedRef.current = false;
@@ -698,10 +618,13 @@ export default function CliplinkApp() {
       };
 
       setHistory((current) => mergeHistory(current, [sessionClip]));
+      markEntering([response.clip.id]);
       setEditorText("");
       lastSeenIdRef.current = Math.max(lastSeenIdRef.current, response.clip.id);
       markSyncing();
-      pushToast("Sent!", "success");
+      // The new history row and the status dot already confirm the send, so the
+      // haptic is the only extra channel it needs.
+      haptic("commit");
     } catch (error) {
       setStatus("error");
       pushToast(
@@ -723,6 +646,56 @@ export default function CliplinkApp() {
         "info",
       );
     }
+  }
+
+  /**
+   * Enter commits the clip, because sending is what this box is for. A newline
+   * is still reachable with Ctrl/Cmd+Enter, and with Shift+Enter since that is
+   * the muscle memory people arrive with.
+   */
+  function handleEditorKeyDown(
+    event: ReactKeyboardEvent<HTMLTextAreaElement>,
+  ) {
+    if (event.key !== "Enter" || event.nativeEvent.isComposing) {
+      return;
+    }
+
+    if (event.metaKey || event.ctrlKey || event.shiftKey) {
+      event.preventDefault();
+      const target = event.currentTarget;
+      const { selectionStart, selectionEnd, value } = target;
+      const next =
+        value.slice(0, selectionStart) + "\n" + value.slice(selectionEnd);
+      setEditorText(next);
+      // Restore the caret after React has committed the new value.
+      requestAnimationFrame(() => {
+        target.selectionStart = selectionStart + 1;
+        target.selectionEnd = selectionStart + 1;
+      });
+      return;
+    }
+
+    event.preventDefault();
+    void sendClip();
+  }
+
+  function clearEditor() {
+    if (!editorText) {
+      return;
+    }
+    setClearedText(editorText);
+    setEditorText("");
+    clearTimer(clearedResetRef);
+    clearedResetRef.current = window.setTimeout(() => {
+      setClearedText("");
+      clearedResetRef.current = null;
+    }, CONFIRM_WINDOW_MS * 2);
+  }
+
+  function undoClear() {
+    setEditorText(clearedText);
+    setClearedText("");
+    clearTimer(clearedResetRef);
   }
 
   function shareFiles(list: FileList | File[] | null) {
@@ -797,67 +770,73 @@ export default function CliplinkApp() {
     background:
       "linear-gradient(180deg, var(--surface-elevated), transparent 22%), var(--panel-fill)",
   };
-  const headerSurfaceStyle = {
-    background: "color-mix(in srgb, var(--bg) 82%, transparent)",
-  };
-  const toastSurfaceStyle = {
-    background: "color-mix(in srgb, var(--surface) 96%, transparent)",
-  };
+  const headerSurfaceStyle = { background: "var(--chrome-bg)" };
+
+  // Transitions name their properties: the bare `transition` utility also spans
+  // `filter` and `backdrop-filter`, which is expensive on blurred chrome and
+  // wanted by none of these controls.
   const buttonBaseClass =
-    "inline-flex items-center justify-center gap-2.5 rounded-[3px] border px-6 py-3.5 text-[13px] uppercase tracking-wider transition disabled:cursor-not-allowed disabled:opacity-[0.55] disabled:transform-none";
-  const primaryButtonClass = cx(
+    "inline-flex items-center justify-center gap-2.5 rounded-control border px-6 py-3.5 text-sm tracking-label uppercase transition-[color,background-color,border-color,translate,scale] duration-150 ease-out active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-55 disabled:active:scale-100";
+  const primaryButtonClass = cn(
     buttonBaseClass,
-    "min-h-13.5 border-(--primary-border) bg-(--primary-bg) font-bold text-(--primary-text) hover:-translate-y-px hover:bg-(--primary-hover-bg) focus-visible:-translate-y-px focus-visible:bg-(--primary-hover-bg) sm:min-h-13 md:min-h-12",
+    "min-h-12 border-(--primary-border) bg-(--primary-bg) font-bold text-(--primary-text) hover:-translate-y-px hover:bg-(--primary-hover-bg) focus-visible:-translate-y-px focus-visible:bg-(--primary-hover-bg)",
   );
-  const secondaryButtonClass = cx(
+  const secondaryButtonClass = cn(
     buttonBaseClass,
-    "min-h-13.5 border-(--border-active) bg-transparent text-(--text-dim) hover:border-(--accent) hover:text-(--accent) focus-visible:border-(--accent) focus-visible:text-(--accent) sm:min-h-13 md:min-h-12",
+    "min-h-12 border-line-strong bg-transparent text-dim hover:border-accent hover:text-accent focus-visible:border-accent focus-visible:text-accent",
   );
+  // 44px on touch, 40px once a precise pointer is available.
   const actionButtonClass =
-    "inline-flex min-h-9.5 items-center justify-center gap-1.5 rounded-xs border border-(--border-active) bg-transparent px-3.5 py-2 text-[11px] uppercase tracking-[0.08em] text-(--text-dim) transition hover:border-(--text-dim) hover:text-(--text) focus-visible:border-(--text-dim) focus-visible:text-(--text) max-[430px]:w-full";
+    "inline-flex min-h-11 items-center justify-center gap-1.5 rounded-control border border-line-strong bg-transparent px-3.5 py-2 text-2xs tracking-label text-dim uppercase transition-[color,border-color,scale] duration-150 ease-out active:scale-[0.96] md:min-h-10 max-[430px]:w-full";
   const panelToolClass =
-    "min-h-7.5 rounded-xs border border-transparent px-2.5 py-1 text-[10px] uppercase tracking-[0.08em] text-(--text-muted) transition hover:border-(--border-active) hover:text-(--text) focus-visible:border-(--border-active) focus-visible:text-(--text)";
+    "inline-flex min-h-11 items-center justify-center gap-1.5 rounded-control border border-transparent px-3 py-1 text-2xs tracking-label text-muted uppercase transition-[color,border-color,background-color,scale] duration-150 ease-out hover:border-line-strong hover:text-fg focus-visible:border-line-strong focus-visible:text-fg active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-55 disabled:active:scale-100 md:min-h-10";
   const panelAccentClass =
-    "border-(--accent-button-border) bg-(--accent-button-bg) font-bold text-(--accent-button-text) hover:border-(--accent-button-hover-border) hover:bg-(--accent-button-hover-bg) focus-visible:border-(--accent-button-hover-border) focus-visible:bg-(--accent-button-hover-bg) hover:text-(--accent-button-text)";
+    "border-(--accent-button-border) bg-(--accent-button-bg) font-bold text-(--accent-button-text) hover:border-(--accent-button-hover-border) hover:bg-(--accent-button-hover-bg) hover:text-(--accent-button-text) focus-visible:border-(--accent-button-hover-border) focus-visible:bg-(--accent-button-hover-bg)";
+  const rowClass =
+    "relative grid grid-cols-[48px_1fr] items-start gap-2.5 rounded-surface border border-line p-3 shadow-row md:flex md:items-start md:gap-3 md:px-4 md:py-3";
 
   return (
     <>
       <div className="flex min-h-screen flex-col">
         <header
-          className="sticky top-0 z-30 flex items-center justify-between border-b px-3.5 py-3 backdrop-blur-[14px] sm:px-5 sm:py-3.5 md:px-8 md:py-4.5"
+          className="sticky top-0 z-30 flex items-center justify-between px-3.5 py-3 backdrop-blur-(--chrome-blur) sm:px-5 sm:py-3.5 md:px-8 md:py-4.5 after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-4 after:bg-linear-to-b after:from-(--bg) after:to-transparent after:opacity-60"
           style={headerSurfaceStyle}
         >
-          <div
-            className="text-[17px] font-extrabold tracking-[-0.04em] md:text-[20px] md:tracking-[-0.03em]"
-            style={{ fontFamily: "var(--font-display)" }}
-          >
+          <div className="font-display text-xl font-extrabold tracking-display md:text-2xl">
             CLIP
-            <span className="text-(--logo-accent)">LINK</span>
+            <span className="text-logo">LINK</span>
           </div>
           <div className="flex items-center gap-1.5 sm:gap-2 md:gap-3">
             <div
-              className="inline-flex items-center gap-1.25 text-[9px] uppercase tracking-[0.04em] text-(--text-muted) sm:gap-1.5 sm:text-[10px] sm:tracking-[0.06em] md:gap-2 md:text-[11px] md:tracking-[0.08em]"
+              className="inline-flex items-center gap-1.5 text-2xs tracking-label text-muted uppercase md:gap-2"
               aria-live="polite"
             >
-              <div
+              <span
                 className={cn(
-                  "h-1.75 w-1.75 rounded-full bg-(--text-muted) transition-[background,box-shadow] duration-200",
-                  status === "live" &&
-                    "bg-(--success) shadow-[0_0_10px_var(--success)]",
+                  "relative h-1.75 w-1.75 rounded-full bg-muted transition-colors duration-200",
+                  // The glow is an opacity-animated pseudo-element rather than a
+                  // transitioned box-shadow, which the compositor cannot handle.
+                  "after:absolute after:inset-0 after:rounded-full after:opacity-0 after:shadow-[0_0_10px_currentColor] after:transition-opacity after:duration-200 after:content-['']",
+                  status === "live" && "bg-success text-success after:opacity-100",
                   status === "syncing" &&
-                    "animate-[pulse_1s_infinite] bg-(--accent) shadow-[0_0_10px_var(--accent)]",
-                  status === "error" &&
-                    "bg-(--danger) shadow-[0_0_10px_rgb(255_68_68/35%)]",
+                    "animate-[pulse_1s_ease-in-out_infinite] bg-accent text-accent after:opacity-100",
+                  status === "error" && "bg-danger text-danger after:opacity-100",
                 )}
               />
               <span>{statusLabel(status)}</span>
             </div>
             <button
-              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full border border-(--border-active) bg-white/2 p-0 text-(--text-dim) transition hover:border-(--accent) hover:text-(--text) focus-visible:border-(--accent) focus-visible:text-(--text) md:min-h-8.5 md:min-w-8.5 md:px-2.75 md:py-1.5"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full border border-line-strong bg-white/2 p-0 text-dim transition-[color,border-color,scale] duration-150 ease-out hover:border-accent hover:text-fg focus-visible:border-accent focus-visible:text-fg active:scale-[0.96] md:min-h-10 md:min-w-10"
               type="button"
+              aria-label={
+                mounted && resolvedTheme === "light"
+                  ? "Switch to dark theme"
+                  : "Switch to light theme"
+              }
               onClick={toggleTheme}
             >
               <IconTheme
+                size={16}
                 theme={mounted && resolvedTheme === "light" ? "light" : "dark"}
               />
             </button>
@@ -869,26 +848,17 @@ export default function CliplinkApp() {
             {!joined ? (
               <section className="mx-auto flex max-w-180 flex-col items-center gap-5 sm:gap-6 md:gap-9">
                 <div className="max-w-full text-center md:max-w-175">
-                  <h1
-                    className={cx(
-                      "mb-4 text-[clamp(1.7rem,15vw,2.45rem)] leading-[0.98] text-(--text) sm:text-[clamp(2rem,11vw,3rem)] sm:leading-[0.96] md:text-[clamp(4.8rem,7.1vw,6.35rem)] md:leading-[0.82]",
-                      mounted && resolvedTheme === "light"
-                        ? "tracking-[-0.075em]"
-                        : "tracking-tighter sm:tracking-[-0.06em] md:tracking-[-0.07em]",
-                    )}
-                    style={{ fontFamily: "var(--font-display)" }}
-                  >
-                    <span className="block md:max-w-[6.2ch] md:mx-auto">
+                  <h1 className="font-display mb-4 text-[clamp(1.7rem,15vw,2.45rem)] leading-[0.98] tracking-display text-balance text-fg sm:text-[clamp(2rem,11vw,3rem)] sm:leading-[0.96] md:text-[clamp(4.8rem,7.1vw,6.35rem)] md:leading-[0.82]">
+                    <span className="block md:mx-auto md:max-w-[6.2ch]">
                       Copy here.
                     </span>
-                    <em className="mt-[0.08em] block not-italic text-(--hero-highlight) sm:mt-[0.04em] md:mx-auto md:max-w-[7.3ch]">
+                    <span className="mt-[0.08em] block text-hero sm:mt-[0.04em] md:mx-auto md:max-w-[7.3ch]">
                       Paste anywhere.
-                    </em>
+                    </span>
                   </h1>
-                  <p className="m-0 text-[11px] leading-[1.75] text-(--text-dim) sm:text-[12px] md:text-[13px] md:leading-[1.8]">
-                    Create a room. Share the code.
-                    <br />
-                    Your clipboard, synced across devices.
+                  <p className="m-0 text-2xs text-pretty text-dim sm:text-xs md:text-sm">
+                    Create a room. Share the code. Your clipboard, synced across
+                    devices.
                   </p>
                 </div>
 
@@ -898,19 +868,19 @@ export default function CliplinkApp() {
                     onClick={() => void createRoom()}
                     disabled={isBusy}
                   >
-                    <IconPlus />
+                    <IconPlus size={14} weight="bold" />
                     New Room
                   </button>
 
-                  <div className="flex w-full items-center gap-2 text-[10px] uppercase tracking-widest text-(--text-muted) sm:text-[11px] sm:gap-3">
-                    <span className="h-px flex-1 bg-(--border)" />
+                  <div className="flex w-full items-center gap-2 text-2xs tracking-label-wide text-muted uppercase sm:gap-3">
+                    <span className="h-px flex-1 bg-line" />
                     <span>or join existing</span>
-                    <span className="h-px flex-1 bg-(--border)" />
+                    <span className="h-px flex-1 bg-line" />
                   </div>
 
                   <div className="flex flex-col gap-2 sm:gap-2.5 md:flex-row">
                     <input
-                      className="min-h-13.5 flex-1 rounded-[3px] border border-(--border-active) bg-(--surface) px-4 py-3 text-center text-[18px] font-bold uppercase tracking-[0.16em] text-(--text) outline-none transition placeholder:text-[13px] placeholder:font-normal placeholder:tracking-[0.08em] placeholder:text-(--text-muted) focus:border-(--accent) sm:min-h-13"
+                      className="min-h-12 flex-1 rounded-control border border-line-strong bg-surface px-4 py-3 text-center text-xl font-bold tracking-code text-fg uppercase tabular-nums outline-none transition-colors duration-150 placeholder:text-sm placeholder:font-normal placeholder:tracking-label placeholder:text-muted focus:border-accent"
                       type="text"
                       inputMode="text"
                       autoCapitalize="characters"
@@ -918,6 +888,7 @@ export default function CliplinkApp() {
                       spellCheck={false}
                       maxLength={6}
                       placeholder="Enter code"
+                      aria-label="Room code"
                       value={joinCode}
                       onChange={(event) =>
                         setJoinCode(normalizeRoomCode(event.target.value))
@@ -938,7 +909,7 @@ export default function CliplinkApp() {
                     </button>
                   </div>
 
-                  <p className="-mt-1 max-w-160 text-center text-[10px] leading-[1.8] text-(--text-muted) md:text-[11px] md:leading-[1.7]">
+                  <p className="-mt-1 max-w-160 text-center text-2xs text-pretty text-muted">
                     No sign-up, no install, no saved history. Rooms expire after
                     6 hours of inactivity.
                   </p>
@@ -948,13 +919,13 @@ export default function CliplinkApp() {
               <section className="flex w-full flex-col gap-4.5 md:gap-6">
                 <div className="flex flex-col items-stretch justify-between gap-4 md:flex-row md:items-start">
                   <div className="flex flex-col items-start gap-2 md:flex-row md:flex-wrap md:items-center md:gap-3">
-                    <span className="text-[11px] uppercase tracking-widest text-(--text-muted)">
+                    <span className="text-2xs tracking-label-wide text-muted uppercase">
                       Room
                     </span>
                     <button
-                      className="cursor-pointer rounded-xs border border-(--accent-dim) bg-transparent px-2.5 py-1.5 text-[16px] font-bold tracking-[0.14em] text-(--room-badge) transition hover:bg-(--accent-dim) focus-visible:bg-(--accent-dim) sm:text-[18px] md:px-3 md:text-[20px] md:tracking-[0.2em]"
+                      className="inline-flex min-h-11 cursor-pointer items-center rounded-control border border-accent-dim bg-transparent px-2.5 text-lg font-bold tracking-code text-room tabular-nums transition-[background-color,scale] duration-150 ease-out hover:bg-accent-dim focus-visible:bg-accent-dim active:scale-[0.96] md:min-h-10 md:px-3 md:text-xl"
                       type="button"
-                      title="Copy room link"
+                      aria-label={`Copy invite link for room ${roomCode}`}
                       onClick={() => void copyRoomLink(roomCode!)}
                     >
                       {roomCode}
@@ -967,54 +938,64 @@ export default function CliplinkApp() {
                       type="button"
                       onClick={() => void shareRoom(roomCode!)}
                     >
-                      <IconCopy />
+                      <IconCopy size={12} />
                       Share Link
                     </button>
                     <button
+                      ref={qrTriggerRef}
                       className={actionButtonClass}
                       type="button"
-                      onClick={openQrSheet}
+                      aria-haspopup="dialog"
+                      aria-expanded={showQrSheet}
+                      onClick={() => setShowQrSheet(true)}
                     >
-                      <IconQr />
+                      <IconQr size={12} />
                       QR
                     </button>
                     <button
-                      className={cx(
+                      className={cn(
                         actionButtonClass,
-                        "hover:border-(--danger) hover:text-(--danger) focus-visible:border-(--danger) focus-visible:text-(--danger)",
+                        confirmingLeave
+                          ? "border-danger text-danger"
+                          : "hover:border-danger hover:text-danger focus-visible:border-danger focus-visible:text-danger",
                       )}
                       type="button"
-                      onClick={leaveRoom}
+                      onClick={requestLeave}
                     >
-                      Leave
+                      {confirmingLeave ? "Confirm leave" : "Leave"}
                     </button>
                   </div>
                 </div>
 
                 <div
-                  className="relative overflow-hidden rounded-sm border border-(--border) shadow-(--shadow)"
+                  className={cn(
+                    "relative overflow-hidden rounded-surface border border-line shadow-row",
+                    arrivalId !== null && "arrival-cue",
+                  )}
                   style={panelSurfaceStyle}
                   onDragOver={handleDragOver}
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop}
                 >
-                  {dragActive ? (
-                    <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-sm border-2 border-dashed border-(--accent) bg-(--accent-dim) px-4 text-center text-[12px] uppercase tracking-widest text-(--accent) backdrop-blur-[2px]">
-                      {realtimeReady
-                        ? "Drop to share peer-to-peer"
-                        : "File transfer needs a live connection"}
-                    </div>
-                  ) : null}
-                  <div className="flex flex-col items-stretch justify-between gap-4 border-b border-(--border) bg-(--surface-elevated) px-4 py-2.5 md:flex-row md:items-center">
-                    <span className="hidden text-[10px] uppercase tracking-[0.12em] text-(--text-muted) md:inline">
+                  <div
+                    className={cn(
+                      "pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-surface border-2 border-dashed border-accent bg-accent-dim px-4 text-center text-xs tracking-label-wide text-accent uppercase backdrop-blur-[2px]",
+                      "transition-opacity duration-150 ease-out",
+                      dragActive ? "opacity-100" : "opacity-0",
+                    )}
+                    aria-hidden={!dragActive}
+                  >
+                    {realtimeReady
+                      ? "Drop to share peer-to-peer"
+                      : "File transfer needs a live connection"}
+                  </div>
+                  <div className="flex flex-col items-stretch justify-between gap-4 border-b border-line bg-raised px-4 py-2.5 md:flex-row md:items-center">
+                    <span className="hidden text-2xs tracking-label-wide text-muted uppercase md:inline">
                       Clipboard
                     </span>
                     <div className="flex w-full flex-wrap items-center justify-start gap-1.5 md:w-auto md:flex-nowrap md:justify-end">
                       <button
-                        className={cn(
-                          panelToolClass,
-                          "inline-flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-[0.55]",
-                        )}
+                        className={panelToolClass}
                         type="button"
                         disabled={!realtimeReady}
                         title={
@@ -1024,7 +1005,7 @@ export default function CliplinkApp() {
                         }
                         onClick={() => fileInputRef.current?.click()}
                       >
-                        <IconPaperclip />
+                        <IconPaperclip size={12} />
                         Attach
                       </button>
                       <input
@@ -1044,37 +1025,54 @@ export default function CliplinkApp() {
                       >
                         Paste from device
                       </button>
+                      {clearedText ? (
+                        <button
+                          className={cn(panelToolClass, "text-accent")}
+                          type="button"
+                          onClick={undoClear}
+                        >
+                          Undo clear
+                        </button>
+                      ) : (
+                        <button
+                          className={panelToolClass}
+                          type="button"
+                          disabled={!editorText}
+                          onClick={clearEditor}
+                        >
+                          Clear text
+                        </button>
+                      )}
                       <button
-                        className={panelToolClass}
-                        type="button"
-                        onClick={() => setEditorText("")}
-                      >
-                        Clear
-                      </button>
-                      <button
-                        className={cn(
-                          panelToolClass,
-                          panelAccentClass,
-                          "min-w-20.5 px-4",
-                        )}
+                        className={cn(panelToolClass, panelAccentClass, "min-w-20.5 px-4")}
                         type="button"
                         onClick={() => void sendClip()}
                         disabled={isBusy}
                       >
-                        Send ↑
+                        Send
+                        <IconArrowUp size={12} weight="bold" />
                       </button>
                     </div>
                   </div>
 
                   <textarea
-                    className="min-h-50 w-full resize-y border-0 bg-transparent px-4 py-4 text-[13px] leading-[1.7] text-(--text) outline-none placeholder:text-(--text-muted) sm:min-h-50 md:min-h-60 md:px-5 md:py-5 md:text-[14px]"
+                    className="min-h-50 w-full resize-y border-0 bg-transparent px-4 py-4 text-sm text-fg outline-none placeholder:text-muted md:min-h-60 md:px-5 md:py-5 md:text-base"
                     value={editorText}
                     placeholder="Type or paste anything here, then hit Send to sync it across devices. Drop or paste files to share them peer-to-peer..."
+                    aria-label="Clip text"
                     onChange={(event) => setEditorText(event.target.value)}
+                    onKeyDown={handleEditorKeyDown}
                     onPaste={handlePaste}
                   />
-                  <div className="border-t border-(--border) px-4 py-2 text-left text-[10px] tracking-[0.06em] text-(--text-muted) md:text-right md:px-4">
-                    {formatCharCount(editorText.length)}
+                  <div className="flex flex-col gap-1 border-t border-line px-4 py-2 text-2xs tracking-label text-muted md:flex-row md:items-center md:justify-between">
+                    <span>
+                      <kbd className="font-mono">Enter</kbd> to send ·{" "}
+                      <kbd className="font-mono">Ctrl</kbd>+
+                      <kbd className="font-mono">Enter</kbd> for a new line
+                    </span>
+                    <span className="tabular-nums">
+                      {formatCharCount(editorText.length)}
+                    </span>
                   </div>
                 </div>
 
@@ -1090,52 +1088,66 @@ export default function CliplinkApp() {
                 />
 
                 <div className="flex flex-col gap-2.5">
-                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.12em] text-(--text-muted)">
+                  <div className="flex items-center gap-2 text-2xs tracking-label-wide text-muted uppercase">
                     <span>History</span>
-                    <span className="h-px flex-1 bg-(--border)" />
+                    <span className="h-px flex-1 bg-line" />
                   </div>
                   <div className="flex flex-col gap-1.5">
                     {history.length === 0 ? (
-                      <div className="rounded-sm border border-dashed border-(--border-active) px-8 py-8 text-center text-[12px] tracking-wider text-(--text-muted)">
+                      <div className="rounded-surface border border-dashed border-line-strong px-8 py-8 text-center text-xs tracking-label text-muted">
                         No clips yet. Send something.
                       </div>
                     ) : (
                       history.map((clip) => (
+                        // The grid wrapper lets a new row open the list rather
+                        // than teleporting every row beneath it down.
                         <div
                           key={clip.id}
-                          className={cx(
-                            "grid animate-[fade-in_0.3s_ease] grid-cols-[48px_1fr] items-start gap-2.5 rounded-sm border border-(--border) p-3 shadow-(--shadow) md:flex md:items-start md:gap-3 md:px-4 md:py-3",
-                            clip.direction === "incoming"
-                              ? "border-l-2 border-l-(--incoming-border)"
-                              : "border-l-2 border-l-(--text-muted)",
+                          className={cn(
+                            "grid grid-rows-[1fr]",
+                            enteringIds.has(clip.id) &&
+                              "animate-[row-enter_260ms_var(--ease-out-quint)_both]",
                           )}
-                          style={panelSurfaceStyle}
                         >
-                          <div className="flex min-w-13 flex-col gap-1 md:min-w-16">
-                            <span
-                              className={cx(
-                                "text-[9px] uppercase tracking-widest",
+                          <div className="overflow-hidden">
+                            <div
+                              className={cn(
+                                rowClass,
                                 clip.direction === "incoming"
-                                  ? "text-(--incoming-text)"
-                                  : "text-(--text-muted)",
+                                  ? "border-l-2 border-l-incoming-line"
+                                  : "border-l-2 border-l-muted",
+                                arrivalId === clip.id && "arrival-cue",
                               )}
+                              style={panelSurfaceStyle}
                             >
-                              {clip.direction === "incoming" ? "↓ IN" : "↑ OUT"}
-                            </span>
-                            <span className="text-[9px] uppercase tracking-widest text-(--text-muted)">
-                              {formatHistoryTime(clip.ts)}
-                            </span>
+                              <div className="flex min-w-13 flex-col gap-1 md:min-w-16">
+                                <span
+                                  className={cn(
+                                    "text-2xs tracking-label uppercase",
+                                    clip.direction === "incoming"
+                                      ? "text-incoming"
+                                      : "text-muted",
+                                  )}
+                                >
+                                  {clip.direction === "incoming" ? "↓ IN" : "↑ OUT"}
+                                </span>
+                                <span className="text-2xs tracking-label text-muted uppercase tabular-nums">
+                                  {formatHistoryTime(clip.ts)}
+                                </span>
+                              </div>
+                              <div className="min-w-0 truncate text-2xs text-dim md:text-xs">
+                                {truncatePreview(clip.text)}
+                              </div>
+                              <button
+                                className="col-start-2 mt-1 inline-flex min-h-11 items-center justify-self-start rounded-control border border-transparent px-2 text-2xs text-muted transition-[color,border-color,scale] duration-150 ease-out hover:border-line-strong hover:text-fg focus-visible:border-line-strong focus-visible:text-fg active:scale-[0.96] md:mt-0 md:min-h-10 md:shrink-0"
+                                type="button"
+                                aria-label="Copy this clip"
+                                onClick={() => void copyHistoryItem(clip.text)}
+                              >
+                                copy
+                              </button>
+                            </div>
                           </div>
-                          <div className="min-w-0 text-[11px] leading-normal text-(--text-dim) truncate md:text-[12px]">
-                            {truncatePreview(clip.text)}
-                          </div>
-                          <button
-                            className="col-start-2 mt-1 min-h-8 justify-self-start rounded-xs border border-transparent px-2 py-1 text-[10px] text-(--text-muted) transition hover:border-(--border-active) hover:text-(--text) focus-visible:border-(--border-active) focus-visible:text-(--text) md:mt-0 md:shrink-0"
-                            type="button"
-                            onClick={() => void copyHistoryItem(clip.text)}
-                          >
-                            copy
-                          </button>
                         </div>
                       ))
                     )}
@@ -1147,102 +1159,21 @@ export default function CliplinkApp() {
         </main>
       </div>
 
-      <div
-        className={cx(
-          "pointer-events-none fixed inset-0 z-500 bg-(--flash-bg) transition-opacity duration-150",
-          flashActive ? "opacity-100 duration-0" : "opacity-0",
-        )}
-      />
-
-      {joined && showQrSheet ? (
-        <div
-          className="fixed inset-0 z-800 flex items-end justify-center bg-black/60 p-3 backdrop-blur-[10px] sm:p-6 sm:items-center"
-          role="presentation"
-          onClick={closeQrSheet}
-        >
-          <div
-            className="flex w-full max-w-105 flex-col gap-4.5 rounded-t-[18px] rounded-b-lg border border-(--border-active) p-4.5 shadow-(--shadow) sm:rounded-2xl sm:p-5"
-            style={panelSurfaceStyle}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Room QR code"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex flex-col items-stretch gap-3 max-[430px]:items-stretch sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <p className="mb-1.5 text-[10px] uppercase tracking-[0.12em] text-(--text-muted)">
-                  Scan to join
-                </p>
-                <h2 className="m-0 text-[20px] tracking-[0.14em] text-(--accent) sm:text-[24px]">
-                  {roomCode}
-                </h2>
-              </div>
-              <button
-                className={actionButtonClass}
-                type="button"
-                onClick={closeQrSheet}
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="flex justify-center rounded-xl border border-(--border) bg-white p-4">
-              <Image
-                src={qrCodeUrl}
-                alt={`QR code for room ${roomCode}`}
-                width={280}
-                height={280}
-                unoptimized
-              />
-            </div>
-
-            <p className="m-0 text-[12px] leading-[1.7] text-(--text-dim)">
-              Scan this code or copy the link to open the room instantly on
-              another device.
-            </p>
-
-            <div className="flex flex-col gap-2.5 sm:flex-row">
-              <button
-                className={secondaryButtonClass}
-                type="button"
-                onClick={() => void copyRoomLink(roomCode!)}
-              >
-                Copy Link
-              </button>
-              <button
-                className={primaryButtonClass}
-                type="button"
-                onClick={() => void shareRoom(roomCode!)}
-              >
-                Share
-              </button>
-            </div>
-          </div>
-        </div>
+      {joined ? (
+        <QrSheet
+          open={showQrSheet}
+          roomCode={roomCode!}
+          qrCodeUrl={qrCodeUrl}
+          onClose={() => setShowQrSheet(false)}
+          onCopyLink={() => void copyRoomLink(roomCode!)}
+          onShare={() => void shareRoom(roomCode!)}
+          primaryButtonClass={primaryButtonClass}
+          secondaryButtonClass={secondaryButtonClass}
+          surfaceStyle={panelSurfaceStyle}
+        />
       ) : null}
 
-      <div
-        className="fixed bottom-8 left-1/2 z-999 flex -translate-x-1/2 flex-col items-center gap-2.5"
-        aria-live="polite"
-      >
-        {toasts.map((toast) => (
-          <div
-            key={toast.id}
-            className={cx(
-              "min-w-[min(92vw,320px)] animate-[toast-in_0.25s_cubic-bezier(0.34,1.56,0.64,1)] rounded-[3px] border px-4 py-2.5 text-[12px] tracking-[0.04em] shadow-(--shadow)",
-              toast.tone === "success" &&
-                "border-(--success) text-(--success)",
-              toast.tone === "info" &&
-                "border-(--accent) text-(--accent)",
-              toast.tone === "error" &&
-                "border-(--danger) text-(--danger)",
-            )}
-            style={toastSurfaceStyle}
-          >
-            {toast.message}
-          </div>
-        ))}
-      </div>
+      <Toasts toasts={toasts} onDismiss={dismissToast} />
     </>
   );
 }
