@@ -30,8 +30,13 @@
   /* Image edges: pure neutral so they never pick up the surface tint. */
   --image-edge: oklch(1 0 0 / 0.12);
 
+  /* The page gradient, named so chrome can be mixed from what is actually
+     behind it rather than from --bg, which is a different colour. */
+  --page-top: var(--surface-strong);
+  --page-bottom: var(--bg-secondary);
+
   /* Chrome materials — overridden under reduced transparency. */
-  --chrome-bg: color-mix(in srgb, var(--bg) 82%, transparent);
+  --chrome-bg: color-mix(in srgb, var(--page-top) 82%, transparent);
   --chrome-blur: 14px;
   --scrim-bg: rgb(0 0 0 / 60%);
   --scrim-blur: 10px;
@@ -84,6 +89,8 @@
 
   --image-edge: oklch(0 0 0 / 0.12);
 
+  --page-top: #f6f0e4;
+  --page-bottom: #e8dec9;
   --scrim-bg: rgb(40 32 14 / 42%);
   --toast-bg: color-mix(in srgb, var(--surface) 88%, transparent);
 
@@ -123,6 +130,7 @@
   --color-danger: var(--danger);
   --color-success: var(--success);
   --color-image-edge: var(--image-edge);
+  --color-page-top: var(--page-top);
   --color-hero: var(--hero-highlight);
   --color-logo: var(--logo-accent);
   --color-room: var(--room-badge);
@@ -196,7 +204,7 @@ body {
   overflow-x: hidden;
   background:
     radial-gradient(circle at top, rgb(255 255 255 / 3%), transparent 35%),
-    linear-gradient(180deg, var(--surface-strong) 0%, var(--bg-secondary) 100%);
+    linear-gradient(180deg, var(--page-top) 0%, var(--page-bottom) 100%);
   color: var(--text);
   font-family: var(--stack-mono);
   -webkit-font-smoothing: antialiased;
@@ -217,7 +225,7 @@ body::before {
 :root[data-theme="light"] body {
   background:
     radial-gradient(circle at top, rgb(255 255 255 / 55%), transparent 38%),
-    linear-gradient(180deg, #f6f0e4 0%, #e8dec9 100%);
+    linear-gradient(180deg, var(--page-top) 0%, var(--page-bottom) 100%);
 }
 
 :root[data-theme="light"] body::before {
@@ -239,6 +247,8 @@ a {
 @property --bg { syntax: "<color>"; inherits: true; initial-value: #0a0a0a; }
 @property --surface { syntax: "<color>"; inherits: true; initial-value: #111111; }
 @property --surface-strong { syntax: "<color>"; inherits: true; initial-value: #171717; }
+@property --page-top { syntax: "<color>"; inherits: true; initial-value: #171717; }
+@property --page-bottom { syntax: "<color>"; inherits: true; initial-value: #090909; }
 @property --bg-secondary { syntax: "<color>"; inherits: true; initial-value: #090909; }
 @property --border { syntax: "<color>"; inherits: true; initial-value: #1e1e1e; }
 @property --border-active { syntax: "<color>"; inherits: true; initial-value: #333333; }
@@ -260,6 +270,8 @@ a {
     --bg-secondary 220ms var(--ease-out-quint),
     --surface 220ms var(--ease-out-quint),
     --surface-strong 220ms var(--ease-out-quint),
+    --page-top 220ms var(--ease-out-quint),
+    --page-bottom 220ms var(--ease-out-quint),
     --border 220ms var(--ease-out-quint),
     --border-active 220ms var(--ease-out-quint),
     --accent 220ms var(--ease-out-quint),
