@@ -255,6 +255,11 @@ export default function CliplinkApp() {
     clearTimer(syncResetRef);
   }
 
+  function clearUndoBuffer() {
+    setClearedText("");
+    clearTimer(clearedResetRef);
+  }
+
   function markSyncing() {
     clearSyncReset();
     setStatus("syncing");
@@ -337,7 +342,12 @@ export default function CliplinkApp() {
     setHistory((current) => mergeHistory(current, clips));
     setStatus("live");
     markEntering(clips.map((clip) => clip.id));
-    const latest = clips[clips.length - 1];
+    let latest = clips[0];
+    for (const clip of clips) {
+      if (clip.id > latest.id) {
+        latest = clip;
+      }
+    }
     markArrival(latest.id);
     haptic("arrive");
     void autoCopyIncoming(latest.text);
@@ -490,6 +500,7 @@ export default function CliplinkApp() {
     setHistory(nextHistory);
     setStatus("live");
     setEditorText("");
+    clearUndoBuffer();
     setShowQrSheet(false);
     // Rows present at hydration are not arrivals, so they must not animate in.
     setEnteringIds(new Set());
@@ -575,6 +586,7 @@ export default function CliplinkApp() {
     setRoomCode(null);
     setHistory([]);
     setEditorText("");
+    clearUndoBuffer();
     setJoinCode("");
     setShowQrSheet(false);
     setStatus("offline");
@@ -650,6 +662,7 @@ export default function CliplinkApp() {
       setHistory((current) => mergeHistory(current, [sessionClip]));
       markEntering([response.clip.id]);
       setEditorText("");
+      clearUndoBuffer();
       lastSeenIdRef.current = Math.max(lastSeenIdRef.current, response.clip.id);
       markSyncing();
       // The new history row and the status dot already confirm the send, so the
@@ -670,6 +683,7 @@ export default function CliplinkApp() {
     try {
       const text = await readClipboard();
       setEditorText(text);
+      clearUndoBuffer();
     } catch {
       pushToast(
         "Clipboard access denied. Paste manually with Ctrl/Cmd+V.",
@@ -697,6 +711,7 @@ export default function CliplinkApp() {
       const next =
         value.slice(0, selectionStart) + "\n" + value.slice(selectionEnd);
       setEditorText(next);
+      clearUndoBuffer();
       // Restore the caret after React has committed the new value.
       requestAnimationFrame(() => {
         target.selectionStart = selectionStart + 1;
@@ -724,8 +739,12 @@ export default function CliplinkApp() {
 
   function undoClear() {
     setEditorText(clearedText);
-    setClearedText("");
-    clearTimer(clearedResetRef);
+    clearUndoBuffer();
+  }
+
+  function handleEditorChange(nextText: string) {
+    setEditorText(nextText);
+    clearUndoBuffer();
   }
 
   function shareFiles(list: FileList | File[] | null) {
@@ -1093,7 +1112,7 @@ export default function CliplinkApp() {
                     value={editorText}
                     placeholder="Type or paste anything here, then hit Send to sync it across devices. Drop or paste files to share them peer-to-peer..."
                     aria-label="Clip text"
-                    onChange={(event) => setEditorText(event.target.value)}
+                    onChange={(event) => handleEditorChange(event.target.value)}
                     onKeyDown={handleEditorKeyDown}
                     onPaste={handlePaste}
                   />
