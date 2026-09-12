@@ -2,11 +2,28 @@
   "name": "cliplink",
   "version": "0.1.0",
   "private": true,
+  "description": "Zero-auth cross-device clipboard sync with peer-to-peer file transfer.",
+  "license": "MIT",
+  "author": "Bakhtiyor Ganijon",
+  "homepage": "https://cliplink.thebkht.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thebkht/cliplink.git"
+  },
+  "bugs": {
+    "url": "https://github.com/thebkht/cliplink/issues"
+  },
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=20.9"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "lint:fix": "eslint --fix",
+    "type-check": "tsc --noEmit"
   },
   "dependencies": {
     "@upstash/ratelimit": "^2.0.8",

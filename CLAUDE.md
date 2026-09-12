@@ -2,226 +2,78 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Next.js 15 application (not the standard Next.js, it has breaking changes per the AGENTS.md). The project is  
- located at `/Users/thebkht/Projects/cliplink`.
+CLIPLINK is a zero-auth, ephemeral cross-device clipboard: create a room, share a 6-character code, and text sent from one device appears — and is auto-copied — on every other device in the room. Files move peer-to-peer over WebRTC and never touch the server.
 
-## Commands Reference
+Read [`AGENTS.md`](AGENTS.md) first: **this is Next.js 16, which has breaking changes from what is likely in your training data.** Consult `node_modules/next/dist/docs/` before writing framework code.
 
-- **Build**: `npm run build`
-- **Dev server**: `npm run dev`
-- **Lint**: `npm run lint`
-- **Type check**: `npm run type-check`
-- **Test**: `npm test`
-- **Run single test**: `npm test -- -t <pattern>`
-- **Test with coverage**: `npm test -- --coverage`
-- **Format**: `npm run format`
-- **Format check**: `npm run format:check`
+## Commands
+
+```bash
+pnpm dev          # dev server
+pnpm build        # next build --webpack
+pnpm start        # serve the production build
+pnpm lint         # eslint
+pnpm lint:fix     # eslint --fix
+pnpm type-check   # tsc --noEmit
+```
+
+pnpm is the package manager — do not create a `package-lock.json`. There is **no test suite**; do not invent `pnpm test` or `pnpm format`. CI runs lint, type-check, and build.
 
 ## Architecture
 
-### High-Level Structure
+```
+app/                      App Router: pages + API routes
+  layout.tsx              Root layout, metadata, theme provider
+  page.tsx                Landing + room entry
+  manifest.json           PWA manifest
+  rooms/route.ts          POST — create room
+  rooms/[code]/route.ts   GET — fetch room
+  rooms/[code]/clips/     POST — send clip; GET — poll clips after id
+  rooms/[code]/socket/    GET — WebSocket upgrade (clips + WebRTC signaling)
+components/
+  cliplink-app.tsx        The room experience (client component)
+  cliplink/               File transfer UI and hooks
+lib/cliplink/             All domain logic
+lib/utils.ts              cn() — clsx + tailwind-merge
+```
 
-src/  
- ├── app/ # Next.js App Router pages and layouts
-│ ├── layout.tsx # Root layout with providers  
- │ ├── page.tsx # Home page  
- │ ├── globals.css # Global styles  
- │ └── api/ # API routes (if any)  
- ├── components/ # React components (UI, features)  
- │ └── ui/ # UI component library  
- ├── hooks/ # Custom React hooks  
- ├── lib/ # Utility libraries and helpers  
- ├── server/ # Server-side utilities (if any)  
- ├── utils/ # Utility functions  
- └── store/ # State management (if any)
+There is **no** `src/`, `hooks/`, `store/`, or `server/` directory.
 
-### Key Technologies
+### `lib/cliplink/`
 
-- **Framework**: Next.js 15 with App Router
-- **Styling**: Tailwind CSS
-- **TypeScript**: Full type safety
-- **State**: Custom store implementation (if applicable)
-- **UI Components**: Custom UI component library
-- **Database**: Prisma ORM (with SQLite as default, Postgres in development)
-- **Authentication**: NextAuth.js (credentials strategy with cookies and headers)
-- **AI Integration**: Vercel AI SDK for AI features
-- **Validation**: Zod schemas for validation
+| File | Responsibility |
+| --- | --- |
+| `types.ts` | Shared types, including the `TransportClient` interface |
+| `constants.ts` | Every limit and timing value — TTLs, caps, chunk sizes, ICE defaults |
+| `storage.ts` | Room/clip persistence behind a `StorageAdapter`; Redis or in-memory |
+| `redis.ts` | Upstash REST client, returns `null` when unconfigured |
+| `pubsub.ts` | `ioredis` pub/sub fan-out, with a process-local `EventEmitter` fallback |
+| `ws.ts` | WebSocket transport implementation |
+| `http.ts` | Polling transport implementation and the shared fetch helpers |
+| `file-transfer.ts` | WebRTC offer/accept, chunking, backpressure, stall detection |
+| `rate-limit.ts` | Atomic per-IP limiting via `@upstash/ratelimit`; fails open |
+| `validation.ts` | Input validation — hand-written, **not** Zod |
+| `room-code.ts`, `session.ts`, `clipboard.ts`, `format.ts`, `errors.ts` | Focused helpers |
 
-### Important Dependencies
+### Things that are easy to get wrong
 
-Based on `package.json`:
+- **Two transports, one interface.** WebSocket is primary, polling is the fallback; both implement `TransportClient` so the UI's retry/backoff state machine is written once. Changes to connection behavior belong behind that interface, not in the component.
+- **Everything degrades without credentials.** `getRedis()` returns `null` and storage falls back to memory; pub/sub falls back to a process-local bus. The app must always boot and work single-process with no env file — this is the documented contributor path. Never introduce a hard requirement on an env var.
+- **Files never reach the server.** The socket route relays signaling envelopes only. Any change that buffers or proxies file bytes server-side is a design violation.
+- **TTL is refreshed on write, not on read.** `appendClip` and `touchRoom` extend a room's life; polling must not. This was a deliberate fix — do not reintroduce read-side refresh.
+- **Rate limiting fails open** by design. Preserve that on Redis errors.
+- **No env var may be required at build time.** CI builds with no credentials at all.
 
-- Next.js 15 framework
-- Tailwind CSS for styling
-- TypeScript for type checking
-- ESM packages as specified in package.json
-- Prisma ORM
-- NextAuth.js for authentication
-- Vercel AI SDK for AI features
-- Zod for schema validation
+### Stack
 
-## Development Guidelines
+Next.js 16 App Router · React 19 · TypeScript · Tailwind CSS v4 · Upstash Redis (`@upstash/redis`, `@upstash/ratelimit`) · `ioredis` for pub/sub · `ws` · `next-themes` · WebRTC data channels.
 
-### Component Development
-
-1. **Component Structure**: All components should be in `src/components/` or `src/components/ui/`
-2. **Type Safety**: All components must have proper TypeScript types
-3. **Styling**: Use Tailwind CSS utility classes
-4. **Props**: Use proper TypeScript interfaces for component props
-5. **Accessibility**: Ensure components are accessible (ARIA attributes where needed)
-6. **Naming**: Use descriptive, PascalCase names for components and camelCase for props
-7. **Error Handling**: Implement error boundaries in critical components
-
-### Page Development
-
-1. **Page Structure**: Follow the layout.tsx structure with consistent navigation
-2. **Type Safety**: Define page props and search parameters with proper types
-3. **Metadata**: Implement proper SEO metadata for each page
-4. **Navigation**: Use consistent navigation patterns (navbar, footer, breadcrumbs)
-5. **Loading States**: Implement loading and error states for async operations
-6. **Responsive Design**: Ensure mobile-first responsive design with Tailwind
-
-### API Routes (if applicable)
-
-1. Use Next.js App Router API routes in `src/app/api/`
-2. Proper error handling and validation with Zod schemas
-3. Request and response type safety
-4. Consider caching strategies where appropriate
-5. Implement proper authentication for protected routes
-6. Use consistent response formats (JSON with appropriate status codes)
-7. Log appropriate debug/trace events for monitoring
-
-### Authentication Implementation
-
-1. Use NextAuth.js with credentials strategy (cookies and headers)
-2. Implement session management with secure cookies
-3. Create login/logout routes with proper CSRF protection
-4. Implement middleware for protecting routes that require authentication
-5. Handle OAuth providers as configured in .env.local
-6. Validate user sessions on route requests
-
-### State Management (if applicable)
-
-1. Use the store implementation from `src/store/` if present
-2. Follow established patterns for state actions
-3. Keep state management modular and testable
-4. Consider React Context for simple state needs
-
-## Common Tasks
-
-### Adding a New Component
-
-1. Create component in `src/components/` or `src/components/ui/` for UI components
-2. Define proper TypeScript types for props
-3. Use Tailwind CSS for styling
-4. Add error handling and accessibility attributes
-5. Create or update tests as needed
-
-### Adding a New Page
-
-1. Create page in `src/app/` directory
-2. Define page props with proper TypeScript types
-3. Follow layout.tsx structure with consistent navigation
-4. Implement proper SEO metadata
-5. Use appropriate API routes if needed
-6. Create tests for critical functionality
-
-### Adding an AI Feature
-
-1. Use Vercel AI SDK (useChat, useCompletion, etc.)
-2. Define proper streaming responses for better UX
-3. Handle streaming errors appropriately
-4. Implement rate limiting for AI calls
-5. Cache AI responses where appropriate
-
-### Adding Database Schema
-
-1. Update Prisma schema in `prisma/schema.prisma`
-2. Run migrations: `npm run db:migrate`
-3. Generate Prisma client: `npm run db:generate`
-4. Ensure proper relationships and constraints
-
-### Fixing TypeScript Errors
-
-1. Run `npm run type-check` to identify all type issues
-2. Fix types in component props and functions
-3. Ensure proper imports and exports
-4. Check for missing type definitions
-5. Use type assertions sparingly and document them
-
-### Updating Dependencies
-
-1. Review `package.json` for dependency versions
-2. Consider compatibility with ESM/ESM packages
-3. Follow semantic versioning best practices
-4. Update `package-lock.json` or `yarn.lock` as appropriate
-5. Test thoroughly after dependency updates
-
-## Environment Variables
-
-The project uses environment variables (typically in `.env.local`):
-
-- Database connection string or Prisma config
-- API keys for external services
-- Authentication credentials
-- Configuration flags
-- NextAuth configuration
+There is **no** Prisma, NextAuth, Vercel AI SDK, or Zod in this project. Do not add a dependency for something the codebase already does by hand.
 
 ## Conventions
 
-- Commit messages: no `Co-Authored-By` trailers.
-
-Example .env.local:
-
-```env
-DATABASE_URL="file:./dev.db"
-NEXTAUTH_SECRET="your-secret-key"
-NEXTAUTH_URL="http://localhost:3000"
-# Add other credentials here
-
-Security Considerations
-
-1. Validate all user inputs with Zod schemas
-2. Use environment variables for secrets
-3. Implement proper authentication with NextAuth
-4. Sanitize any data returned to frontend
-5. Follow Next.js security best practices
-6. Implement CSRF protection for credential-based auth
-7. Use secure cookie settings (HttpOnly, Secure, SameSite)
-8. Implement rate limiting for API endpoints
-9. Sanitize and validate AI responses
-10. Implement proper error messages that don't leak sensitive information
-
-Performance
-
-1. Use Next.js built-in optimization features
-2. Implement proper lazy loading for large components
-3. Utilize Next.js caching mechanisms
-4. Optimize images and assets with next/image
-5. Monitor and address performance bottlenecks
-6. Use React.memo for expensive components
-7. Implement server components where appropriate
-8. Optimize database queries with Prisma indexing
-
-Code Style
-
-1. TypeScript: Full type safety throughout the codebase
-2. Formatting: Follow standard TypeScript/JavaScript formatting
-3. Comments: Add comments for complex logic
-4. Documentation: Document public APIs and non-obvious implementations
-5. Naming: Use descriptive, camelCase names for variables and functions
-6. File Organization: Keep files focused and single-responsibility
-7. Imports: Group imports (third-party, internal, types)
-8. Error Handling: Use try/catch with proper error messages
-
-Error Handling
-
-1. Use proper error boundaries in React components
-2. Implement comprehensive error handling in API routes
-3. Log errors appropriately without exposing sensitive data
-4. Provide meaningful error messages to users
-5. Use appropriate HTTP status codes
-6. Implement client-side error handling for network issues
-7. Create user-friendly error states in UI
-
-```
+- TypeScript throughout; no new `any`.
+- Tailwind utility classes, canonical names, no arbitrary values where a token exists.
+- Shared logic in `lib/cliplink/`, UI in `components/`, routes in `app/`.
+- Commit messages: imperative subject, no `Co-Authored-By` trailers.
+- Run `pnpm lint && pnpm type-check && pnpm build` before declaring work done.
