@@ -260,7 +260,7 @@ export function QrSheet({
           "data-[state=entering]:animate-[sheet-in_280ms_var(--ease-out-quint)_both]",
           "data-[state=exiting]:animate-[sheet-out_220ms_var(--ease-out-quint)_both]",
           // A sheet under the finger must never lag behind it.
-          "data-[dragging=true]:!animate-none data-[dragging=true]:transition-none!",
+          "data-[dragging=true]:animate-none! data-[dragging=true]:transition-none!",
         )}
         style={surfaceStyle}
         role="dialog"
@@ -299,7 +299,7 @@ export function QrSheet({
           </button>
         </div>
 
-        <div className="flex justify-center rounded-surface border border-image-edge bg-white p-4">
+        <div className="flex justify-center border border-image-edge bg-white p-4">
           <Image
             src={qrCodeUrl}
             alt={`QR code for room ${roomCode}`}

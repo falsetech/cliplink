@@ -50,7 +50,7 @@
   --room-badge: var(--accent);
   --incoming-border: var(--accent);
   --incoming-text: var(--accent);
-  --panel-fill: var(--surface);
+  --panel-fill: color-mix(in srgb, var(--surface) 94%, transparent);
   --primary-bg: var(--accent);
   --primary-border: var(--accent);
   --primary-text: #000000;
@@ -92,7 +92,7 @@
   --room-badge: #4d5811;
   --incoming-border: #7d8f18;
   --incoming-text: #4d5811;
-  --panel-fill: rgb(255 252 245 / 92%);
+  --panel-fill: color-mix(in srgb, #fffcf5 94%, transparent);
   --primary-bg: #b6c92d;
   --primary-border: #b6c92d;
   --primary-text: #16130d;
@@ -392,16 +392,6 @@ a {
 
   to {
     grid-template-rows: 1fr;
-    opacity: 1;
-  }
-}
-
-@keyframes overlay-in {
-  from {
-    opacity: 0;
-  }
-
-  to {
     opacity: 1;
   }
 }

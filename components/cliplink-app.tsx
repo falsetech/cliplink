@@ -122,6 +122,7 @@ export default function CliplinkApp() {
     () => false,
   );
 
+  const [scrolled, setScrolled] = useState(false);
   const [realtimeReady, setRealtimeReady] = useState(false);
   const [dragActive, setDragActive] = useState(false);
 
@@ -134,6 +135,7 @@ export default function CliplinkApp() {
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const qrTriggerRef = useRef<HTMLButtonElement>(null);
+  const scrollSentinelRef = useRef<HTMLDivElement>(null);
 
   const senderIdRef = useRef("");
   const lastSeenIdRef = useRef(0);
@@ -151,6 +153,21 @@ export default function CliplinkApp() {
 
   useEffect(() => {
     senderIdRef.current = getSessionSenderId();
+  }, []);
+
+  // The header's edge treatment appears only once content is actually beneath
+  // it. A sentinel costs nothing; a scroll listener would run on every frame.
+  useEffect(() => {
+    const sentinel = scrollSentinelRef.current;
+    if (!sentinel) {
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => setScrolled(!entry.isIntersecting),
+      { threshold: 0 },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
@@ -255,11 +272,17 @@ export default function CliplinkApp() {
    */
   function markArrival(clipId: number) {
     clearTimer(arrivalResetRef);
-    setArrivalId(clipId);
-    arrivalResetRef.current = window.setTimeout(() => {
-      setArrivalId(null);
-      arrivalResetRef.current = null;
-    }, ARRIVAL_CUE_MS);
+    // Clearing for a frame first restarts the animation. Without it a second
+    // clip arriving inside the cue window leaves the class already applied, so
+    // the panel never flashes again and the arrival goes unmarked.
+    setArrivalId(null);
+    window.requestAnimationFrame(() => {
+      setArrivalId(clipId);
+      arrivalResetRef.current = window.setTimeout(() => {
+        setArrivalId(null);
+        arrivalResetRef.current = null;
+      }, ARRIVAL_CUE_MS);
+    });
   }
 
   function markEntering(ids: number[]) {
@@ -776,7 +799,7 @@ export default function CliplinkApp() {
   // `filter` and `backdrop-filter`, which is expensive on blurred chrome and
   // wanted by none of these controls.
   const buttonBaseClass =
-    "inline-flex items-center justify-center gap-2.5 rounded-control border px-6 py-3.5 text-sm tracking-label uppercase transition-[color,background-color,border-color,translate,scale] duration-150 ease-out active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-55 disabled:active:scale-100";
+    "inline-flex items-center justify-center gap-2 rounded-control border px-6 py-3.5 text-sm tracking-label uppercase transition-[color,background-color,border-color,translate,scale] duration-150 ease-out active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-55 disabled:active:scale-100";
   const primaryButtonClass = cn(
     buttonBaseClass,
     "min-h-12 border-(--primary-border) bg-(--primary-bg) font-bold text-(--primary-text) hover:-translate-y-px hover:bg-(--primary-hover-bg) focus-visible:-translate-y-px focus-visible:bg-(--primary-hover-bg)",
@@ -787,9 +810,9 @@ export default function CliplinkApp() {
   );
   // 44px on touch, 40px once a precise pointer is available.
   const actionButtonClass =
-    "inline-flex min-h-11 items-center justify-center gap-1.5 rounded-control border border-line-strong bg-transparent px-3.5 py-2 text-2xs tracking-label text-dim uppercase transition-[color,border-color,scale] duration-150 ease-out active:scale-[0.96] md:min-h-10 max-[430px]:w-full";
+    "inline-flex min-h-11 items-center justify-center gap-2 rounded-control border border-line-strong bg-transparent px-3.5 py-2 text-2xs tracking-label text-dim uppercase transition-[color,border-color,scale] duration-150 ease-out active:scale-[0.96] md:min-h-10 max-[430px]:w-full";
   const panelToolClass =
-    "inline-flex min-h-11 items-center justify-center gap-1.5 rounded-control border border-transparent px-3 py-1 text-2xs tracking-label text-muted uppercase transition-[color,border-color,background-color,scale] duration-150 ease-out hover:border-line-strong hover:text-fg focus-visible:border-line-strong focus-visible:text-fg active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-55 disabled:active:scale-100 md:min-h-10";
+    "inline-flex min-h-11 items-center justify-center gap-2 rounded-control border border-transparent px-3 py-1 text-2xs tracking-label text-muted uppercase transition-[color,border-color,background-color,scale] duration-150 ease-out hover:border-line-strong hover:text-fg focus-visible:border-line-strong focus-visible:text-fg active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-55 disabled:active:scale-100 md:min-h-10";
   const panelAccentClass =
     "border-(--accent-button-border) bg-(--accent-button-bg) font-bold text-(--accent-button-text) hover:border-(--accent-button-hover-border) hover:bg-(--accent-button-hover-bg) hover:text-(--accent-button-text) focus-visible:border-(--accent-button-hover-border) focus-visible:bg-(--accent-button-hover-bg)";
   const rowClass =
@@ -799,7 +822,8 @@ export default function CliplinkApp() {
     <>
       <div className="flex min-h-screen flex-col">
         <header
-          className="sticky top-0 z-30 flex items-center justify-between px-3.5 py-3 backdrop-blur-(--chrome-blur) sm:px-5 sm:py-3.5 md:px-8 md:py-4.5 after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-4 after:bg-linear-to-b after:from-(--bg) after:to-transparent after:opacity-60"
+          data-scrolled={scrolled}
+          className="sticky top-0 z-30 flex items-center justify-between px-3.5 py-3 backdrop-blur-(--chrome-blur) after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-4 after:bg-linear-to-b after:from-canvas after:to-transparent after:opacity-0 after:transition-opacity after:duration-200 after:content-[''] data-[scrolled=true]:after:opacity-70 sm:px-5 sm:py-3.5 md:px-8 md:py-4.5"
           style={headerSurfaceStyle}
         >
           <div className="font-display text-xl font-extrabold tracking-display md:text-2xl">
@@ -842,6 +866,8 @@ export default function CliplinkApp() {
             </button>
           </div>
         </header>
+
+        <div ref={scrollSentinelRef} aria-hidden="true" className="h-px" />
 
         <main className="flex flex-1 justify-center px-3 py-5.5 pb-12 sm:px-4 sm:py-7 sm:pb-14 md:px-6 md:py-14 md:pb-18">
           <div className="w-full max-w-190">
