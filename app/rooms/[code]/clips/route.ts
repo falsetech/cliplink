@@ -17,9 +17,13 @@ import {
   validateSenderId,
 } from "@/lib/cliplink/validation";
 
+type RoomRouteContext = {
+  params: Promise<{ code: string }>;
+};
+
 export async function GET(
   request: Request,
-  context: RouteContext<"/rooms/[code]/clips">,
+  context: RoomRouteContext,
 ) {
   const { code } = await context.params;
   if (!validateRoomCode(code)) {
@@ -46,7 +50,7 @@ export async function GET(
 
 export async function POST(
   request: Request,
-  context: RouteContext<"/rooms/[code]/clips">,
+  context: RoomRouteContext,
 ) {
   const { code } = await context.params;
   if (!validateRoomCode(code)) {
