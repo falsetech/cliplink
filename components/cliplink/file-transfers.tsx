@@ -20,7 +20,7 @@ type FileTransfersProps = {
 };
 
 const actionClass =
-  "min-h-8 rounded-xs border border-transparent px-2 py-1 text-[10px] text-(--text-muted) transition hover:border-(--border-active) hover:text-(--text) focus-visible:border-(--border-active) focus-visible:text-(--text) disabled:cursor-not-allowed disabled:opacity-[0.55]";
+  "inline-flex min-h-11 items-center justify-center rounded-control border border-transparent px-2 text-2xs text-muted transition-[color,border-color,scale] duration-150 ease-out hover:border-line-strong hover:text-fg focus-visible:border-line-strong focus-visible:text-fg active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-55 disabled:active:scale-100 md:min-h-10";
 
 const OFFLINE_HINT = "File transfer needs a live connection.";
 
@@ -83,7 +83,7 @@ function FileActions({
       return (
         <>
           <button
-            className={cn(actionClass, "text-(--incoming-text)")}
+            className={cn(actionClass, "text-incoming")}
             type="button"
             disabled={!canTransfer}
             title={canTransfer ? undefined : OFFLINE_HINT}
@@ -147,10 +147,10 @@ export function FileTransfers({
 
   return (
     <div className="flex flex-col gap-2.5">
-      <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.12em] text-(--text-muted)">
+      <div className="flex items-center gap-2 text-2xs tracking-label-wide text-muted uppercase">
         <span>Files</span>
-        <span className="h-px flex-1 bg-(--border)" />
-        <span className="normal-case tracking-[0.04em]">
+        <span className="h-px flex-1 bg-line" />
+        <span className="tracking-label normal-case">
           peer-to-peer · never stored
         </span>
       </div>
@@ -161,7 +161,9 @@ export function FileTransfers({
             incoming &&
             (item.status === "connecting" || item.status === "transferring");
           const percent =
-            item.size > 0 ? Math.round((item.bytes / item.size) * 100) : 0;
+            item.size > 0
+              ? Math.min(100, Math.round((item.bytes / item.size) * 100))
+              : 0;
           const showThumb =
             incoming && item.objectUrl && item.mime.startsWith("image/");
 
@@ -169,25 +171,21 @@ export function FileTransfers({
             <li
               key={item.id}
               className={cn(
-                "grid animate-[fade-in_0.3s_ease] grid-cols-[48px_1fr] items-start gap-2.5 rounded-sm border border-(--border) border-l-2 p-3 shadow-(--shadow) md:flex md:items-center md:gap-3 md:px-4 md:py-3",
-                incoming
-                  ? "border-l-(--incoming-border)"
-                  : "border-l-(--text-muted)",
+                "grid grid-cols-[48px_1fr] items-start gap-2.5 rounded-surface border border-line border-l-2 p-3 shadow-row md:flex md:items-center md:gap-3 md:px-4 md:py-3",
+                incoming ? "border-l-incoming-line" : "border-l-muted",
               )}
               style={surfaceStyle}
             >
               <div className="flex min-w-13 flex-col gap-1 md:min-w-16">
                 <span
                   className={cn(
-                    "text-[9px] uppercase tracking-widest",
-                    incoming
-                      ? "text-(--incoming-text)"
-                      : "text-(--text-muted)",
+                    "text-2xs tracking-label uppercase",
+                    incoming ? "text-incoming" : "text-muted",
                   )}
                 >
                   {incoming ? "↓ FILE" : "↑ FILE"}
                 </span>
-                <span className="text-[9px] uppercase tracking-widest text-(--text-muted)">
+                <span className="text-2xs tracking-label text-muted uppercase tabular-nums">
                   {formatHistoryTime(item.ts)}
                 </span>
               </div>
@@ -200,36 +198,39 @@ export function FileTransfers({
                     width={40}
                     height={40}
                     unoptimized
-                    className="h-10 w-10 shrink-0 rounded-[3px] border border-(--border) object-cover"
+                    // A pure-neutral edge; a tinted one picks up the surface
+                    // beneath it and reads as dirt on the image.
+                    className="h-10 w-10 shrink-0 rounded-none border border-image-edge object-cover"
                   />
                 ) : null}
                 <div className="flex min-w-0 flex-1 flex-col gap-1">
-                  <span
-                    className="truncate text-[11px] leading-normal text-(--text) md:text-[12px]"
-                    title={item.name}
-                  >
+                  <span className="truncate text-2xs text-fg md:text-xs" title={item.name}>
                     {item.name}
                   </span>
                   <span
                     className={cn(
-                      "truncate text-[10px] text-(--text-muted)",
-                      item.status === "failed" && "text-(--danger)",
+                      "truncate text-2xs text-muted tabular-nums",
+                      item.status === "failed" && "text-danger",
                     )}
                   >
                     {statusText(item)}
                   </span>
                   {showProgress ? (
                     <div
-                      className="h-0.75 w-full overflow-hidden rounded-full bg-(--border)"
+                      className="h-0.75 w-full overflow-hidden rounded-full bg-line"
                       role="progressbar"
                       aria-label={`Downloading ${item.name}`}
                       aria-valuemin={0}
                       aria-valuemax={100}
                       aria-valuenow={percent}
                     >
+                      {/*
+                        scaleX rather than width: this runs against a WebRTC byte
+                        counter, and width forces layout on every chunk.
+                      */}
                       <div
-                        className="h-full bg-(--accent) transition-[width] duration-150"
-                        style={{ width: `${percent}%` }}
+                        className="h-full w-full origin-left bg-accent transition-transform duration-150 ease-out"
+                        style={{ transform: `scaleX(${percent / 100})` }}
                       />
                     </div>
                   ) : null}

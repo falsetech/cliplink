@@ -1,5 +1,10 @@
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700;800&family=Syne:wght@700;800&display=swap");
 @import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Palette. Dark is the base; light overrides only what changes.
+   `--text-muted` carries the smallest labels in the UI, so both themes are
+   tuned to clear 4.5:1 against their own surfaces.
+   --------------------------------------------------------------------------- */
 
 :root {
   --bg: #0a0a0a;
@@ -12,17 +17,45 @@
   --accent: #e8ff3c;
   --accent-dim: rgb(232 255 60 / 12%);
   --text: #f0f0f0;
-  --text-muted: #555555;
-  --text-dim: #888888;
-  --danger: #ff4444;
+  --text-muted: #808080;
+  --text-dim: #a0a0a0;
+  --danger: #ff6b6b;
   --success: #3cff7a;
-  --shadow: 0 24px 80px rgb(0 0 0 / 35%);
+
+  /* Elevation scale — surface size should read as depth. */
+  --elevation-row: 0 1px 2px rgb(0 0 0 / 24%);
+  --elevation-toast: 0 8px 24px rgb(0 0 0 / 32%);
+  --elevation-modal: 0 24px 80px rgb(0 0 0 / 45%);
+
+  /* Image edges: pure neutral so they never pick up the surface tint. */
+  --image-edge: oklch(1 0 0 / 0.12);
+
+  /* The page gradient, named so chrome can be mixed from what is actually
+     behind it rather than from --bg, which is a different colour. */
+  --page-top: var(--surface-strong);
+  --page-bottom: var(--bg-secondary);
+
+  /* Chrome materials — overridden under reduced transparency. */
+  --chrome-bg: color-mix(in srgb, var(--page-top) 82%, transparent);
+  --chrome-blur: 14px;
+  --scrim-bg: rgb(0 0 0 / 60%);
+  --scrim-blur: 10px;
+  --toast-bg: color-mix(in srgb, var(--surface) 88%, transparent);
+  --toast-blur: 12px;
+
+  --stack-mono:
+    var(--font-jetbrains-mono), "SFMono-Regular", "SF Mono", "IBM Plex Mono",
+    "Menlo", "Consolas", monospace;
+  --stack-display:
+    var(--font-syne), "Avenir Next Condensed", "Arial Narrow", "Trebuchet MS",
+    sans-serif;
+
   --logo-accent: var(--accent);
   --hero-highlight: var(--accent);
   --room-badge: var(--accent);
   --incoming-border: var(--accent);
   --incoming-text: var(--accent);
-  --panel-fill: var(--surface);
+  --panel-fill: color-mix(in srgb, var(--surface) 94%, transparent);
   --primary-bg: var(--accent);
   --primary-border: var(--accent);
   --primary-text: #000000;
@@ -32,12 +65,6 @@
   --accent-button-text: #000000;
   --accent-button-hover-bg: #ffffff;
   --accent-button-hover-border: #ffffff;
-  --flash-bg: var(--accent-dim);
-  --font-mono:
-    "JetBrains Mono", "SFMono-Regular", "SF Mono", "IBM Plex Mono", "Menlo",
-    "Consolas", monospace;
-  --font-display:
-    "Syne", "Avenir Next Condensed", "Arial Narrow", "Trebuchet MS", sans-serif;
 }
 
 :root[data-theme="light"] {
@@ -51,17 +78,28 @@
   --accent: #8ea21a;
   --accent-dim: rgb(142 162 26 / 14%);
   --text: #17140f;
-  --text-muted: #857761;
+  --text-muted: #736553;
   --text-dim: #5b5244;
-  --danger: #c44733;
+  --danger: #b23a27;
   --success: #2f8f51;
-  --shadow: 0 24px 80px rgb(78 60 18 / 10%);
-  --logo-accent: #b6c92d;
+
+  --elevation-row: 0 1px 2px rgb(78 60 18 / 8%);
+  --elevation-toast: 0 8px 24px rgb(78 60 18 / 12%);
+  --elevation-modal: 0 24px 80px rgb(78 60 18 / 18%);
+
+  --image-edge: oklch(0 0 0 / 0.12);
+
+  --page-top: #f6f0e4;
+  --page-bottom: #e8dec9;
+  --scrim-bg: rgb(40 32 14 / 42%);
+  --toast-bg: color-mix(in srgb, var(--surface) 88%, transparent);
+
+  --logo-accent: #7d8f18;
   --hero-highlight: #2a2419;
-  --room-badge: #596614;
-  --incoming-border: #a4ba29;
-  --incoming-text: #596614;
-  --panel-fill: rgb(255 252 245 / 92%);
+  --room-badge: #4d5811;
+  --incoming-border: #7d8f18;
+  --incoming-text: #4d5811;
+  --panel-fill: color-mix(in srgb, #fffcf5 94%, transparent);
   --primary-bg: #b6c92d;
   --primary-border: #b6c92d;
   --primary-text: #16130d;
@@ -71,7 +109,79 @@
   --accent-button-text: #16130d;
   --accent-button-hover-bg: #c5d93a;
   --accent-button-hover-border: #c5d93a;
-  --flash-bg: rgb(142 162 26 / 10%);
+}
+
+/* ---------------------------------------------------------------------------
+   Tailwind theme. Sizes carry their own leading and tracking so hierarchy is
+   built from the set rather than from size alone.
+   --------------------------------------------------------------------------- */
+
+@theme inline {
+  --color-canvas: var(--bg);
+  --color-surface: var(--surface);
+  --color-raised: var(--surface-elevated);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-active);
+  --color-accent: var(--accent);
+  --color-accent-dim: var(--accent-dim);
+  --color-fg: var(--text);
+  --color-muted: var(--text-muted);
+  --color-dim: var(--text-dim);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --color-image-edge: var(--image-edge);
+  --color-page-top: var(--page-top);
+  --color-hero: var(--hero-highlight);
+  --color-logo: var(--logo-accent);
+  --color-room: var(--room-badge);
+  --color-incoming: var(--incoming-text);
+  --color-incoming-line: var(--incoming-border);
+
+  --font-mono: var(--stack-mono);
+  --font-display: var(--stack-display);
+
+  /* 11px floor. Small text gets positive tracking, large text negative. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1.45;
+  --text-2xs--letter-spacing: 0.02em;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.55;
+  --text-xs--letter-spacing: 0.015em;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.7;
+  --text-sm--letter-spacing: 0.01em;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.75;
+  --text-base--letter-spacing: 0em;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5;
+  --text-lg--letter-spacing: -0.005em;
+  --text-xl: 1.125rem;
+  --text-xl--line-height: 1.4;
+  --text-xl--letter-spacing: -0.01em;
+  --text-2xl: 1.25rem;
+  --text-2xl--line-height: 1.3;
+  --text-2xl--letter-spacing: -0.015em;
+  --text-3xl: 1.5rem;
+  --text-3xl--line-height: 1.2;
+  --text-3xl--letter-spacing: -0.02em;
+
+  /* Three tracking roles replace the eleven ad-hoc values. */
+  --tracking-label: 0.08em;
+  --tracking-label-wide: 0.12em;
+  --tracking-code: 0.18em;
+  --tracking-display: -0.055em;
+
+  /* One control radius, one surface radius. */
+  --radius-control: 3px;
+  --radius-surface: 4px;
+  --radius-sheet: 18px;
+
+  --shadow-row: var(--elevation-row);
+  --shadow-toast: var(--elevation-toast);
+  --shadow-modal: var(--elevation-modal);
+
+  --ease-out-quint: cubic-bezier(0.2, 0, 0, 1);
 }
 
 *,
@@ -94,19 +204,19 @@ body {
   overflow-x: hidden;
   background:
     radial-gradient(circle at top, rgb(255 255 255 / 3%), transparent 35%),
-    linear-gradient(180deg, var(--surface-strong) 0%, var(--bg-secondary) 100%);
+    linear-gradient(180deg, var(--page-top) 0%, var(--page-bottom) 100%);
   color: var(--text);
-  font-family: var(--font-mono);
-  transition:
-    background 0.2s ease,
-    color 0.2s ease;
+  font-family: var(--stack-mono);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
+/* Grain sits above content but below chrome, sheets and toasts. */
 body::before {
   content: "";
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: 40;
   pointer-events: none;
   opacity: 0.4;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
@@ -115,7 +225,7 @@ body::before {
 :root[data-theme="light"] body {
   background:
     radial-gradient(circle at top, rgb(255 255 255 / 55%), transparent 38%),
-    linear-gradient(180deg, #f6f0e4 0%, #e8dec9 100%);
+    linear-gradient(180deg, var(--page-top) 0%, var(--page-bottom) 100%);
 }
 
 :root[data-theme="light"] body::before {
@@ -125,6 +235,61 @@ body::before {
 a {
   color: inherit;
 }
+
+/* ---------------------------------------------------------------------------
+   Theme crossfade. The custom properties themselves are registered so they
+   interpolate, instead of the body easing while every border hard-cuts.
+   --------------------------------------------------------------------------- */
+
+/* Registering the colour tokens lets the custom properties themselves
+   interpolate, so every border, panel and label crossfades together on a theme
+   change instead of the body easing while everything else hard-cuts. */
+@property --bg { syntax: "<color>"; inherits: true; initial-value: #0a0a0a; }
+@property --surface { syntax: "<color>"; inherits: true; initial-value: #111111; }
+@property --surface-strong { syntax: "<color>"; inherits: true; initial-value: #171717; }
+@property --page-top { syntax: "<color>"; inherits: true; initial-value: #171717; }
+@property --page-bottom { syntax: "<color>"; inherits: true; initial-value: #090909; }
+@property --bg-secondary { syntax: "<color>"; inherits: true; initial-value: #090909; }
+@property --border { syntax: "<color>"; inherits: true; initial-value: #1e1e1e; }
+@property --border-active { syntax: "<color>"; inherits: true; initial-value: #333333; }
+@property --accent { syntax: "<color>"; inherits: true; initial-value: #e8ff3c; }
+@property --text { syntax: "<color>"; inherits: true; initial-value: #f0f0f0; }
+@property --text-muted { syntax: "<color>"; inherits: true; initial-value: #808080; }
+@property --text-dim { syntax: "<color>"; inherits: true; initial-value: #a0a0a0; }
+@property --danger { syntax: "<color>"; inherits: true; initial-value: #ff6b6b; }
+@property --success { syntax: "<color>"; inherits: true; initial-value: #3cff7a; }
+@property --hero-highlight { syntax: "<color>"; inherits: true; initial-value: #e8ff3c; }
+@property --logo-accent { syntax: "<color>"; inherits: true; initial-value: #e8ff3c; }
+@property --room-badge { syntax: "<color>"; inherits: true; initial-value: #e8ff3c; }
+@property --incoming-text { syntax: "<color>"; inherits: true; initial-value: #e8ff3c; }
+@property --incoming-border { syntax: "<color>"; inherits: true; initial-value: #e8ff3c; }
+
+:root {
+  transition:
+    --bg 220ms var(--ease-out-quint),
+    --bg-secondary 220ms var(--ease-out-quint),
+    --surface 220ms var(--ease-out-quint),
+    --surface-strong 220ms var(--ease-out-quint),
+    --page-top 220ms var(--ease-out-quint),
+    --page-bottom 220ms var(--ease-out-quint),
+    --border 220ms var(--ease-out-quint),
+    --border-active 220ms var(--ease-out-quint),
+    --accent 220ms var(--ease-out-quint),
+    --text 220ms var(--ease-out-quint),
+    --text-muted 220ms var(--ease-out-quint),
+    --text-dim 220ms var(--ease-out-quint),
+    --danger 220ms var(--ease-out-quint),
+    --success 220ms var(--ease-out-quint),
+    --hero-highlight 220ms var(--ease-out-quint),
+    --logo-accent 220ms var(--ease-out-quint),
+    --room-badge 220ms var(--ease-out-quint),
+    --incoming-text 220ms var(--ease-out-quint),
+    --incoming-border 220ms var(--ease-out-quint);
+}
+
+/* ---------------------------------------------------------------------------
+   Motion
+   --------------------------------------------------------------------------- */
 
 @keyframes pulse {
   0%,
@@ -137,10 +302,20 @@ a {
   }
 }
 
-@keyframes fade-in {
+@keyframes arrival-fade {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes toast-in-soft {
   from {
     opacity: 0;
-    transform: translateY(-4px);
+    transform: translateY(12px);
   }
 
   to {
@@ -149,7 +324,8 @@ a {
   }
 }
 
-@keyframes toast-in {
+/* Overshoot is reserved for arrivals the user did not initiate. */
+@keyframes toast-in-arrival {
   from {
     opacity: 0;
     transform: translateY(20px);
@@ -158,5 +334,151 @@ a {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* Exits mirror the path in, and are softer than the enter. */
+@keyframes toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes sheet-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(24px) scale(0.97);
+  }
+}
+
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scrim-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+/* New rows grow the list open instead of teleporting everything below them
+   down a row. Only applied to clips that arrive after hydration. */
+@keyframes row-enter {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+}
+
+/* Localized arrival cue. Replaces the old full-viewport flash. */
+.arrival-cue::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  border-radius: inherit;
+  background: var(--accent-dim);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  animation: arrival-fade 420ms var(--ease-out-quint) forwards;
+}
+
+/* ---------------------------------------------------------------------------
+   User preferences
+   --------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 120ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Keep the cue legible as a static tint rather than a pulse. */
+  .arrival-cue::after {
+    animation: arrival-fade 400ms linear forwards;
+  }
+
+  /* Transforms are the vestibular part — drop them, keep opacity. */
+  [data-motion="transform"] {
+    transform: none !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --chrome-bg: var(--bg);
+    --chrome-blur: 0px;
+    --scrim-bg: rgb(0 0 0 / 88%);
+    --scrim-blur: 0px;
+    --toast-bg: var(--surface);
+    --toast-blur: 0px;
+    --panel-fill: var(--surface);
+  }
+
+  :root[data-theme="light"] {
+    --scrim-bg: rgb(40 32 14 / 80%);
+    --panel-fill: var(--surface);
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --border: #4a4a4a;
+    --border-active: #6e6e6e;
+    --text-muted: #c4c4c4;
+    --text-dim: #dcdcdc;
+    --chrome-bg: var(--bg);
+    --chrome-blur: 0px;
+    --panel-fill: var(--surface);
+  }
+
+  :root[data-theme="light"] {
+    --border: #8a7a5e;
+    --border-active: #5c5040;
+    --text-muted: #3d362b;
+    --text-dim: #2a241b;
+    --panel-fill: var(--surface);
   }
 }
