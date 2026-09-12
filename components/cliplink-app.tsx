@@ -874,11 +874,11 @@ export default function CliplinkApp() {
             {!joined ? (
               <section className="mx-auto flex max-w-180 flex-col items-center gap-5 sm:gap-6 md:gap-9">
                 <div className="max-w-full text-center md:max-w-175">
-                  <h1 className="font-display mb-4 text-[clamp(1.7rem,15vw,2.45rem)] leading-[0.98] tracking-display text-balance text-fg sm:text-[clamp(2rem,11vw,3rem)] sm:leading-[0.96] md:text-[clamp(4.8rem,7.1vw,6.35rem)] md:leading-[0.82]">
-                    <span className="block md:mx-auto md:max-w-[6.2ch]">
+                  <h1 className="font-display mb-4 text-[clamp(1.7rem,15vw,2.45rem)] leading-[0.98] tracking-display text-fg sm:text-[clamp(2rem,11vw,3rem)] sm:leading-[0.96] md:text-[clamp(4.8rem,7.1vw,6.35rem)] md:leading-[0.82]">
+                    <span className="block text-balance md:mx-auto md:max-w-[6.2ch]">
                       Copy here.
                     </span>
-                    <span className="mt-[0.08em] block text-hero sm:mt-[0.04em] md:mx-auto md:max-w-[7.3ch]">
+                    <span className="mt-[0.08em] block text-balance text-hero sm:mt-[0.04em] md:mx-auto md:max-w-[7.3ch]">
                       Paste anywhere.
                     </span>
                   </h1>
