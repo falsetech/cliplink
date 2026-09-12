@@ -6,6 +6,7 @@ import {
   useEffectEvent,
   useRef,
   useState,
+  useSyncExternalStore,
   type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent,
 } from "react";
@@ -32,6 +33,9 @@ import type { RoomCode, RoomStatus, SessionClip } from "@/lib/cliplink/types";
 import { validateRoomCode } from "@/lib/cliplink/validation";
 import { createWebSocketTransport } from "@/lib/cliplink/ws";
 import { cn } from "@/lib/utils";
+
+/** Stable no-op subscribe for the `useSyncExternalStore` hydration guard. */
+const subscribeToNothing = () => () => {};
 
 type ToastTone = "success" | "info" | "error";
 
@@ -219,7 +223,13 @@ export default function CliplinkApp() {
   const [flashActive, setFlashActive] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [showQrSheet, setShowQrSheet] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  // Hydration guard for theme-dependent rendering: false on the server and on
+  // the first client render, true thereafter.
+  const mounted = useSyncExternalStore(
+    subscribeToNothing,
+    () => true,
+    () => false,
+  );
 
   const [realtimeReady, setRealtimeReady] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -245,10 +255,6 @@ export default function CliplinkApp() {
 
   useEffect(() => {
     senderIdRef.current = getSessionSenderId();
-  }, []);
-
-  useEffect(() => {
-    setMounted(true);
   }, []);
 
   useEffect(() => {
