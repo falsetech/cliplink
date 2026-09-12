@@ -447,6 +447,10 @@ export default function CliplinkApp() {
   }
 
   async function hydrateRoom(nextRoomCode: RoomCode) {
+    // Claimed up front, because hydrating writes ?room= to the URL and the
+    // searchParams effect would otherwise read that back as a fresh link and
+    // join the room a second time — two connects, two sockets, two toasts.
+    initializedRoomRef.current = nextRoomCode;
     const response = await transport.connect(nextRoomCode);
     let nextHistory = sortClipsNewestFirst(
       response.clips.map((clip) => ({
@@ -502,6 +506,7 @@ export default function CliplinkApp() {
       pushToast("Room created!", "success");
     } catch (error) {
       setStatus("error");
+      initializedRoomRef.current = null;
       pushToast(
         error instanceof Error ? error.message : "Could not create room.",
         "error",
@@ -528,6 +533,7 @@ export default function CliplinkApp() {
     } catch (error) {
       setStatus("error");
       setRoomCode(null);
+      initializedRoomRef.current = null;
       updateUrl(null);
       pushToast(
         error instanceof Error ? error.message : "Room not found.",
@@ -573,6 +579,7 @@ export default function CliplinkApp() {
     setShowQrSheet(false);
     setStatus("offline");
     setEnteringIds(new Set());
+    initializedRoomRef.current = null;
     lastSeenIdRef.current = 0;
     realtimeRetryCountRef.current = 0;
     realtimeOpenedRef.current = false;
