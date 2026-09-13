@@ -336,16 +336,30 @@ export default function CliplinkApp() {
   async function shareRoom(code: RoomCode) {
     const url = buildRoomUrl(code, window.location.href);
 
-    try {
-      if (navigator.share) {
+    if (navigator.share) {
+      try {
         await navigator.share({
           title: "CLIPLINK room",
-          text: `Join my CLIPLINK room: ${code}`,
-          url,
+          // The link lives in `text`, not in the `url` field. Several targets
+          // — Telegram among them — forward only `text`, which turned the
+          // share into a room code with no way to reach it. Targets that build
+          // a rich preview find the URL in the body just as well.
+          text: `Join my CLIPLINK room ${code}\n${url}`,
         });
         return;
+      } catch (error) {
+        // Dismissing the share sheet rejects with AbortError. Deciding not to
+        // share is not a failure, and saying so is a scold for using the
+        // cancel button as intended.
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        // Anything else: fall through and put the link on the clipboard, which
+        // is the outcome the user was after either way.
       }
+    }
 
+    try {
       await writeClipboard(url);
       pushToast("Room link copied!", "success");
     } catch {
