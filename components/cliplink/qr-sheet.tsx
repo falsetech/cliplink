@@ -67,7 +67,7 @@ function QrSheetBody({
           className="-m-2 inline-flex h-11 w-11 items-center justify-center rounded-control text-dim transition-colors duration-150 hover:text-fg focus-visible:text-fg active:scale-[0.96]"
           type="button"
           aria-label="Close QR code"
-          onClick={close}
+          onClick={() => close()}
         >
           <IconX size={16} />
         </button>
