@@ -38,7 +38,7 @@ export function RoomHeader({
           Room
         </span>
         <button
-          className="inline-flex min-h-11 cursor-pointer items-center rounded-control border border-accent-dim bg-transparent px-2.5 text-lg font-bold tracking-code text-room tabular-nums transition-[background-color,scale] duration-150 ease-out hover:bg-accent-dim focus-visible:bg-accent-dim active:scale-[0.96] md:min-h-10 md:px-3 md:text-xl"
+          className="inline-flex min-h-11 cursor-pointer items-center rounded-control border border-accent/30 bg-transparent px-2.5 text-lg font-bold tracking-code text-room tabular-nums transition-[background-color,scale] duration-150 ease-out hover:bg-accent-dim focus-visible:bg-accent-dim active:scale-[0.96] md:min-h-10 md:px-3 md:text-xl"
           type="button"
           aria-label={`Copy invite link for room ${roomCode}`}
           aria-keyshortcuts="L"

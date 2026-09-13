@@ -121,7 +121,11 @@ export function Sheet({
 
     restoreFocusRef.current = document.activeElement as HTMLElement | null;
     const sheet = sheetRef.current;
-    sheet?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
+    // The dialog itself, not its first control — otherwise opening a sheet
+    // immediately draws a focus ring around whatever happens to come first,
+    // which on the QR sheet is the close button. Content that genuinely wants
+    // the caret (the palette's filter field) marks itself data-autofocus.
+    (sheet?.querySelector<HTMLElement>("[data-autofocus]") ?? sheet)?.focus();
 
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -284,10 +288,13 @@ export function Sheet({
           "data-[dragging=true]:animate-none! data-[dragging=true]:transition-none!",
           className,
         )}
-        style={style}
         role="dialog"
         aria-modal="true"
         aria-label={label}
+        tabIndex={-1}
+        // Focused only to place the reading position; it is not a control and
+        // should not wear a control's ring.
+        style={{ ...style, outline: "none" }}
         onClick={(event) => event.stopPropagation()}
       >
         {/* Grabber: the affordance that promises the drag, on the surface that

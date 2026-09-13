@@ -59,7 +59,7 @@ function QrSheetBody({
           <p className="mb-1.5 text-2xs tracking-label-wide text-muted uppercase">
             Scan to join
           </p>
-          <h2 className="m-0 font-display text-2xl tracking-code text-accent sm:text-3xl">
+          <h2 className="m-0 font-display text-2xl tracking-code text-room sm:text-3xl">
             {roomCode}
           </h2>
         </div>
@@ -73,7 +73,7 @@ function QrSheetBody({
         </button>
       </div>
 
-      <div className="flex justify-center border border-image-edge bg-white p-4">
+      <div className="flex justify-center rounded-surface border border-image-edge bg-white p-4">
         <Image
           src={qrCodeUrl}
           alt={`QR code for room ${roomCode}`}

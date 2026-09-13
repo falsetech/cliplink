@@ -7,25 +7,25 @@
    --------------------------------------------------------------------------- */
 
 :root {
-  --bg: #0a0a0a;
-  --bg-secondary: #090909;
-  --surface: #111111;
-  --surface-strong: #171717;
-  --surface-elevated: rgb(255 255 255 / 2%);
-  --border: #1e1e1e;
-  --border-active: #333333;
-  --accent: #e8ff3c;
-  --accent-dim: rgb(232 255 60 / 12%);
-  --text: #f0f0f0;
-  --text-muted: #808080;
-  --text-dim: #a0a0a0;
-  --danger: #ff6b6b;
-  --success: #3cff7a;
+  --bg: oklch(14.5% 0 0);
+  --bg-secondary: oklch(14.0% 0 0);
+  --surface: oklch(17.8% 0 0);
+  --surface-strong: oklch(20.5% 0 0);
+  --surface-elevated: oklch(100% 0 0 / 2%);
+  --border: oklch(23.5% 0 0);
+  --border-active: oklch(32.1% 0 0);
+  --accent: oklch(95.2% 0.203 116.5);
+  --accent-dim: oklch(95.2% 0.203 116.5 / 12%);
+  --text: oklch(95.5% 0 0);
+  --text-muted: oklch(60.0% 0 0);
+  --text-dim: oklch(70.6% 0 0);
+  --danger: oklch(71.2% 0.181 22.8);
+  --success: oklch(87.9% 0.232 148.8);
 
   /* Elevation scale — surface size should read as depth. */
-  --elevation-row: 0 1px 2px rgb(0 0 0 / 24%);
-  --elevation-toast: 0 8px 24px rgb(0 0 0 / 32%);
-  --elevation-modal: 0 24px 80px rgb(0 0 0 / 45%);
+  --elevation-row: 0 1px 2px oklch(0% 0 0 / 24%);
+  --elevation-toast: 0 8px 24px oklch(0% 0 0 / 32%);
+  --elevation-modal: 0 24px 80px oklch(0% 0 0 / 45%);
 
   /* Image edges: pure neutral so they never pick up the surface tint. */
   --image-edge: oklch(1 0 0 / 0.12);
@@ -38,7 +38,7 @@
   /* Chrome materials — overridden under reduced transparency. */
   --chrome-bg: color-mix(in srgb, var(--page-top) 82%, transparent);
   --chrome-blur: 14px;
-  --scrim-bg: rgb(0 0 0 / 60%);
+  --scrim-bg: oklch(0% 0 0 / 60%);
   --scrim-blur: 10px;
   --toast-bg: color-mix(in srgb, var(--surface) 88%, transparent);
   --toast-blur: 12px;
@@ -58,57 +58,68 @@
   --panel-fill: color-mix(in srgb, var(--surface) 94%, transparent);
   --primary-bg: var(--accent);
   --primary-border: var(--accent);
-  --primary-text: #000000;
-  --primary-hover-bg: #ffffff;
+  --primary-text: oklch(0% 0 0);
+  --primary-hover-bg: oklch(100% 0 0);
   --accent-button-bg: var(--accent);
   --accent-button-border: var(--accent);
-  --accent-button-text: #000000;
-  --accent-button-hover-bg: #ffffff;
-  --accent-button-hover-border: #ffffff;
+  --accent-button-text: oklch(0% 0 0);
+  --accent-button-hover-bg: oklch(100% 0 0);
+  --accent-button-hover-border: oklch(100% 0 0);
 }
 
 :root[data-theme="light"] {
-  --bg: #f2ecdf;
-  --bg-secondary: #e7ddca;
-  --surface: #fbf7ef;
-  --surface-strong: #efe5d3;
-  --surface-elevated: rgb(54 43 17 / 4%);
-  --border: #d0c2a7;
-  --border-active: #aa9775;
-  --accent: #8ea21a;
-  --accent-dim: rgb(142 162 26 / 14%);
-  --text: #17140f;
-  --text-muted: #736553;
-  --text-dim: #5b5244;
-  --danger: #b23a27;
-  --success: #2f8f51;
+  --bg: oklch(94.4% 0.018 86.1);
+  --bg-secondary: oklch(90.0% 0.028 83.5);
+  --surface: oklch(97.7% 0.011 84.6);
+  --surface-strong: oklch(92.5% 0.026 82.4);
+  --surface-elevated: oklch(29.5% 0.043 86.6 / 4%);
+  --border: oklch(81.9% 0.040 83.8);
+  /* Was L 68.4%, which measured 2.66:1 on the cream surfaces and left input
+     and button boundaries under the 3:1 floor for UI components. Now 3.5:1. */
+  --border-active: oklch(61.3% 0.058 81.4);
+  /* Darker than the dark theme's accent on purpose. On a light ground the
+     accent is read as text, as a status dot and as a border, and the old
+     L 67.4% measured 2.68:1 on --surface — under even the 3:1 non-text floor.
+     At L 49.4% it is 5.6:1. The vivid olive still carries the brand in
+     --primary-bg and --logo-accent, which sit *under* dark text rather than
+     on top of cream. */
+  --accent: oklch(49.4% 0.110 118);
+  --accent-dim: oklch(49.4% 0.110 118 / 12%);
+  --text: oklch(19.3% 0.011 80.5);
+  --text-muted: oklch(51.5% 0.033 73.9);
+  --text-dim: oklch(44.3% 0.025 78.9);
+  --danger: oklch(52.0% 0.159 31.7);
+  --success: oklch(57.8% 0.130 151.6);
 
-  --elevation-row: 0 1px 2px rgb(78 60 18 / 8%);
-  --elevation-toast: 0 8px 24px rgb(78 60 18 / 12%);
-  --elevation-modal: 0 24px 80px rgb(78 60 18 / 18%);
+  --elevation-row: 0 1px 2px oklch(36.7% 0.063 85.1 / 8%);
+  --elevation-toast: 0 8px 24px oklch(36.7% 0.063 85.1 / 12%);
+  --elevation-modal: 0 24px 80px oklch(36.7% 0.063 85.1 / 18%);
 
   --image-edge: oklch(0 0 0 / 0.12);
 
-  --page-top: #f6f0e4;
-  --page-bottom: #e8dec9;
-  --scrim-bg: rgb(40 32 14 / 42%);
+  --page-top: oklch(95.7% 0.017 84.6);
+  --page-bottom: oklch(90.3% 0.030 85.6);
+  --scrim-bg: oklch(24.8% 0.033 86.1 / 42%);
   --toast-bg: color-mix(in srgb, var(--surface) 88%, transparent);
 
-  --logo-accent: #7d8f18;
-  --hero-highlight: #2a2419;
-  --room-badge: #4d5811;
-  --incoming-border: #7d8f18;
-  --incoming-text: #4d5811;
-  --panel-fill: color-mix(in srgb, #fffcf5 94%, transparent);
-  --primary-bg: #b6c92d;
-  --primary-border: #b6c92d;
-  --primary-text: #16130d;
-  --primary-hover-bg: #c5d93a;
-  --accent-button-bg: #b6c92d;
-  --accent-button-border: #b6c92d;
-  --accent-button-text: #16130d;
-  --accent-button-hover-bg: #c5d93a;
-  --accent-button-hover-border: #c5d93a;
+  /* One olive hue at four lightnesses. The values were spread over 116.7-119.9
+     for no reason anyone could name; in OKLCH the family is legible as a
+     family, and lightness alone predicts the contrast. */
+  --logo-accent: oklch(61.5% 0.136 118);
+  --hero-highlight: oklch(26.4% 0.021 82.5);
+  --room-badge: oklch(43.6% 0.093 118);
+  --incoming-border: oklch(61.5% 0.136 118);
+  --incoming-text: oklch(43.6% 0.093 118);
+  --panel-fill: color-mix(in srgb, oklch(99.1% 0.010 87.5) 94%, transparent);
+  --primary-bg: oklch(79.5% 0.170 118);
+  --primary-border: oklch(79.5% 0.170 118);
+  --primary-text: oklch(18.8% 0.013 84.5);
+  --primary-hover-bg: oklch(84.3% 0.175 118);
+  --accent-button-bg: oklch(79.5% 0.170 118);
+  --accent-button-border: oklch(79.5% 0.170 118);
+  --accent-button-text: oklch(18.8% 0.013 84.5);
+  --accent-button-hover-bg: oklch(84.3% 0.175 118);
+  --accent-button-hover-border: oklch(84.3% 0.175 118);
 }
 
 /* ---------------------------------------------------------------------------
@@ -190,6 +201,13 @@
   box-sizing: border-box;
 }
 
+/* The browser default is a blue that belongs to no theme here. Zero specificity
+   via :where(), so a component can still style its own focus treatment on top. */
+:where(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 html,
 body {
   min-height: 100%;
@@ -203,7 +221,7 @@ body {
   margin: 0;
   overflow-x: hidden;
   background:
-    radial-gradient(circle at top, rgb(255 255 255 / 3%), transparent 35%),
+    radial-gradient(circle at top, oklch(100% 0 0 / 3%), transparent 35%),
     linear-gradient(180deg, var(--page-top) 0%, var(--page-bottom) 100%);
   color: var(--text);
   font-family: var(--stack-mono);
@@ -224,7 +242,7 @@ body::before {
 
 :root[data-theme="light"] body {
   background:
-    radial-gradient(circle at top, rgb(255 255 255 / 55%), transparent 38%),
+    radial-gradient(circle at top, oklch(100% 0 0 / 55%), transparent 38%),
     linear-gradient(180deg, var(--page-top) 0%, var(--page-bottom) 100%);
 }
 
@@ -244,25 +262,25 @@ a {
 /* Registering the colour tokens lets the custom properties themselves
    interpolate, so every border, panel and label crossfades together on a theme
    change instead of the body easing while everything else hard-cuts. */
-@property --bg { syntax: "<color>"; inherits: true; initial-value: #0a0a0a; }
-@property --surface { syntax: "<color>"; inherits: true; initial-value: #111111; }
-@property --surface-strong { syntax: "<color>"; inherits: true; initial-value: #171717; }
-@property --page-top { syntax: "<color>"; inherits: true; initial-value: #171717; }
-@property --page-bottom { syntax: "<color>"; inherits: true; initial-value: #090909; }
-@property --bg-secondary { syntax: "<color>"; inherits: true; initial-value: #090909; }
-@property --border { syntax: "<color>"; inherits: true; initial-value: #1e1e1e; }
-@property --border-active { syntax: "<color>"; inherits: true; initial-value: #333333; }
-@property --accent { syntax: "<color>"; inherits: true; initial-value: #e8ff3c; }
-@property --text { syntax: "<color>"; inherits: true; initial-value: #f0f0f0; }
-@property --text-muted { syntax: "<color>"; inherits: true; initial-value: #808080; }
-@property --text-dim { syntax: "<color>"; inherits: true; initial-value: #a0a0a0; }
-@property --danger { syntax: "<color>"; inherits: true; initial-value: #ff6b6b; }
-@property --success { syntax: "<color>"; inherits: true; initial-value: #3cff7a; }
-@property --hero-highlight { syntax: "<color>"; inherits: true; initial-value: #e8ff3c; }
-@property --logo-accent { syntax: "<color>"; inherits: true; initial-value: #e8ff3c; }
-@property --room-badge { syntax: "<color>"; inherits: true; initial-value: #e8ff3c; }
-@property --incoming-text { syntax: "<color>"; inherits: true; initial-value: #e8ff3c; }
-@property --incoming-border { syntax: "<color>"; inherits: true; initial-value: #e8ff3c; }
+@property --bg { syntax: "<color>"; inherits: true; initial-value: oklch(14.5% 0 0); }
+@property --surface { syntax: "<color>"; inherits: true; initial-value: oklch(17.8% 0 0); }
+@property --surface-strong { syntax: "<color>"; inherits: true; initial-value: oklch(20.5% 0 0); }
+@property --page-top { syntax: "<color>"; inherits: true; initial-value: oklch(20.5% 0 0); }
+@property --page-bottom { syntax: "<color>"; inherits: true; initial-value: oklch(14.0% 0 0); }
+@property --bg-secondary { syntax: "<color>"; inherits: true; initial-value: oklch(14.0% 0 0); }
+@property --border { syntax: "<color>"; inherits: true; initial-value: oklch(23.5% 0 0); }
+@property --border-active { syntax: "<color>"; inherits: true; initial-value: oklch(32.1% 0 0); }
+@property --accent { syntax: "<color>"; inherits: true; initial-value: oklch(95.2% 0.203 116.5); }
+@property --text { syntax: "<color>"; inherits: true; initial-value: oklch(95.5% 0 0); }
+@property --text-muted { syntax: "<color>"; inherits: true; initial-value: oklch(60.0% 0 0); }
+@property --text-dim { syntax: "<color>"; inherits: true; initial-value: oklch(70.6% 0 0); }
+@property --danger { syntax: "<color>"; inherits: true; initial-value: oklch(71.2% 0.181 22.8); }
+@property --success { syntax: "<color>"; inherits: true; initial-value: oklch(87.9% 0.232 148.8); }
+@property --hero-highlight { syntax: "<color>"; inherits: true; initial-value: oklch(95.2% 0.203 116.5); }
+@property --logo-accent { syntax: "<color>"; inherits: true; initial-value: oklch(95.2% 0.203 116.5); }
+@property --room-badge { syntax: "<color>"; inherits: true; initial-value: oklch(95.2% 0.203 116.5); }
+@property --incoming-text { syntax: "<color>"; inherits: true; initial-value: oklch(95.2% 0.203 116.5); }
+@property --incoming-border { syntax: "<color>"; inherits: true; initial-value: oklch(95.2% 0.203 116.5); }
 
 :root {
   transition:
@@ -450,7 +468,7 @@ a {
   :root {
     --chrome-bg: var(--bg);
     --chrome-blur: 0px;
-    --scrim-bg: rgb(0 0 0 / 88%);
+    --scrim-bg: oklch(0% 0 0 / 88%);
     --scrim-blur: 0px;
     --toast-bg: var(--surface);
     --toast-blur: 0px;
@@ -458,27 +476,27 @@ a {
   }
 
   :root[data-theme="light"] {
-    --scrim-bg: rgb(40 32 14 / 80%);
+    --scrim-bg: oklch(24.8% 0.033 86.1 / 80%);
     --panel-fill: var(--surface);
   }
 }
 
 @media (prefers-contrast: more) {
   :root {
-    --border: #4a4a4a;
-    --border-active: #6e6e6e;
-    --text-muted: #c4c4c4;
-    --text-dim: #dcdcdc;
+    --border: oklch(40.9% 0 0);
+    --border-active: oklch(53.8% 0 0);
+    --text-muted: oklch(82.0% 0 0);
+    --text-dim: oklch(89.4% 0 0);
     --chrome-bg: var(--bg);
     --chrome-blur: 0px;
     --panel-fill: var(--surface);
   }
 
   :root[data-theme="light"] {
-    --border: #8a7a5e;
-    --border-active: #5c5040;
-    --text-muted: #3d362b;
-    --text-dim: #2a241b;
+    --border: oklch(58.7% 0.045 81.5);
+    --border-active: oklch(43.8% 0.030 74.8);
+    --text-muted: oklch(33.7% 0.021 79.1);
+    --text-dim: oklch(26.4% 0.018 77.8);
     --panel-fill: var(--surface);
   }
 }

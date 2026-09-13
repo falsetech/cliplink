@@ -93,6 +93,7 @@ function PaletteBody({ actions }: { actions: RoomAction[] }) {
       <input
         className="min-h-11 w-full rounded-control border border-line-strong bg-surface px-3 text-sm text-fg outline-none transition-colors duration-150 placeholder:text-muted focus:border-accent"
         type="text"
+        data-autofocus
         role="combobox"
         aria-expanded="true"
         aria-controls={listId}
