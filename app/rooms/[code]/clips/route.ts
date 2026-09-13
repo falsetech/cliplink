@@ -1,10 +1,11 @@
 import {
   errorResponse,
   noStoreJson,
+  rateLimitResponse,
   storageErrorResponse,
 } from "@/lib/cliplink/errors";
 import { publishClip } from "@/lib/cliplink/pubsub";
-import { checkRateLimit, getClientIp } from "@/lib/cliplink/rate-limit";
+import { clipRateLimit, getClientIp } from "@/lib/cliplink/rate-limit";
 import { createClipId, storage } from "@/lib/cliplink/storage";
 import type {
   CreateClipRequest,
@@ -58,13 +59,11 @@ export async function POST(
   }
 
   const clientIp = getClientIp(request);
-  const rateLimit = await checkRateLimit(`${clientIp}:${code}`);
+  const rateLimit = await clipRateLimit.check(`${clientIp}:${code}`);
   if (!rateLimit.ok) {
-    return errorResponse(
-      429,
-      "rate_limited",
+    return rateLimitResponse(
       "Too many clips sent. Please wait a moment and try again.",
-      `Retry after ${rateLimit.retryAfterSeconds} seconds.`,
+      rateLimit.retryAfterSeconds,
     );
   }
 
