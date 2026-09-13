@@ -201,11 +201,17 @@
   box-sizing: border-box;
 }
 
-/* The browser default is a blue that belongs to no theme here. Zero specificity
-   via :where(), so a component can still style its own focus treatment on top. */
-:where(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+/* The browser default is a blue that belongs to no theme here.
+ *
+ * It must live in `base`. An unlayered rule outranks every Tailwind utility no
+ * matter its specificity, so this silently overrode the compose box's own
+ * `outline-none` — and being full-bleed inside an `overflow-hidden` panel, the
+ * ring lost its left and right sides and drew as two rules across the panel. */
+@layer base {
+  :where(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 }
 
 html,

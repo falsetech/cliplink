@@ -86,6 +86,11 @@ export function ClipEditor({
     <div
       className={cn(
         "relative overflow-hidden rounded-surface border border-line shadow-row",
+        // The compose box has no bounds of its own — it is the panel's content
+        // area, edge to edge. So the panel carries the focus, which is also the
+        // thing the user believes they are typing into.
+        "transition-[border-color,box-shadow] duration-150 ease-out",
+        "has-[textarea:focus]:border-accent has-[textarea:focus]:ring-2 has-[textarea:focus]:ring-accent/25",
         arrival && "arrival-cue",
       )}
       style={panelSurfaceStyle}
@@ -209,6 +214,15 @@ export function ClipEditor({
             <KbdKey>Enter</KbdKey>
           </span>
           <span>for a new line</span>
+          {/* A greyed button whose only explanation is a title tooltip explains
+              nothing on touch and needs a hover and a wait everywhere else.
+              Same wording as the drop overlay, so the two corroborate. */}
+          {!realtimeReady ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className="text-accent">files need a live connection</span>
+            </>
+          ) : null}
         </span>
         <CharCount length={editor.text.length} />
       </div>
