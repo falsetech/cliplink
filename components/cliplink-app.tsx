@@ -13,14 +13,18 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 
 import { ClipEditor } from "@/components/cliplink/clip-editor";
+import { CommandPalette } from "@/components/cliplink/command-palette";
 import { FileTransfers } from "@/components/cliplink/file-transfers";
 import { HistoryList } from "@/components/cliplink/history-list";
 import { IconTheme } from "@/components/cliplink/icons";
 import { LandingView } from "@/components/cliplink/landing-view";
 import { QrSheet } from "@/components/cliplink/qr-sheet";
+import { createRoomActions } from "@/components/cliplink/room-actions";
 import { RoomHeader } from "@/components/cliplink/room-header";
+import { ShortcutsSheet } from "@/components/cliplink/shortcuts-sheet";
 import { Toasts } from "@/components/cliplink/toasts";
 import {
+  chromeButtonClass,
   headerSurfaceStyle,
   panelSurfaceStyle,
 } from "@/components/cliplink/ui";
@@ -32,6 +36,7 @@ import {
   transport,
   useRoomSession,
 } from "@/components/cliplink/use-room-session";
+import { useShortcuts } from "@/components/cliplink/use-shortcuts";
 import { useToasts } from "@/components/cliplink/use-toasts";
 
 import { writeClipboard } from "@/lib/cliplink/clipboard";
@@ -69,6 +74,8 @@ export default function CliplinkApp() {
   const [joinCode, setJoinCode] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [showQrSheet, setShowQrSheet] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showPalette, setShowPalette] = useState(false);
   const [confirmingLeave, setConfirmingLeave] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -181,10 +188,16 @@ export default function CliplinkApp() {
     setTheme(resolvedTheme === "light" ? "dark" : "light");
   }
 
+  function closeOverlays() {
+    setShowQrSheet(false);
+    setShowShortcuts(false);
+    setShowPalette(false);
+  }
+
   async function hydrateRoom(nextRoomCode: RoomCode) {
     await room.hydrate(nextRoomCode);
     editor.reset();
-    setShowQrSheet(false);
+    closeOverlays();
     updateUrl(nextRoomCode);
   }
 
@@ -255,7 +268,7 @@ export default function CliplinkApp() {
     room.leave();
     editor.reset();
     setJoinCode("");
-    setShowQrSheet(false);
+    closeOverlays();
     updateUrl(null);
     pushToast("Left room.", "info");
   }
@@ -366,6 +379,57 @@ export default function CliplinkApp() {
 
   const roomCode = room.roomCode;
   const joined = Boolean(roomCode);
+  const latestIncoming = room.history.find(
+    (clip) => clip.direction === "incoming",
+  );
+  const sheetOpen = showQrSheet || showShortcuts || showPalette;
+
+  const actions = createRoomActions({
+    joined,
+    realtimeReady: room.realtimeReady,
+    hasText: Boolean(editor.text.trim()),
+    hasUndo: Boolean(editor.clearedText),
+    hasIncoming: Boolean(latestIncoming),
+    send: () => void sendClip(),
+    copyRoomLink: () => void copyRoomLink(roomCode!),
+    shareRoom: () => void shareRoom(roomCode!),
+    openQr: () => setShowQrSheet(true),
+    leave: requestLeave,
+    attach: () => fileInputRef.current?.click(),
+    pasteFromDevice: () => void editor.pasteFromDevice(),
+    clearEditor: editor.clear,
+    undoClear: editor.undoClear,
+    copyLatestIncoming: () =>
+      void copyHistoryItem(latestIncoming?.text ?? ""),
+    focusEditor: () => editor.focus(),
+    toggleTheme,
+    openShortcuts: () => setShowShortcuts(true),
+    openPalette: () => setShowPalette(true),
+  });
+
+  useShortcuts({
+    actions,
+    active: joined,
+    blocked: sheetOpen,
+    onDigit: (index) => {
+      const clip = room.history[index];
+      if (clip) {
+        void copyHistoryItem(clip.text);
+      }
+    },
+    // Escape unwinds the most recent thing the user started, innermost first.
+    // Sheets are excluded here because each one handles its own Escape.
+    onEscape: () => {
+      if (confirmingLeave) {
+        clearTimer(confirmResetRef);
+        setConfirmingLeave(false);
+        return;
+      }
+      editor.blur();
+    },
+    onTypeahead: () => editor.focus(),
+  });
+
   const roomShareUrl = roomCode
     ? buildRoomUrl(
         roomCode,
@@ -410,7 +474,18 @@ export default function CliplinkApp() {
               <span>{statusLabel(room.status)}</span>
             </div>
             <button
-              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full border border-line-strong bg-white/2 p-0 text-dim transition-[color,border-color,scale] duration-150 ease-out hover:border-accent hover:text-fg focus-visible:border-accent focus-visible:text-fg active:scale-[0.96] md:min-h-10 md:min-w-10"
+              className={chromeButtonClass}
+              type="button"
+              aria-label="Keyboard shortcuts"
+              aria-keyshortcuts="?"
+              onClick={() => setShowShortcuts(true)}
+            >
+              <span aria-hidden="true" className="font-mono text-sm">
+                ?
+              </span>
+            </button>
+            <button
+              className={chromeButtonClass}
               type="button"
               aria-label={
                 mounted && resolvedTheme === "light"
@@ -499,6 +574,20 @@ export default function CliplinkApp() {
           onClose={() => setShowQrSheet(false)}
           onCopyLink={() => void copyRoomLink(roomCode!)}
           onShare={() => void shareRoom(roomCode!)}
+        />
+      ) : null}
+
+      <ShortcutsSheet
+        open={showShortcuts}
+        actions={actions}
+        onClose={() => setShowShortcuts(false)}
+      />
+
+      {joined ? (
+        <CommandPalette
+          open={showPalette}
+          actions={actions}
+          onClose={() => setShowPalette(false)}
         />
       ) : null}
 

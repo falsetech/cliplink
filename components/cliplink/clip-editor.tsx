@@ -10,6 +10,7 @@ import { formatCharCount } from "@/lib/cliplink/format";
 import { cn } from "@/lib/utils";
 
 import { IconArrowUp, IconPaperclip } from "./icons";
+import { KbdKey } from "./kbd";
 import { panelAccentClass, panelSurfaceStyle, panelToolClass } from "./ui";
 import type { useClipEditor } from "./use-clip-editor";
 
@@ -148,10 +149,11 @@ export function ClipEditor({
       />
 
       <div className="flex flex-col gap-1 border-t border-line px-4 py-2 text-2xs tracking-label text-muted md:flex-row md:items-center md:justify-between">
-        <span>
-          <kbd className="font-mono">Enter</kbd> to send ·{" "}
-          <kbd className="font-mono">Ctrl</kbd>+
-          <kbd className="font-mono">Enter</kbd> for a new line
+        <span className="flex flex-wrap items-center gap-1">
+          <KbdKey>Enter</KbdKey> to send
+          <span className="text-muted">·</span>
+          <KbdKey>Shift</KbdKey>
+          <KbdKey>Enter</KbdKey> for a new line
         </span>
         <span className="tabular-nums">{formatCharCount(editor.text.length)}</span>
       </div>

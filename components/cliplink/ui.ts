@@ -43,3 +43,7 @@ export const panelSurfaceStyle = {
 };
 
 export const headerSurfaceStyle = { background: "var(--chrome-bg)" };
+
+/** The round icon buttons in the app header. */
+export const chromeButtonClass =
+  "inline-flex min-h-11 min-w-11 items-center justify-center rounded-full border border-line-strong bg-white/2 p-0 text-dim transition-[color,border-color,scale] duration-150 ease-out hover:border-accent hover:text-fg focus-visible:border-accent focus-visible:text-fg active:scale-[0.96] md:min-h-10 md:min-w-10";

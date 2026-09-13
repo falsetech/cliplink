@@ -71,6 +71,10 @@ export function useClipEditor({
     editorRef.current?.focus();
   }
 
+  function blur() {
+    editorRef.current?.blur();
+  }
+
   async function pasteFromDevice() {
     try {
       const pasted = await readClipboard();
@@ -122,6 +126,7 @@ export function useClipEditor({
     undoClear,
     reset,
     focus,
+    blur,
     pasteFromDevice,
     handleKeyDown,
   };

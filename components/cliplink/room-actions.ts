@@ -1,0 +1,211 @@
+import { parseChord, type Chord } from "@/lib/cliplink/shortcuts";
+
+export type ActionGroup = "Clip" | "Room" | "Files" | "View";
+
+export type RoomAction = {
+  id: string;
+  label: string;
+  group: ActionGroup;
+  chord?: Chord;
+  /** Additional chords that run the same action but are not the one displayed. */
+  aliases?: Chord[];
+  /** Extra terms the palette matches on, beyond the label. */
+  keywords?: string[];
+  enabled: boolean;
+  /**
+   * Whether the chord still fires while a text field has focus. True for
+   * modifier chords, false for bare letters — otherwise typing "e" into the
+   * compose box would trip a shortcut.
+   */
+  allowInEditor?: boolean;
+  /**
+   * The chord is documented but not bound globally, because the element that
+   * owns it already handles the key. `Enter` belongs to the textarea.
+   */
+  handledLocally?: boolean;
+  perform: () => void;
+};
+
+export type RoomActionContext = {
+  /** Every action but the help sheet needs a room to act on. */
+  joined: boolean;
+  realtimeReady: boolean;
+  hasText: boolean;
+  hasUndo: boolean;
+  hasIncoming: boolean;
+  send: () => void;
+  copyRoomLink: () => void;
+  shareRoom: () => void;
+  openQr: () => void;
+  leave: () => void;
+  attach: () => void;
+  pasteFromDevice: () => void;
+  clearEditor: () => void;
+  undoClear: () => void;
+  copyLatestIncoming: () => void;
+  focusEditor: () => void;
+  toggleTheme: () => void;
+  openShortcuts: () => void;
+  openPalette: () => void;
+};
+
+/**
+ * Every keyboard-reachable room action, in one list.
+ *
+ * The shortcut listener, the `?` help sheet and the `⌘K` palette all render
+ * from this — adding an action here makes it bindable, documented and
+ * searchable at once, with no third place to forget.
+ *
+ * Bindings avoid keys the browser has claimed. Notably there is no `Mod+L`
+ * (address bar) and no `Mod+Z` — the compose box has native undo, and taking
+ * that over is worse than the feature is worth.
+ */
+export function createRoomActions(ctx: RoomActionContext): RoomAction[] {
+  return [
+    {
+      id: "send",
+      label: "Send clip",
+      group: "Clip",
+      chord: parseChord("Enter"),
+      keywords: ["submit", "share text"],
+      enabled: ctx.joined && ctx.hasText,
+      allowInEditor: true,
+      handledLocally: true,
+      perform: ctx.send,
+    },
+    {
+      id: "copy-incoming",
+      label: "Copy latest received clip",
+      group: "Clip",
+      chord: parseChord("mod+shift+c"),
+      keywords: ["clipboard", "incoming"],
+      enabled: ctx.joined && ctx.hasIncoming,
+      allowInEditor: true,
+      perform: ctx.copyLatestIncoming,
+    },
+    {
+      id: "paste",
+      label: "Paste from device",
+      group: "Clip",
+      chord: parseChord("mod+shift+v"),
+      keywords: ["clipboard", "read"],
+      enabled: ctx.joined,
+      allowInEditor: true,
+      perform: ctx.pasteFromDevice,
+    },
+    {
+      id: "clear",
+      label: "Clear the editor",
+      group: "Clip",
+      chord: parseChord("mod+shift+Backspace"),
+      keywords: ["empty", "delete text"],
+      enabled: ctx.joined && ctx.hasText,
+      allowInEditor: true,
+      perform: ctx.clearEditor,
+    },
+    {
+      id: "undo-clear",
+      label: "Undo clear",
+      group: "Clip",
+      keywords: ["restore", "back"],
+      enabled: ctx.joined && ctx.hasUndo,
+      perform: ctx.undoClear,
+    },
+    {
+      id: "focus-editor",
+      label: "Focus the editor",
+      group: "Clip",
+      chord: parseChord("e"),
+      aliases: [parseChord("/")],
+      keywords: ["type", "compose", "write", "slash"],
+      enabled: ctx.joined,
+      perform: ctx.focusEditor,
+    },
+
+    {
+      id: "copy-link",
+      label: "Copy room link",
+      group: "Room",
+      chord: parseChord("l"),
+      keywords: ["invite", "url", "share"],
+      enabled: ctx.joined,
+      perform: ctx.copyRoomLink,
+    },
+    {
+      id: "share",
+      label: "Share room link",
+      group: "Room",
+      keywords: ["invite", "send to"],
+      enabled: ctx.joined,
+      perform: ctx.shareRoom,
+    },
+    {
+      id: "qr",
+      label: "Show QR code",
+      group: "Room",
+      chord: parseChord("q"),
+      keywords: ["scan", "phone", "camera"],
+      enabled: ctx.joined,
+      perform: ctx.openQr,
+    },
+    {
+      id: "leave",
+      label: "Leave room",
+      group: "Room",
+      chord: parseChord("x"),
+      keywords: ["exit", "quit", "close"],
+      enabled: ctx.joined,
+      perform: ctx.leave,
+    },
+
+    {
+      id: "attach",
+      label: "Attach files",
+      group: "Files",
+      chord: parseChord("a"),
+      keywords: ["upload", "send file", "peer to peer"],
+      enabled: ctx.joined && ctx.realtimeReady,
+      perform: ctx.attach,
+    },
+
+    {
+      id: "theme",
+      label: "Toggle theme",
+      group: "View",
+      chord: parseChord("t"),
+      keywords: ["dark", "light", "appearance"],
+      enabled: true,
+      perform: ctx.toggleTheme,
+    },
+    {
+      id: "shortcuts",
+      label: "Keyboard shortcuts",
+      group: "View",
+      chord: parseChord("?"),
+      keywords: ["help", "keys", "cheatsheet"],
+      enabled: true,
+      perform: ctx.openShortcuts,
+    },
+    {
+      id: "palette",
+      label: "Command palette",
+      group: "View",
+      chord: parseChord("mod+k"),
+      keywords: ["search", "actions", "run"],
+      enabled: ctx.joined,
+      allowInEditor: true,
+      perform: ctx.openPalette,
+    },
+  ];
+}
+
+/**
+ * Bindings that are not single actions, listed in the help sheet so they are
+ * discoverable even though the palette cannot run them.
+ */
+export const AMBIENT_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
+  { keys: ["1", "–", "9"], label: "Copy that history row" },
+  { keys: ["/"], label: "Focus the editor" },
+  { keys: ["Esc"], label: "Close, cancel, or leave the editor" },
+  { keys: ["⇧", "↩"], label: "New line instead of sending" },
+];

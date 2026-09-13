@@ -97,7 +97,9 @@ export function useRoomSession({
   // A reconnect scheduled minutes ago must call today's handlers, not the ones
   // captured when the timer was set.
   const handlersRef = useRef({ pushToast, onRealtimeOpen, onSignal });
-  handlersRef.current = { pushToast, onRealtimeOpen, onSignal };
+  useEffect(() => {
+    handlersRef.current = { pushToast, onRealtimeOpen, onSignal };
+  });
 
   useEffect(() => {
     roomCodeRef.current = roomCode;
