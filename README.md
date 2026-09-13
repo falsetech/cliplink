@@ -30,12 +30,43 @@ Nothing persists. Rooms expire on a timer, history is session-local, and files n
 - **Join three ways** — 6-character code, shared URL (`/?room=X7KP2M`), or in-room QR code
 - **Realtime text sync** — WebSocket transport, with HTTP polling as an automatic fallback
 - **Auto-copy on receive** — incoming clips land on your clipboard, with a toast and a subtle flash
-- **Session history** — last 20 clips with direction, timestamp, and one-click copy
+- **Session history** — last 20 clips with direction, timestamp, one-click copy, expand-in-place, and an Open action on link clips
+- **Keyboard-first** — every room action has a binding; `?` shows the cheat sheet and `⌘K`/`Ctrl+K` opens the command palette
+- **Know the state** — device count, a live expiry countdown, and a badge that says when you have dropped to the polling fallback
 - **Peer-to-peer file transfer** — up to 500 MB per file over WebRTC data channels, via attach, drag-and-drop, or paste. Bytes flow browser-to-browser; the server only relays signaling
 - **Ephemeral by design** — per-room TTL configurable from 1h to 24h (6h default), max 50 clips retained per room
 - **Rate limited** — 60 requests per minute per IP, enforced atomically in Redis
 
 Exact limits live in [`lib/cliplink/constants.ts`](lib/cliplink/constants.ts).
+
+### Keyboard shortcuts
+
+`⌘` is `Ctrl` on Windows and Linux.
+
+| Keys | Action |
+| --- | --- |
+| `Enter` | Send the clip |
+| `⇧Enter` / `⌘Enter` | New line instead of sending |
+| `⌘K` | Command palette |
+| `⌘⇧C` | Copy the latest received clip |
+| `⌘⇧V` | Paste from device into the editor |
+| `⌘⇧⌫` | Clear the editor (undoable) |
+| `?` | This list |
+
+These work anywhere. The rest need focus to be outside the compose box:
+
+| Keys | Action |
+| --- | --- |
+| `E` or `/` | Focus the editor |
+| `L` | Copy the room link |
+| `Q` | Show the QR code |
+| `A` | Attach files |
+| `T` | Toggle the theme |
+| `X` | Leave the room |
+| `1`–`9` | Copy that history row |
+| `Esc` | Close a sheet, cancel a pending Leave, or leave the editor |
+
+Typing any other character with nothing focused starts a clip.
 
 ## Architecture
 

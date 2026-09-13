@@ -26,3 +26,46 @@ export function formatBytes(bytes: number) {
 export function truncatePreview(text: string, maxLength = 120) {
   return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
 }
+
+export type ClipKind = { kind: "url"; url: string } | { kind: "text" };
+
+/**
+ * Classifies a clip so the UI can offer more than "copy".
+ *
+ * Only a clip that is entirely one http(s) URL counts. Other schemes are
+ * rejected on purpose: a `javascript:` or `data:` clip rendered as a link
+ * would turn a received clip into something clickable that runs.
+ */
+export function detectClipKind(text: string): ClipKind {
+  const trimmed = text.trim();
+  if (!trimmed || /\s/.test(trimmed)) {
+    return { kind: "text" };
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return { kind: "url", url: parsed.href };
+    }
+  } catch {
+    // Not a URL, which is the common case.
+  }
+
+  return { kind: "text" };
+}
+
+/** Compact remaining-time label, e.g. `5h 42m` or `4m 12s`. */
+export function formatCountdown(msRemaining: number) {
+  const total = Math.max(0, Math.floor(msRemaining / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+}

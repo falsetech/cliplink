@@ -21,8 +21,11 @@ export async function GET(
   }
 
   let room;
+  let expiresAt: number | null = null;
   try {
     room = await storage.getRoom(code);
+    // A read, not a refresh — see StorageAdapter.getRoomExpiresAt.
+    expiresAt = room ? await storage.getRoomExpiresAt(code) : null;
   } catch (error) {
     return storageErrorResponse(error);
   }
@@ -35,6 +38,7 @@ export async function GET(
     room: {
       code: room.code,
       createdAt: room.createdAt,
+      ...(expiresAt === null ? {} : { expiresAt }),
     },
     clips: room.clips,
   };
