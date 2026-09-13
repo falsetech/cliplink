@@ -27,7 +27,8 @@ Nothing persists. Rooms expire on a timer, history is session-local, and files n
 ## Features
 
 - **Zero auth, zero install** — create or join a room in one click, in any modern browser
-- **Join three ways** — 6-character code, shared URL (`/?room=X7KP2M`), or in-room QR code
+- **Join three ways** — 6-character code, shared URL (`/room/X7KP2M#k=…`), or in-room QR code, encoded locally so the key never leaves the device
+- **Encrypted both ways** — private rooms generate an AES-GCM-256 key in the browser that never reaches the server, carried in the URL fragment or pasted in; open rooms derive their key from the code, so the code alone opens them. Private rooms joined without a key open locked and unlock in place
 - **Realtime text sync** — WebSocket transport, with HTTP polling as an automatic fallback
 - **Auto-copy on receive** — incoming clips land on your clipboard, with a toast and a subtle flash
 - **Session history** — last 20 clips with direction, timestamp, one-click copy, expand-in-place, and an Open action on link clips
@@ -35,7 +36,7 @@ Nothing persists. Rooms expire on a timer, history is session-local, and files n
 - **Know the state** — device count, a live expiry countdown, and a badge that says when you have dropped to the polling fallback
 - **Peer-to-peer file transfer** — up to 500 MB per file over WebRTC data channels, via attach, drag-and-drop, or paste. Bytes flow browser-to-browser; the server only relays signaling
 - **Ephemeral by design** — per-room TTL configurable from 1h to 24h (6h default), max 50 clips retained per room
-- **Rate limited** — 60 requests per minute per IP, enforced atomically in Redis
+- **Rate limited** — token buckets shared across instances through Redis: a burst of 60 clips refilling at 1/second, and 10 room creations refilling at 1 per 10 seconds
 
 Exact limits live in [`lib/cliplink/constants.ts`](lib/cliplink/constants.ts).
 
@@ -129,7 +130,6 @@ It is a stock Next.js App Router build, so anywhere that runs Next.js 16 with We
 
 ## Roadmap
 
-- **End-to-end encryption for clips** — clip text currently reaches Redis in plaintext; see [Security](SECURITY.md)
 - **Test coverage** — none today, starting with the transport state machine and the file-transfer lifecycle
 - **WebRTC reliability** across restrictive NATs
 

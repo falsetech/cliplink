@@ -1,14 +1,10 @@
-import {
-  MAX_ROOM_CLIPS,
-  RATE_LIMIT_WINDOW_MS,
-  ROOM_TTL_SECONDS,
-} from "@/lib/cliplink/constants";
+import { MAX_ROOM_CLIPS, ROOM_TTL_SECONDS } from "@/lib/cliplink/constants";
 import { getRedis } from "@/lib/cliplink/redis";
 import { generateRoomCode } from "@/lib/cliplink/room-code";
 import type { Clip, Room } from "@/lib/cliplink/types";
 
 type StorageAdapter = {
-  createRoom(ttlSeconds?: number): Promise<Room>;
+  createRoom(ttlSeconds?: number, keyCheck?: string): Promise<Room>;
   getRoom(code: string): Promise<Room | null>;
   appendClip(code: string, clip: Clip): Promise<Room | null>;
   getClipsAfter(code: string, afterId: number): Promise<Clip[] | null>;
@@ -25,6 +21,7 @@ type MemoryMeta = {
   code: string;
   createdAt: number;
   ttlSeconds: number;
+  keyCheck: string | null;
   expiresAt: number;
 };
 
@@ -76,7 +73,7 @@ function readMemoryMeta(code: string): MemoryMeta | null {
 }
 
 const memoryAdapter: StorageAdapter = {
-  async createRoom(ttlSeconds = ROOM_TTL_SECONDS) {
+  async createRoom(ttlSeconds = ROOM_TTL_SECONDS, keyCheck) {
     const store = getMemoryMetaStore();
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const code = generateRoomCode();
@@ -86,10 +83,11 @@ const memoryAdapter: StorageAdapter = {
           code,
           createdAt,
           ttlSeconds,
+          keyCheck: keyCheck ?? null,
           expiresAt: createdAt + ttlSeconds * 1000,
         });
         getMemoryClipsStore().set(code, []);
-        return { code, createdAt, clips: [] };
+        return { code, createdAt, ttlSeconds, keyCheck: keyCheck ?? null, clips: [] };
       }
     }
 
@@ -103,7 +101,13 @@ const memoryAdapter: StorageAdapter = {
     }
 
     const clips = getMemoryClipsStore().get(code) ?? [];
-    return { code: meta.code, createdAt: meta.createdAt, clips };
+    return {
+      code: meta.code,
+      createdAt: meta.createdAt,
+      ttlSeconds: meta.ttlSeconds,
+      keyCheck: meta.keyCheck,
+      clips,
+    };
   },
 
   async appendClip(code, clip) {
@@ -116,7 +120,13 @@ const memoryAdapter: StorageAdapter = {
     const nextClips = trimClips([...(clipsStore.get(code) ?? []), clip]);
     clipsStore.set(code, nextClips);
     meta.expiresAt = Date.now() + meta.ttlSeconds * 1000;
-    return { code: meta.code, createdAt: meta.createdAt, clips: nextClips };
+    return {
+      code: meta.code,
+      createdAt: meta.createdAt,
+      ttlSeconds: meta.ttlSeconds,
+      keyCheck: meta.keyCheck,
+      clips: nextClips,
+    };
   },
 
   async getClipsAfter(code, afterId) {
@@ -154,7 +164,7 @@ function parseClipMember(member: string): Clip | null {
 
 function createRedisAdapter(): StorageAdapter {
   return {
-    async createRoom(ttlSeconds = ROOM_TTL_SECONDS) {
+    async createRoom(ttlSeconds = ROOM_TTL_SECONDS, keyCheck) {
       const redis = getRedis();
       if (!redis) {
         throw new Error("Redis client unavailable");
@@ -165,9 +175,16 @@ function createRedisAdapter(): StorageAdapter {
         const exists = await redis.exists(metaKey(code));
         if (!exists) {
           const createdAt = Date.now();
-          await redis.hset(metaKey(code), { code, createdAt, ttlSeconds });
+          await redis.hset(metaKey(code), {
+            code,
+            createdAt,
+            ttlSeconds,
+            // Empty rather than absent: hset cannot store undefined, and an
+            // empty string reads back as "this room has no key".
+            keyCheck: keyCheck ?? "",
+          });
           await redis.expire(metaKey(code), ttlSeconds);
-          return { code, createdAt, clips: [] };
+          return { code, createdAt, ttlSeconds, keyCheck: keyCheck ?? null, clips: [] };
         }
       }
 
@@ -180,9 +197,12 @@ function createRedisAdapter(): StorageAdapter {
         throw new Error("Redis client unavailable");
       }
 
-      const meta = await redis.hgetall<{ code: string; createdAt: number; ttlSeconds: number }>(
-        metaKey(code),
-      );
+      const meta = await redis.hgetall<{
+        code: string;
+        createdAt: number;
+        ttlSeconds: number;
+        keyCheck?: string;
+      }>(metaKey(code));
       if (!meta || !meta.code) {
         return null;
       }
@@ -193,7 +213,13 @@ function createRedisAdapter(): StorageAdapter {
         .filter((clip): clip is Clip => clip !== null)
         .sort((a, b) => a.id - b.id);
 
-      return { code: meta.code, createdAt: Number(meta.createdAt), clips };
+      return {
+        code: meta.code,
+        createdAt: Number(meta.createdAt),
+        ttlSeconds: Number(meta.ttlSeconds),
+        keyCheck: meta.keyCheck ? String(meta.keyCheck) : null,
+        clips,
+      };
     },
 
     async appendClip(code, clip) {
@@ -277,7 +303,8 @@ function activeAdapter(): StorageAdapter {
 }
 
 export const storage: StorageAdapter = {
-  createRoom: (ttlSeconds) => activeAdapter().createRoom(ttlSeconds),
+  createRoom: (ttlSeconds, keyCheck) =>
+    activeAdapter().createRoom(ttlSeconds, keyCheck),
   getRoom: (code) => activeAdapter().getRoom(code),
   appendClip: (code, clip) => activeAdapter().appendClip(code, clip),
   getClipsAfter: (code, afterId) => activeAdapter().getClipsAfter(code, afterId),
@@ -289,8 +316,4 @@ export function createClipId() {
   const now = Date.now();
   const suffix = Math.floor(Math.random() * 1000);
   return now * 1000 + suffix;
-}
-
-export function getRateLimitBucket(timestamp = Date.now()) {
-  return Math.floor(timestamp / RATE_LIMIT_WINDOW_MS);
 }

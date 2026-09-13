@@ -36,12 +36,24 @@ function rubberband(overshoot: number, dimension: number, constant = 0.55) {
   );
 }
 
-const SheetCloseContext = createContext<() => void>(() => {});
+/**
+ * Dismisses the enclosing sheet, optionally running an action once it has
+ * actually gone.
+ */
+type SheetClose = (afterClose?: () => void) => void;
+
+const SheetCloseContext = createContext<SheetClose>(() => {});
 
 /**
  * Dismisses the enclosing sheet, playing its exit animation first. Content
  * reaches it through context rather than a render prop so that closing over it
  * never happens during render.
+ *
+ * The optional callback runs after the sheet has closed, not alongside it —
+ * dismissal takes the length of the exit animation, so an action fired
+ * immediately would open its own dialog while this one still held the focus
+ * trap. Passing it here also suppresses focus restore, since the action is
+ * taking focus somewhere of its own.
  */
 export function useSheetClose() {
   return useContext(SheetCloseContext);
@@ -85,6 +97,7 @@ export function Sheet({
   const scrimRef = useRef<HTMLDivElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const exitTimer = useRef<number | null>(null);
+  const afterCloseRef = useRef<(() => void) | null>(null);
 
   // Drag state lives in refs: a pointermove that re-renders cannot stay glued
   // to the finger.
@@ -92,17 +105,28 @@ export function Sheet({
   const grabOffset = useRef(0);
   const samples = useRef<Array<{ y: number; t: number }>>([]);
 
-  const beginExit = useCallback(() => {
-    if (exitTimer.current !== null) {
-      return;
-    }
-    setClosing(true);
-    exitTimer.current = window.setTimeout(() => {
-      exitTimer.current = null;
-      setClosing(false);
-      onClose();
-    }, EXIT_MS);
-  }, [onClose]);
+  const beginExit = useCallback<SheetClose>(
+    (afterClose) => {
+      if (exitTimer.current !== null) {
+        return;
+      }
+      // Typed as optional, so guard rather than trust: wiring this to an
+      // onClick without a wrapper would hand it a MouseEvent to call.
+      if (typeof afterClose === "function") {
+        afterCloseRef.current = afterClose;
+      }
+      setClosing(true);
+      exitTimer.current = window.setTimeout(() => {
+        exitTimer.current = null;
+        setClosing(false);
+        onClose();
+        // After `onClose`, so both land in one commit and the action's own
+        // sheet mounts into a frame where this one is already gone.
+        afterCloseRef.current?.();
+      }, EXIT_MS);
+    },
+    [onClose],
+  );
 
   useEffect(() => {
     return () => {
@@ -114,6 +138,10 @@ export function Sheet({
 
   // Focus moves in on open and returns to the trigger on close, so a keyboard
   // user is never stranded behind the sheet.
+  //
+  // Deliberately keyed on `visible` alone. Folded in with the key handler it
+  // also re-ran whenever the parent handed down a fresh `onClose`, and every
+  // one of those re-runs restored focus to the opener mid-sheet.
   useEffect(() => {
     if (!visible) {
       return;
@@ -126,6 +154,27 @@ export function Sheet({
     // which on the QR sheet is the close button. Content that genuinely wants
     // the caret (the palette's filter field) marks itself data-autofocus.
     (sheet?.querySelector<HTMLElement>("[data-autofocus]") ?? sheet)?.focus();
+
+    return () => {
+      // An after-close action is taking focus somewhere of its own; pulling it
+      // back to the opener here would strand the keyboard behind whatever that
+      // action just opened.
+      if (afterCloseRef.current) {
+        afterCloseRef.current = null;
+        return;
+      }
+      restoreFocusRef.current?.focus?.();
+    };
+  }, [visible]);
+
+  // Escape and the Tab trap. Only these two: arrow keys and printable
+  // characters pass through, because the command palette lives in a sheet.
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+
+    const sheet = sheetRef.current;
 
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -159,7 +208,6 @@ export function Sheet({
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
-      restoreFocusRef.current?.focus?.();
     };
   }, [visible, beginExit]);
 
@@ -263,7 +311,7 @@ export function Sheet({
     <div
       className="fixed inset-0 z-80 flex items-end justify-center p-3 sm:items-center sm:p-6"
       role="presentation"
-      onClick={beginExit}
+      onClick={() => beginExit()}
     >
       <div
         ref={scrimRef}

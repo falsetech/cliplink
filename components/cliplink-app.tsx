@@ -9,7 +9,7 @@ import {
   type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent,
 } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 
 import { ClipEditor } from "@/components/cliplink/clip-editor";
@@ -17,6 +17,7 @@ import { CommandPalette } from "@/components/cliplink/command-palette";
 import { FileTransfers } from "@/components/cliplink/file-transfers";
 import { HistoryList } from "@/components/cliplink/history-list";
 import { IconTheme } from "@/components/cliplink/icons";
+import { KeyPrompt } from "@/components/cliplink/key-prompt";
 import { LandingView } from "@/components/cliplink/landing-view";
 import { QrSheet } from "@/components/cliplink/qr-sheet";
 import { createRoomActions } from "@/components/cliplink/room-actions";
@@ -43,8 +44,21 @@ import { useToasts } from "@/components/cliplink/use-toasts";
 
 import { writeClipboard } from "@/lib/cliplink/clipboard";
 import { MAX_CLIP_CHARS } from "@/lib/cliplink/constants";
-import { createRoomRequest } from "@/lib/cliplink/http";
-import { buildRoomUrl, normalizeRoomCode } from "@/lib/cliplink/room-code";
+import {
+  deriveOpenRoomKey,
+  formatRoomKey,
+  generateRoomKey,
+  importRoomKey,
+  type RoomKey,
+} from "@/lib/cliplink/crypto";
+import { RoomKeyMismatchError } from "@/lib/cliplink/encrypted-transport";
+import { connectRoom, createRoomRequest } from "@/lib/cliplink/http";
+import {
+  buildRoomUrl,
+  normalizeRoomCode,
+  parseRoomKeyFromHash,
+  roomKeyFragment,
+} from "@/lib/cliplink/room-code";
 import { getSessionSenderId } from "@/lib/cliplink/session";
 import type { RoomCode, RoomStatus } from "@/lib/cliplink/types";
 import { validateRoomCode } from "@/lib/cliplink/validation";
@@ -90,10 +104,13 @@ const DOT_TONE: Record<StatusTone, string> = {
   bad: "bg-danger text-danger after:opacity-100",
 };
 
-export default function CliplinkApp() {
+type CliplinkAppProps = {
+  /** Present when rendered at /room/[code]; absent on the landing page. */
+  initialRoomCode?: string;
+};
+
+export default function CliplinkApp({ initialRoomCode }: CliplinkAppProps) {
   const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
 
   const [joinCode, setJoinCode] = useState("");
   const [isBusy, setIsBusy] = useState(false);
@@ -103,6 +120,16 @@ export default function CliplinkApp() {
   const [confirmingLeave, setConfirmingLeave] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  // The room being joined by code alone, waiting on a key the link never
+  // carried. `mismatch` distinguishes "we need a key" from "that one is wrong".
+  const [keyPrompt, setKeyPrompt] = useState<{
+    code: RoomCode;
+    mismatch: boolean;
+  } | null>(null);
+  // The serialized key, for the surfaces that display it. State rather than a
+  // ref because it is rendered — and it is already in the address bar, so this
+  // is no wider an exposure than the fragment it came from.
+  const [roomKeyEncoded, setRoomKeyEncoded] = useState<string | null>(null);
 
   // Hydration guard for theme-dependent rendering: false on the server and on
   // the first client render, true thereafter.
@@ -168,20 +195,20 @@ export default function CliplinkApp() {
     return () => observer.disconnect();
   }, []);
 
-  const joinFromSearchParams = useEffectEvent((requestedRoom: string) => {
+  const joinFromRoute = useEffectEvent((requestedRoom: string) => {
     void joinExistingRoom(requestedRoom, true);
   });
 
   useEffect(() => {
-    const requestedRoom = normalizeRoomCode(searchParams.get("room"));
+    const requestedRoom = normalizeRoomCode(initialRoomCode);
 
     if (!requestedRoom || room.initializedRoomRef.current === requestedRoom) {
       return;
     }
 
     room.initializedRoomRef.current = requestedRoom;
-    joinFromSearchParams(requestedRoom);
-  }, [searchParams, room.initializedRoomRef]);
+    joinFromRoute(requestedRoom);
+  }, [initialRoomCode, room.initializedRoomRef]);
 
   useEffect(() => {
     const confirmReset = confirmResetRef;
@@ -203,18 +230,15 @@ export default function CliplinkApp() {
     };
   }, []);
 
-  function updateUrl(code: RoomCode | null) {
-    const next = new URLSearchParams(searchParams.toString());
-    if (code) {
-      next.set("room", code);
-    } else {
-      next.delete("room");
-    }
-
-    const query = next.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, {
-      scroll: false,
-    });
+  function updateUrl(code: RoomCode | null, encodedKey: string | null) {
+    // The fragment has to be restated on every replace, or the router drops it
+    // — and the fragment is where the room key lives, so losing it locks the
+    // tab out of its own room on the next navigation. Passed in rather than
+    // read from state, because the first call comes before that state settles.
+    // It stays a fragment and never becomes a path segment or a query
+    // parameter: those are sent to the server, and this must not be.
+    const fragment = code ? roomKeyFragment(encodedKey) : "";
+    router.replace(code ? `/room/${code}${fragment}` : "/", { scroll: false });
   }
 
   function toggleTheme() {
@@ -227,19 +251,54 @@ export default function CliplinkApp() {
     setShowPalette(false);
   }
 
-  async function hydrateRoom(nextRoomCode: RoomCode) {
-    await room.hydrate(nextRoomCode);
+  /**
+   * `secret` marks a key the user actually has to carry — a generated one. An
+   * open room's key is derived from its code, so it is not put in the URL or
+   * offered for copying: there would be nothing to keep.
+   */
+  async function hydrateRoom(
+    nextRoomCode: RoomCode,
+    key: RoomKey | null,
+    secret: boolean,
+  ) {
+    try {
+      await room.hydrate(nextRoomCode, key);
+    } catch (error) {
+      setRoomKeyEncoded(null);
+      throw error;
+    }
+    const shareable = key && secret ? key.encoded : null;
+    setRoomKeyEncoded(shareable);
     editor.reset();
     closeOverlays();
-    updateUrl(nextRoomCode);
+    setKeyPrompt(null);
+    updateUrl(nextRoomCode, shareable);
   }
 
-  async function createRoom() {
+  /**
+   * Two kinds of room. A private one generates a key here that is never sent,
+   * so the server cannot read it; an open one derives its key from the room
+   * code, so the code alone opens it and there is nothing extra to pass on —
+   * at the cost of the server being able to derive that key too.
+   */
+  async function createRoom(privateRoom: boolean) {
     setIsBusy(true);
     try {
+      if (privateRoom) {
+        const key = await generateRoomKey();
+        const response = await createRoomRequest(key.check);
+        await hydrateRoom(response.code, key, true);
+        pushToast("Private room created — share the link or the key.", "success");
+        return;
+      }
+
       const response = await createRoomRequest();
-      await hydrateRoom(response.code);
-      pushToast("Room created!", "success");
+      await hydrateRoom(
+        response.code,
+        await deriveOpenRoomKey(response.code),
+        false,
+      );
+      pushToast("Open room created — the code is all anyone needs.", "success");
     } catch (error) {
       room.fail();
       pushToast(
@@ -258,14 +317,75 @@ export default function CliplinkApp() {
       return;
     }
 
+    // A shared link carries the key in its fragment; a code read aloud or typed
+    // in does not.
+    const fragmentKey =
+      typeof window === "undefined"
+        ? null
+        : parseRoomKeyFromHash(window.location.hash);
+    const fromFragment = fragmentKey ? await importRoomKey(fragmentKey) : null;
+    if (fromFragment) {
+      await joinWithKey(normalized, fromFragment, fromLink, true);
+      return;
+    }
+
+    // No key in hand, so ask the room which kind it is before picking one. An
+    // open room's key comes from its code; a private one has to be unlocked,
+    // and until it is, the room is joined but unreadable rather than refused.
     setIsBusy(true);
+    let key: RoomKey | null;
+    let secret = false;
     try {
-      await hydrateRoom(normalized);
-      pushToast(fromLink ? "Joined room from link." : "Joined room.", "success");
+      const peek = await connectRoom(normalized);
+      if (peek.room.keyCheck) {
+        key = null;
+        secret = true;
+      } else {
+        key = await deriveOpenRoomKey(normalized);
+      }
     } catch (error) {
       room.fail();
+      pushToast(
+        error instanceof Error ? error.message : "Room not found.",
+        "error",
+      );
+      return;
+    } finally {
+      setIsBusy(false);
+    }
+
+    await joinWithKey(normalized, key, fromLink, secret);
+  }
+
+  async function joinWithKey(
+    normalized: RoomCode,
+    key: RoomKey | null,
+    fromLink: boolean,
+    secret: boolean,
+  ) {
+    setIsBusy(true);
+    try {
+      await hydrateRoom(normalized, key, secret);
+      pushToast(
+        key === null
+          ? "Joined, but locked — enter the room key to read it."
+          : fromLink
+            ? "Joined room from link."
+            : "Joined room.",
+        key === null ? "info" : "success",
+      );
+    } catch (error) {
+      if (error instanceof RoomKeyMismatchError) {
+        // The room is real and reachable; only the key is wrong. Joining it
+        // locked beats bouncing back to the landing page — the room is there,
+        // the countdown runs, and the key can arrive by another route.
+        await hydrateRoom(normalized, null, true).catch(() => {});
+        setKeyPrompt({ code: normalized, mismatch: true });
+        return;
+      }
+      room.fail();
       room.setRoomCode(null);
-      updateUrl(null);
+      updateUrl(null, null);
       pushToast(
         error instanceof Error ? error.message : "Room not found.",
         "error",
@@ -302,7 +422,11 @@ export default function CliplinkApp() {
     editor.reset();
     setJoinCode("");
     closeOverlays();
-    updateUrl(null);
+    setKeyPrompt(null);
+    // Cleared before the URL is rewritten, so the fragment goes with it and
+    // the key is not left sitting in the address bar of a room we have left.
+    setRoomKeyEncoded(null);
+    updateUrl(null, null);
     pushToast("Left room.", "info");
   }
 
@@ -324,17 +448,63 @@ export default function CliplinkApp() {
     }
   }
 
+  function roomUrl(code: RoomCode, withKey: boolean) {
+    return buildRoomUrl(
+      code,
+      window.location.href,
+      withKey ? (roomKeyEncoded ?? undefined) : undefined,
+    );
+  }
+
   async function copyRoomLink(code: RoomCode) {
     try {
-      await writeClipboard(buildRoomUrl(code, window.location.href));
+      await writeClipboard(roomUrl(code, true));
       pushToast("Room link copied!", "success");
     } catch {
       pushToast("Could not copy room link.", "error");
     }
   }
 
+  /**
+   * The link without its key, for sending the two through different channels.
+   * A link that carries the key hands the whole room to whatever app forwards
+   * it; split them and no single channel has both halves.
+   */
+  async function copyRoomLinkWithoutKey(code: RoomCode) {
+    try {
+      await writeClipboard(roomUrl(code, false));
+      pushToast("Link copied without the key — send the key separately.", "success");
+    } catch {
+      pushToast("Could not copy room link.", "error");
+    }
+  }
+
+  /** For the device that has to read a key out to one joining by code. */
+  async function copyRoomKey() {
+    if (!roomKeyEncoded) {
+      return;
+    }
+    try {
+      await writeClipboard(formatRoomKey(roomKeyEncoded));
+      pushToast("Room key copied — share it only with people you trust.", "success");
+    } catch {
+      pushToast("Could not copy room key.", "error");
+    }
+  }
+
+  async function submitRoomKey(encoded: string) {
+    const key = await importRoomKey(encoded);
+    if (!key) {
+      setKeyPrompt((current) =>
+        current ? { ...current, mismatch: true } : current,
+      );
+      return;
+    }
+    await joinWithKey(keyPrompt?.code ?? "", key, false, true);
+  }
+
   async function shareRoom(code: RoomCode) {
-    const url = buildRoomUrl(code, window.location.href);
+    const url = roomUrl(code, true);
 
     if (navigator.share) {
       try {
@@ -432,9 +602,12 @@ export default function CliplinkApp() {
   );
   const sheetOpen = showQrSheet || showShortcuts || showPalette;
   const expiresIn = useRoomExpiry(room.expiresAt);
-  const status = statusFor(room.status, room.realtimeReady);
+  const status = room.locked
+    ? { label: "LOCKED", tone: "warn" as const }
+    : statusFor(room.status, room.realtimeReady);
   const trimmedLength = editor.text.trim().length;
-  const canSend = trimmedLength > 0 && trimmedLength <= MAX_CLIP_CHARS;
+  const canSend =
+    trimmedLength > 0 && trimmedLength <= MAX_CLIP_CHARS && !room.locked;
 
   const actions = createRoomActions({
     joined,
@@ -445,6 +618,12 @@ export default function CliplinkApp() {
     hasIncoming: Boolean(latestIncoming),
     send: () => void sendClip(),
     copyRoomLink: () => void copyRoomLink(roomCode!),
+    copyRoomKey: () => void copyRoomKey(),
+    copyRoomLinkWithoutKey: () => void copyRoomLinkWithoutKey(roomCode!),
+    hasRoomKey: Boolean(roomKeyEncoded),
+    locked: room.locked,
+    enterRoomKey: () =>
+      setKeyPrompt({ code: roomCode!, mismatch: false }),
     shareRoom: () => void shareRoom(roomCode!),
     openQr: () => setShowQrSheet(true),
     leave: requestLeave,
@@ -483,14 +662,14 @@ export default function CliplinkApp() {
     onTypeahead: () => editor.focus(),
   });
 
+  // Carries the key, because the code is drawn here rather than fetched from a
+  // service that would be handed the URL to draw it.
   const roomShareUrl = roomCode
     ? buildRoomUrl(
         roomCode,
         typeof window !== "undefined" ? window.location.href : "",
+        roomKeyEncoded ?? undefined,
       )
-    : "";
-  const qrCodeUrl = roomShareUrl
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=0&data=${encodeURIComponent(roomShareUrl)}`
     : "";
 
   return (
@@ -567,7 +746,7 @@ export default function CliplinkApp() {
                 joinCode={joinCode}
                 isBusy={isBusy}
                 onJoinCodeChange={setJoinCode}
-                onCreate={() => void createRoom()}
+                onCreate={(privateRoom) => void createRoom(privateRoom)}
                 onJoin={() => void joinExistingRoom(joinCode)}
               />
             ) : (
@@ -587,6 +766,7 @@ export default function CliplinkApp() {
                 <ClipEditor
                   editor={editor}
                   realtimeReady={room.realtimeReady}
+                  locked={room.locked}
                   dragActive={dragActive}
                   isBusy={isBusy}
                   canSend={canSend}
@@ -628,12 +808,22 @@ export default function CliplinkApp() {
         <QrSheet
           open={showQrSheet}
           roomCode={roomCode!}
-          qrCodeUrl={qrCodeUrl}
+          shareUrl={roomShareUrl}
+          roomKey={formatRoomKey(roomKeyEncoded ?? "")}
           onClose={() => setShowQrSheet(false)}
           onCopyLink={() => void copyRoomLink(roomCode!)}
+          onCopyKey={() => void copyRoomKey()}
           onShare={() => void shareRoom(roomCode!)}
         />
       ) : null}
+
+      <KeyPrompt
+        open={keyPrompt !== null}
+        roomCode={keyPrompt?.code ?? ""}
+        mismatch={keyPrompt?.mismatch ?? false}
+        onClose={() => setKeyPrompt(null)}
+        onSubmit={(value) => void submitRoomKey(value)}
+      />
 
       <ShortcutsSheet
         open={showShortcuts}

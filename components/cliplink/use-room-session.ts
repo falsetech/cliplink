@@ -16,11 +16,19 @@ import type {
   SessionClip,
   SignalPayload,
 } from "@/lib/cliplink/types";
+import { createEncryptedTransport } from "@/lib/cliplink/encrypted-transport";
+import type { RoomKey } from "@/lib/cliplink/crypto";
 import { createWebSocketTransport } from "@/lib/cliplink/ws";
 
 import type { PushToast } from "./use-toasts";
 
-export const transport = createWebSocketTransport();
+/**
+ * One transport for the life of the tab, so `transport.sendSignal` keeps a
+ * stable identity — the file-transfer manager memoises on it, and a fresh
+ * closure each render would reset the manager in a loop. The room key is a
+ * mutable slot inside it for the same reason.
+ */
+export const transport = createEncryptedTransport(createWebSocketTransport());
 
 // Identifies this page load for peer-to-peer signaling. Unlike the sender id it
 // isn't kept in sessionStorage, so duplicated tabs don't share an identity.
@@ -80,6 +88,9 @@ export function useRoomSession({
   onSignal,
 }: RoomSessionOptions) {
   const [roomCode, setRoomCode] = useState<RoomCode | null>(null);
+  // Joined, but with no key to read the room with. The clips still arrive and
+  // still cannot be opened; the room is legible as a room and nothing more.
+  const [locked, setLocked] = useState(false);
   const [status, setStatus] = useState<RoomStatus>("offline");
   const [realtimeReady, setRealtimeReady] = useState(false);
   const [history, setHistory] = useState<SessionClip[]>([]);
@@ -88,6 +99,7 @@ export function useRoomSession({
   const [enteringIds, setEnteringIds] = useState<Set<number>>(new Set());
 
   const lastSeenIdRef = useRef(0);
+  const ttlSecondsRef = useRef<number | null>(null);
   const roomCodeRef = useRef<RoomCode | null>(null);
   const pollingRef = useRef<number | null>(null);
   const streamCleanupRef = useRef<(() => void) | null>(null);
@@ -252,6 +264,27 @@ export function useRoomSession({
     markArrival(latest.id);
     haptic("arrive");
     void autoCopyIncoming(latest.text);
+    advanceExpiry(latest.ts);
+  }
+
+  /**
+   * A clip from another device extended the room, but only its sender got the
+   * refreshed expiry back in a response. The server's rule is deterministic —
+   * every write pushes the deadline `ttlSeconds` past the write — so the new
+   * expiry is derivable here from the clip's own server-assigned timestamp,
+   * with no extra round trip. Without this a receiving tab keeps counting down
+   * to the old deadline and can read "expired" for a room that is very much
+   * alive.
+   */
+  function advanceExpiry(clipTs: number) {
+    const ttlSeconds = ttlSecondsRef.current;
+    if (ttlSeconds === null) {
+      return;
+    }
+
+    const deadline = clipTs + ttlSeconds * 1000;
+    // Monotonic: a clip arriving out of order must not drag the countdown back.
+    setExpiresAt((current) => Math.max(current ?? 0, deadline));
   }
 
   function startRealtime(nextRoomCode: RoomCode) {
@@ -360,7 +393,9 @@ export function useRoomSession({
     }
   }
 
-  async function hydrate(nextRoomCode: RoomCode) {
+  /** A null key joins the room locked: everything works except reading it. */
+  async function hydrate(nextRoomCode: RoomCode, key: RoomKey | null) {
+    transport.setRoomKey(nextRoomCode, key);
     // Claimed up front, because hydrating writes ?room= to the URL and the
     // searchParams effect would otherwise read that back as a fresh link and
     // join the room a second time — two connects, two sockets, two toasts.
@@ -398,7 +433,9 @@ export function useRoomSession({
     }
 
     setRoomCode(nextRoomCode);
+    setLocked(key === null);
     setHistory(nextHistory);
+    ttlSecondsRef.current = response.room.ttlSeconds;
     setExpiresAt(response.room.expiresAt ?? null);
     setStatus("live");
     // Rows present at hydration are not arrivals, so they must not animate in.
@@ -454,13 +491,16 @@ export function useRoomSession({
     clearSyncReset();
     clearRealtimeRetry();
     transport.disconnect();
+    transport.clearRoomKey();
     setRoomCode(null);
+    setLocked(false);
     setHistory([]);
     setExpiresAt(null);
     setStatus("offline");
     setEnteringIds(new Set());
     initializedRoomRef.current = null;
     lastSeenIdRef.current = 0;
+    ttlSecondsRef.current = null;
     realtimeRetryCountRef.current = 0;
     realtimeOpenedRef.current = false;
   }
@@ -473,6 +513,7 @@ export function useRoomSession({
   return {
     roomCode,
     setRoomCode,
+    locked,
     status,
     realtimeReady,
     history,

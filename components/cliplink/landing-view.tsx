@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import { ROOM_TTL_SECONDS } from "@/lib/cliplink/constants";
 import { normalizeRoomCode } from "@/lib/cliplink/room-code";
 
@@ -10,7 +12,7 @@ type LandingViewProps = {
   joinCode: string;
   isBusy: boolean;
   onJoinCodeChange: (code: string) => void;
-  onCreate: () => void;
+  onCreate: (privateRoom: boolean) => void;
   onJoin: () => void;
 };
 
@@ -21,6 +23,9 @@ export function LandingView({
   onCreate,
   onJoin,
 }: LandingViewProps) {
+  // Default to the private room. The safer of two choices should be the one
+  // taken by someone who does not read the options.
+  const [privateRoom, setPrivateRoom] = useState(true);
   return (
     <section className="mx-auto flex max-w-180 flex-col items-center gap-5 sm:gap-6 md:gap-9">
       <div className="max-w-full text-center md:max-w-175">
@@ -38,10 +43,33 @@ export function LandingView({
       </div>
 
       <div className="flex w-full max-w-full flex-col gap-3 md:max-w-170">
-        <button className={primaryButtonClass} onClick={onCreate} disabled={isBusy}>
+        <button
+          className={primaryButtonClass}
+          onClick={() => onCreate(privateRoom)}
+          disabled={isBusy}
+        >
           <IconPlus size={14} weight="bold" />
           New Room
         </button>
+
+        <label className="flex cursor-pointer items-start gap-2.5 rounded-control border border-line px-3 py-2.5 text-left transition-colors duration-150 hover:border-line-strong">
+          <input
+            className="mt-0.5 size-4 shrink-0 accent-accent"
+            type="checkbox"
+            checked={privateRoom}
+            onChange={(event) => setPrivateRoom(event.target.checked)}
+          />
+          <span className="min-w-0">
+            <span className="block text-2xs tracking-label text-fg">
+              End-to-end encrypt this room
+            </span>
+            <span className="mt-0.5 block text-2xs text-pretty text-muted">
+              {privateRoom
+                ? "A key is created on this device and never sent. Share the link, or the code and key separately. Not even we can read it."
+                : "The code alone opens the room — nothing extra to share. Still encrypted in transit and at rest, but the key comes from the code, so the server can read it."}
+            </span>
+          </span>
+        </label>
 
         <div className="flex w-full items-center gap-2 text-2xs tracking-label-wide text-muted uppercase sm:gap-3">
           <span className="h-px flex-1 bg-line" />

@@ -63,10 +63,12 @@ function PaletteBody({ actions }: { actions: RoomAction[] }) {
     if (!action) {
       return;
     }
-    // Close first: several actions move focus, and the sheet restores focus to
-    // its opener on unmount, which would immediately undo that.
-    close();
-    action.perform();
+    // Handed to the sheet rather than called here. `close()` only starts the
+    // exit animation, so running the action on the next line opened its dialog
+    // while the palette still held the focus trap — two dialogs at once, and
+    // then the palette's own focus restore fired a frame later and dropped the
+    // keyboard behind the new one.
+    close(action.perform);
   }
 
   function onKeyDown(event: React.KeyboardEvent) {

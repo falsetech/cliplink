@@ -1,7 +1,6 @@
 "use client";
 
-import Image from "next/image";
-
+import { QrCode } from "./qr-code";
 import { Sheet, useSheetClose } from "./sheet";
 import { IconX } from "./icons";
 import {
@@ -13,18 +12,24 @@ import {
 type QrSheetProps = {
   open: boolean;
   roomCode: string;
-  qrCodeUrl: string;
+  /** The full room URL, key fragment included — encoded on this device. */
+  shareUrl: string;
+  /** Already grouped for reading; the room key this device generated. */
+  roomKey: string;
   onClose: () => void;
   onCopyLink: () => void;
+  onCopyKey: () => void;
   onShare: () => void;
 };
 
 export function QrSheet({
   open,
   roomCode,
-  qrCodeUrl,
+  shareUrl,
+  roomKey,
   onClose,
   onCopyLink,
+  onCopyKey,
   onShare,
 }: QrSheetProps) {
   return (
@@ -36,8 +41,10 @@ export function QrSheet({
     >
       <QrSheetBody
         roomCode={roomCode}
-        qrCodeUrl={qrCodeUrl}
+        shareUrl={shareUrl}
+        roomKey={roomKey}
         onCopyLink={onCopyLink}
+        onCopyKey={onCopyKey}
         onShare={onShare}
       />
     </Sheet>
@@ -46,10 +53,15 @@ export function QrSheet({
 
 function QrSheetBody({
   roomCode,
-  qrCodeUrl,
+  shareUrl,
+  roomKey,
   onCopyLink,
+  onCopyKey,
   onShare,
-}: Pick<QrSheetProps, "roomCode" | "qrCodeUrl" | "onCopyLink" | "onShare">) {
+}: Pick<
+  QrSheetProps,
+  "roomCode" | "shareUrl" | "roomKey" | "onCopyLink" | "onCopyKey" | "onShare"
+>) {
   const close = useSheetClose();
 
   return (
@@ -67,26 +79,40 @@ function QrSheetBody({
           className="-m-2 inline-flex h-11 w-11 items-center justify-center rounded-control text-dim transition-colors duration-150 hover:text-fg focus-visible:text-fg active:scale-[0.96]"
           type="button"
           aria-label="Close QR code"
-          onClick={close}
+          onClick={() => close()}
         >
           <IconX size={16} />
         </button>
       </div>
 
-      <div className="flex justify-center rounded-surface border border-image-edge bg-white p-4">
-        <Image
-          src={qrCodeUrl}
-          alt={`QR code for room ${roomCode}`}
-          width={280}
-          height={280}
-          unoptimized
+      <div className="flex justify-center rounded-surface border border-image-edge bg-white p-2">
+        <QrCode
+          value={shareUrl}
+          label={`QR code for room ${roomCode}`}
+          size={280}
         />
       </div>
 
       <p className="m-0 text-xs text-pretty text-dim">
-        Scan this code or copy the link to open the room instantly on another
-        device.
+        Scan this code or copy the link to open the room on another device. The
+        code is drawn on this device, so the key it carries never leaves it.
       </p>
+
+      <div className="flex flex-col gap-2 rounded-surface border border-line bg-surface p-3">
+        <p className="m-0 text-2xs tracking-label-wide text-muted uppercase">
+          Room key
+        </p>
+        <p className="m-0 font-mono text-2xs leading-relaxed break-all text-dim select-all">
+          {roomKey}
+        </p>
+        <button
+          className={secondaryButtonClass}
+          type="button"
+          onClick={onCopyKey}
+        >
+          Copy Key
+        </button>
+      </div>
 
       <div className="flex flex-col gap-2.5 sm:flex-row">
         <button

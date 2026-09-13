@@ -38,6 +38,8 @@ export async function GET(
     room: {
       code: room.code,
       createdAt: room.createdAt,
+      ttlSeconds: room.ttlSeconds,
+      ...(room.keyCheck === null ? {} : { keyCheck: room.keyCheck }),
       ...(expiresAt === null ? {} : { expiresAt }),
     },
     clips: room.clips,
