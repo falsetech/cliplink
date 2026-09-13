@@ -185,7 +185,7 @@ export function createRoomActions(ctx: RoomActionContext): RoomAction[] {
       group: "View",
       chord: parseChord("?"),
       keywords: ["help", "keys", "cheatsheet"],
-      enabled: true,
+      enabled: ctx.joined,
       perform: ctx.openShortcuts,
     },
     {

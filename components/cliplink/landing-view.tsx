@@ -1,5 +1,6 @@
 "use client";
 
+import { ROOM_TTL_SECONDS } from "@/lib/cliplink/constants";
 import { normalizeRoomCode } from "@/lib/cliplink/room-code";
 
 import { IconPlus } from "./icons";
@@ -50,7 +51,7 @@ export function LandingView({
 
         <div className="flex flex-col gap-2 sm:gap-2.5 md:flex-row">
           <input
-            className="min-h-12 flex-1 rounded-control border border-line-strong bg-surface px-4 py-3 text-center text-xl font-bold tracking-code text-fg uppercase tabular-nums outline-none transition-colors duration-150 placeholder:text-sm placeholder:font-normal placeholder:tracking-label placeholder:text-muted focus:border-accent"
+            className="min-h-12 flex-1 rounded-control border border-line-strong bg-surface px-4 py-3 text-center text-xl font-bold tracking-code text-fg uppercase tabular-nums outline-none transition-colors duration-150 placeholder:text-sm placeholder:font-normal placeholder:tracking-label placeholder:normal-case placeholder:text-muted focus:border-accent"
             type="text"
             inputMode="text"
             autoCapitalize="characters"
@@ -80,8 +81,8 @@ export function LandingView({
         </div>
 
         <p className="-mt-1 max-w-160 text-center text-2xs text-pretty text-muted">
-          No sign-up, no install, no saved history. Rooms expire after 6 hours of
-          inactivity.
+          No sign-up, no install, no saved history. Rooms expire after{" "}
+          {ROOM_TTL_SECONDS / 3600} hours of inactivity.
         </p>
       </div>
     </section>

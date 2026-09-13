@@ -47,10 +47,11 @@ export function RoomHeader({
           {roomCode}
         </button>
 
-        <div className="flex items-center gap-2 text-2xs tracking-label text-muted uppercase">
-          {deviceCount > 1 ? (
-            <span>{deviceCount} devices</span>
-          ) : null}
+        {/* Status, not a section label, so it does not wear the uppercase
+            tracking the labels use — and "5h 57m" uppercased to "5H 57M" read
+            as initials rather than units. */}
+        <div className="flex items-center gap-2 text-2xs text-muted">
+          {deviceCount > 1 ? <span>{deviceCount} devices</span> : null}
           {deviceCount > 1 && expiresIn !== null ? (
             <span aria-hidden="true">·</span>
           ) : null}

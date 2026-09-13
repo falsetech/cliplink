@@ -56,23 +56,39 @@ const subscribeToNothing = () => () => {};
 /** A destructive confirmation that never times out is a trap of its own. */
 const CONFIRM_WINDOW_MS = 4000;
 
+type StatusTone = "idle" | "good" | "busy" | "warn" | "bad";
+
 /**
- * The badge distinguishes the socket from the polling fallback. On polling,
- * Attach and Download are disabled and delivery is slower, and until now
- * nothing said so.
+ * One source for the word and the colour, so they cannot disagree. Polling had
+ * been reading as LIVE-green while the label said the connection was degraded
+ * — the dot said everything was fine and the word said it was not.
  */
-function statusLabel(status: RoomStatus, realtimeReady: boolean) {
+function statusFor(
+  status: RoomStatus,
+  realtimeReady: boolean,
+): { label: string; tone: StatusTone } {
   switch (status) {
     case "live":
-      return realtimeReady ? "LIVE" : "POLLING";
+      return realtimeReady
+        ? { label: "LIVE", tone: "good" }
+        : { label: "POLLING", tone: "warn" };
     case "syncing":
-      return "SYNCING";
+      return { label: "SYNCING", tone: "busy" };
     case "error":
-      return "ERROR";
+      return { label: "ERROR", tone: "bad" };
     default:
-      return "OFFLINE";
+      return { label: "OFFLINE", tone: "idle" };
   }
 }
+
+const DOT_TONE: Record<StatusTone, string> = {
+  idle: "",
+  good: "bg-success text-success after:opacity-100",
+  // Steady, not pulsing: polling is a settled state, not work in progress.
+  warn: "bg-accent text-accent after:opacity-100",
+  busy: "animate-[pulse_1s_ease-in-out_infinite] bg-accent text-accent after:opacity-100",
+  bad: "bg-danger text-danger after:opacity-100",
+};
 
 export default function CliplinkApp() {
   const router = useRouter();
@@ -402,6 +418,7 @@ export default function CliplinkApp() {
   );
   const sheetOpen = showQrSheet || showShortcuts || showPalette;
   const expiresIn = useRoomExpiry(room.expiresAt);
+  const status = statusFor(room.status, room.realtimeReady);
   const trimmedLength = editor.text.trim().length;
   const canSend = trimmedLength > 0 && trimmedLength <= MAX_CLIP_CHARS;
 
@@ -475,37 +492,39 @@ export default function CliplinkApp() {
             <span className="text-logo">LINK</span>
           </div>
           <div className="flex items-center gap-1.5 sm:gap-2 md:gap-3">
-            <div
-              className="inline-flex items-center gap-1.5 text-2xs tracking-label text-muted uppercase md:gap-2"
-              aria-live="polite"
-            >
-              <span
-                className={cn(
-                  "relative h-1.75 w-1.75 rounded-full bg-muted transition-colors duration-200",
-                  // The glow is an opacity-animated pseudo-element rather than a
-                  // transitioned box-shadow, which the compositor cannot handle.
-                  "after:absolute after:inset-0 after:rounded-full after:opacity-0 after:shadow-[0_0_10px_currentColor] after:transition-opacity after:duration-200 after:content-['']",
-                  room.status === "live" &&
-                    "bg-success text-success after:opacity-100",
-                  room.status === "syncing" &&
-                    "animate-[pulse_1s_ease-in-out_infinite] bg-accent text-accent after:opacity-100",
-                  room.status === "error" &&
-                    "bg-danger text-danger after:opacity-100",
-                )}
-              />
-              <span>{statusLabel(room.status, room.realtimeReady)}</span>
-            </div>
-            <button
-              className={chromeButtonClass}
-              type="button"
-              aria-label="Keyboard shortcuts"
-              aria-keyshortcuts="?"
-              onClick={() => setShowShortcuts(true)}
-            >
-              <span aria-hidden="true" className="font-mono text-sm">
-                ?
-              </span>
-            </button>
+            {/* There is nothing to be connected to before a room exists, and
+                "OFFLINE" on the landing screen reads as a fault when none has
+                happened. */}
+            {joined ? (
+              <div
+                className="inline-flex items-center gap-1.5 text-2xs tracking-label text-muted uppercase md:gap-2"
+                aria-live="polite"
+              >
+                <span
+                  className={cn(
+                    "relative h-1.75 w-1.75 rounded-full bg-muted transition-colors duration-200",
+                    // The glow is an opacity-animated pseudo-element rather than a
+                    // transitioned box-shadow, which the compositor cannot handle.
+                    "after:absolute after:inset-0 after:rounded-full after:opacity-0 after:shadow-[0_0_10px_currentColor] after:transition-opacity after:duration-200 after:content-['']",
+                    DOT_TONE[status.tone],
+                  )}
+                />
+                <span>{status.label}</span>
+              </div>
+            ) : null}
+            {joined ? (
+              <button
+                className={chromeButtonClass}
+                type="button"
+                aria-label="Keyboard shortcuts"
+                aria-keyshortcuts="?"
+                onClick={() => setShowShortcuts(true)}
+              >
+                <span aria-hidden="true" className="font-mono text-sm">
+                  ?
+                </span>
+              </button>
+            ) : null}
             <button
               className={chromeButtonClass}
               type="button"
