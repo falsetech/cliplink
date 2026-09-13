@@ -6,6 +6,7 @@ import type {
   RefObject,
 } from "react";
 
+import { MAX_CLIP_CHARS } from "@/lib/cliplink/constants";
 import { formatCharCount } from "@/lib/cliplink/format";
 import { cn } from "@/lib/utils";
 
@@ -14,11 +15,45 @@ import { KbdKey } from "./kbd";
 import { panelAccentClass, panelSurfaceStyle, panelToolClass } from "./ui";
 import type { useClipEditor } from "./use-clip-editor";
 
+/** Past this the count stops being trivia and starts being a warning. */
+const COUNT_WARNING_AT = MAX_CLIP_CHARS * 0.9;
+
+/**
+ * Silent while the box is short — "0 chars" was never worth the row. Near the
+ * cap it switches to a fraction and colours, so the limit is discovered before
+ * a send is rejected rather than after.
+ */
+function CharCount({ length }: { length: number }) {
+  if (length === 0) {
+    return null;
+  }
+
+  const over = length > MAX_CLIP_CHARS;
+  const near = length > COUNT_WARNING_AT;
+
+  return (
+    <span
+      className={cn(
+        "tabular-nums",
+        over && "text-danger",
+        near && !over && "text-accent",
+      )}
+      aria-live={near ? "polite" : "off"}
+    >
+      {near
+        ? `${length.toLocaleString()} / ${MAX_CLIP_CHARS.toLocaleString()}`
+        : formatCharCount(length)}
+    </span>
+  );
+}
+
 type ClipEditorProps = {
   editor: ReturnType<typeof useClipEditor>;
   realtimeReady: boolean;
   dragActive: boolean;
   isBusy: boolean;
+  /** Text present and within the length cap. Gates Send. */
+  canSend: boolean;
   /** True while the arrival cue is lit for a clip that just landed. */
   arrival: boolean;
   fileInputRef: RefObject<HTMLInputElement | null>;
@@ -36,6 +71,7 @@ export function ClipEditor({
   realtimeReady,
   dragActive,
   isBusy,
+  canSend,
   arrival,
   fileInputRef,
   editorRef,
@@ -74,66 +110,79 @@ export function ClipEditor({
         <span className="hidden text-2xs tracking-label-wide text-muted uppercase md:inline">
           Clipboard
         </span>
-        <div className="flex w-full flex-wrap items-center justify-start gap-1.5 md:w-auto md:flex-nowrap md:justify-end">
-          <button
-            className={panelToolClass}
-            type="button"
-            disabled={!realtimeReady}
-            aria-keyshortcuts="A"
-            title={
-              realtimeReady
-                ? "Share files peer-to-peer. Nothing is uploaded or stored."
-                : "File transfer needs a live connection."
-            }
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <IconPaperclip size={12} />
-            Attach
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            hidden
-            onChange={(event) => {
-              onFilesPicked(event.target.files);
-              event.target.value = "";
-            }}
-          />
-          <button
-            className={panelToolClass}
-            type="button"
-            onClick={() => void editor.pasteFromDevice()}
-          >
-            Paste from device
-          </button>
-          {editor.clearedText ? (
-            <button
-              className={cn(panelToolClass, "text-accent")}
-              type="button"
-              onClick={editor.undoClear}
-            >
-              Undo clear
-            </button>
-          ) : (
+        {/* Two groups, not four peers: what puts text in the box, then what
+            happens to it. Proximity is doing the explaining. */}
+        <div className="flex w-full flex-wrap items-center justify-start gap-x-3 gap-y-1.5 md:w-auto md:flex-nowrap md:justify-end">
+          <div className="flex items-center gap-1.5">
             <button
               className={panelToolClass}
               type="button"
-              disabled={!editor.text}
-              onClick={editor.clear}
+              disabled={!realtimeReady}
+              aria-keyshortcuts="A"
+              title={
+                realtimeReady
+                  ? "Share files peer-to-peer. Nothing is uploaded or stored."
+                  : "File transfer needs a live connection."
+              }
+              onClick={() => fileInputRef.current?.click()}
             >
-              Clear text
+              <IconPaperclip size={12} />
+              Attach
             </button>
-          )}
-          <button
-            className={cn(panelToolClass, panelAccentClass, "min-w-20.5 px-4")}
-            type="button"
-            onClick={onSend}
-            disabled={isBusy}
-          >
-            Send
-            <IconArrowUp size={12} weight="bold" />
-          </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(event) => {
+                onFilesPicked(event.target.files);
+                event.target.value = "";
+              }}
+            />
+            <button
+              className={panelToolClass}
+              type="button"
+              onClick={() => void editor.pasteFromDevice()}
+            >
+              Paste from device
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            {editor.clearedText ? (
+              <button
+                className={cn(panelToolClass, "text-accent")}
+                type="button"
+                onClick={editor.undoClear}
+              >
+                Undo clear
+              </button>
+            ) : (
+              <button
+                className={panelToolClass}
+                type="button"
+                disabled={!editor.text}
+                onClick={editor.clear}
+              >
+                Clear text
+              </button>
+            )}
+            <button
+              className={cn(
+                panelToolClass,
+                panelAccentClass,
+                "min-w-20.5 px-4",
+              )}
+              type="button"
+              onClick={onSend}
+              // The shortcut already knew there was nothing to send. The button
+              // did not, so clicking it just produced a toast telling you off.
+              disabled={isBusy || !canSend}
+            >
+              Send
+              <IconArrowUp size={12} weight="bold" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -141,7 +190,7 @@ export function ClipEditor({
         ref={editorRef}
         className="min-h-50 w-full resize-y border-0 bg-transparent px-4 py-4 text-sm text-fg outline-none placeholder:text-muted md:min-h-60 md:px-5 md:py-5 md:text-base"
         value={editor.text}
-        placeholder="Type or paste anything here, then hit Send to sync it across devices. Drop or paste files to share them peer-to-peer..."
+        placeholder="Type or paste anything…"
         aria-label="Clip text"
         onChange={(event) => editor.change(event.target.value)}
         onKeyDown={editor.handleKeyDown}
@@ -149,13 +198,19 @@ export function ClipEditor({
       />
 
       <div className="flex flex-col gap-1 border-t border-line px-4 py-2 text-2xs tracking-label text-muted md:flex-row md:items-center md:justify-between">
-        <span className="flex flex-wrap items-center gap-1">
-          <KbdKey>Enter</KbdKey> to send
-          <span className="text-muted">·</span>
-          <KbdKey>Shift</KbdKey>
-          <KbdKey>Enter</KbdKey> for a new line
+        {/* Keys within a chord bind tighter than the words around them, or
+            "Shift Enter" reads as two unrelated keys. */}
+        <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+          <KbdKey>Enter</KbdKey>
+          <span>to send</span>
+          <span aria-hidden="true">·</span>
+          <span className="inline-flex items-center gap-0.5">
+            <KbdKey>Shift</KbdKey>
+            <KbdKey>Enter</KbdKey>
+          </span>
+          <span>for a new line</span>
         </span>
-        <span className="tabular-nums">{formatCharCount(editor.text.length)}</span>
+        <CharCount length={editor.text.length} />
       </div>
     </div>
   );

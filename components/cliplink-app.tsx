@@ -42,6 +42,7 @@ import { useShortcuts } from "@/components/cliplink/use-shortcuts";
 import { useToasts } from "@/components/cliplink/use-toasts";
 
 import { writeClipboard } from "@/lib/cliplink/clipboard";
+import { MAX_CLIP_CHARS } from "@/lib/cliplink/constants";
 import { createRoomRequest } from "@/lib/cliplink/http";
 import { buildRoomUrl, normalizeRoomCode } from "@/lib/cliplink/room-code";
 import { getSessionSenderId } from "@/lib/cliplink/session";
@@ -291,8 +292,9 @@ export default function CliplinkApp() {
 
   async function sendClip() {
     const text = editor.text.trim();
-    if (!text) {
-      pushToast("Nothing to send.", "info");
+    // Silent: the Send button and the shortcut are both disabled in this
+    // state, and an empty box does not need to be told it is empty.
+    if (!text || text.length > MAX_CLIP_CHARS) {
       return;
     }
 
@@ -400,11 +402,14 @@ export default function CliplinkApp() {
   );
   const sheetOpen = showQrSheet || showShortcuts || showPalette;
   const expiresIn = useRoomExpiry(room.expiresAt);
+  const trimmedLength = editor.text.trim().length;
+  const canSend = trimmedLength > 0 && trimmedLength <= MAX_CLIP_CHARS;
 
   const actions = createRoomActions({
     joined,
     realtimeReady: room.realtimeReady,
     hasText: Boolean(editor.text.trim()),
+    canSend,
     hasUndo: Boolean(editor.clearedText),
     hasIncoming: Boolean(latestIncoming),
     send: () => void sendClip(),
@@ -551,6 +556,7 @@ export default function CliplinkApp() {
                   realtimeReady={room.realtimeReady}
                   dragActive={dragActive}
                   isBusy={isBusy}
+                  canSend={canSend}
                   arrival={room.arrivalId !== null}
                   fileInputRef={fileInputRef}
                   editorRef={editorRef}

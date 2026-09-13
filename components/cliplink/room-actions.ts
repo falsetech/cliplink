@@ -31,6 +31,8 @@ export type RoomActionContext = {
   joined: boolean;
   realtimeReady: boolean;
   hasText: boolean;
+  /** Text present, within the length cap, and therefore actually sendable. */
+  canSend: boolean;
   hasUndo: boolean;
   hasIncoming: boolean;
   send: () => void;
@@ -68,7 +70,7 @@ export function createRoomActions(ctx: RoomActionContext): RoomAction[] {
       group: "Clip",
       chord: parseChord("Enter"),
       keywords: ["submit", "share text"],
-      enabled: ctx.joined && ctx.hasText,
+      enabled: ctx.joined && ctx.canSend,
       allowInEditor: true,
       handledLocally: true,
       perform: ctx.send,
