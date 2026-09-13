@@ -50,6 +50,8 @@ function CharCount({ length }: { length: number }) {
 type ClipEditorProps = {
   editor: ReturnType<typeof useClipEditor>;
   realtimeReady: boolean;
+  /** Joined without a key: the room is there but nothing can be read or sent. */
+  locked: boolean;
   dragActive: boolean;
   isBusy: boolean;
   /** Text present and within the length cap. Gates Send. */
@@ -69,6 +71,7 @@ type ClipEditorProps = {
 export function ClipEditor({
   editor,
   realtimeReady,
+  locked,
   dragActive,
   isBusy,
   canSend,
@@ -217,7 +220,12 @@ export function ClipEditor({
           {/* A greyed button whose only explanation is a title tooltip explains
               nothing on touch and needs a hover and a wait everywhere else.
               Same wording as the drop overlay, so the two corroborate. */}
-          {!realtimeReady ? (
+          {locked ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className="text-accent">enter the room key to send</span>
+            </>
+          ) : !realtimeReady ? (
             <>
               <span aria-hidden="true">·</span>
               <span className="text-accent">files need a live connection</span>

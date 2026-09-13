@@ -39,6 +39,11 @@ export type RoomActionContext = {
   copyRoomLink: () => void;
   copyRoomKey: () => void;
   copyRoomLinkWithoutKey: () => void;
+  /** False for an open room, whose key is derived and so not worth copying. */
+  hasRoomKey: boolean;
+  /** Joined but unreadable: the room needs a key this device does not have. */
+  locked: boolean;
+  enterRoomKey: () => void;
   shareRoom: () => void;
   openQr: () => void;
   leave: () => void;
@@ -140,7 +145,7 @@ export function createRoomActions(ctx: RoomActionContext): RoomAction[] {
       label: "Copy link without key",
       group: "Room",
       keywords: ["invite", "url", "safer", "separate", "channel"],
-      enabled: ctx.joined,
+      enabled: ctx.joined && ctx.hasRoomKey,
       perform: ctx.copyRoomLinkWithoutKey,
     },
     {
@@ -148,8 +153,16 @@ export function createRoomActions(ctx: RoomActionContext): RoomAction[] {
       label: "Copy room key",
       group: "Room",
       keywords: ["encryption", "secret", "unlock", "password"],
-      enabled: ctx.joined,
+      enabled: ctx.joined && ctx.hasRoomKey,
       perform: ctx.copyRoomKey,
+    },
+    {
+      id: "enter-key",
+      label: "Enter room key",
+      group: "Room",
+      keywords: ["unlock", "decrypt", "password", "locked"],
+      enabled: ctx.locked,
+      perform: ctx.enterRoomKey,
     },
     {
       id: "share",

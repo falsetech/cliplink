@@ -9,7 +9,7 @@ import {
   type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent,
 } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 
 import { ClipEditor } from "@/components/cliplink/clip-editor";
@@ -45,13 +45,14 @@ import { useToasts } from "@/components/cliplink/use-toasts";
 import { writeClipboard } from "@/lib/cliplink/clipboard";
 import { MAX_CLIP_CHARS } from "@/lib/cliplink/constants";
 import {
+  deriveOpenRoomKey,
   formatRoomKey,
   generateRoomKey,
   importRoomKey,
   type RoomKey,
 } from "@/lib/cliplink/crypto";
 import { RoomKeyMismatchError } from "@/lib/cliplink/encrypted-transport";
-import { createRoomRequest } from "@/lib/cliplink/http";
+import { connectRoom, createRoomRequest } from "@/lib/cliplink/http";
 import {
   buildRoomUrl,
   normalizeRoomCode,
@@ -103,10 +104,13 @@ const DOT_TONE: Record<StatusTone, string> = {
   bad: "bg-danger text-danger after:opacity-100",
 };
 
-export default function CliplinkApp() {
+type CliplinkAppProps = {
+  /** Present when rendered at /room/[code]; absent on the landing page. */
+  initialRoomCode?: string;
+};
+
+export default function CliplinkApp({ initialRoomCode }: CliplinkAppProps) {
   const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
 
   const [joinCode, setJoinCode] = useState("");
   const [isBusy, setIsBusy] = useState(false);
@@ -196,7 +200,7 @@ export default function CliplinkApp() {
   });
 
   useEffect(() => {
-    const requestedRoom = normalizeRoomCode(searchParams.get("room"));
+    const requestedRoom = normalizeRoomCode(initialRoomCode);
 
     if (!requestedRoom || room.initializedRoomRef.current === requestedRoom) {
       return;
@@ -204,7 +208,7 @@ export default function CliplinkApp() {
 
     room.initializedRoomRef.current = requestedRoom;
     joinFromSearchParams(requestedRoom);
-  }, [searchParams, room.initializedRoomRef]);
+  }, [initialRoomCode, room.initializedRoomRef]);
 
   useEffect(() => {
     const confirmReset = confirmResetRef;
@@ -227,22 +231,14 @@ export default function CliplinkApp() {
   }, []);
 
   function updateUrl(code: RoomCode | null, encodedKey: string | null) {
-    const next = new URLSearchParams(searchParams.toString());
-    if (code) {
-      next.set("room", code);
-    } else {
-      next.delete("room");
-    }
-
-    const query = next.toString();
     // The fragment has to be restated on every replace, or the router drops it
     // — and the fragment is where the room key lives, so losing it locks the
     // tab out of its own room on the next navigation. Passed in rather than
     // read from state, because the first call comes before that state settles.
+    // It stays a fragment and never becomes a path segment or a query
+    // parameter: those are sent to the server, and this must not be.
     const fragment = code ? roomKeyFragment(encodedKey) : "";
-    router.replace(`${pathname}${query ? `?${query}` : ""}${fragment}`, {
-      scroll: false,
-    });
+    router.replace(code ? `/room/${code}${fragment}` : "/", { scroll: false });
   }
 
   function toggleTheme() {
@@ -255,29 +251,54 @@ export default function CliplinkApp() {
     setShowPalette(false);
   }
 
-  async function hydrateRoom(nextRoomCode: RoomCode, key: RoomKey) {
+  /**
+   * `secret` marks a key the user actually has to carry — a generated one. An
+   * open room's key is derived from its code, so it is not put in the URL or
+   * offered for copying: there would be nothing to keep.
+   */
+  async function hydrateRoom(
+    nextRoomCode: RoomCode,
+    key: RoomKey | null,
+    secret: boolean,
+  ) {
     try {
       await room.hydrate(nextRoomCode, key);
     } catch (error) {
       setRoomKeyEncoded(null);
       throw error;
     }
-    setRoomKeyEncoded(key.encoded);
+    const shareable = key && secret ? key.encoded : null;
+    setRoomKeyEncoded(shareable);
     editor.reset();
     closeOverlays();
     setKeyPrompt(null);
-    updateUrl(nextRoomCode, key.encoded);
+    updateUrl(nextRoomCode, shareable);
   }
 
-  async function createRoom() {
+  /**
+   * Two kinds of room. A private one generates a key here that is never sent,
+   * so the server cannot read it; an open one derives its key from the room
+   * code, so the code alone opens it and there is nothing extra to pass on —
+   * at the cost of the server being able to derive that key too.
+   */
+  async function createRoom(privateRoom: boolean) {
     setIsBusy(true);
     try {
-      // Generated here and never sent. The server gets its fingerprint, which
-      // is enough to tell a joiner their key is wrong and nothing more.
-      const key = await generateRoomKey();
-      const response = await createRoomRequest(key.check);
-      await hydrateRoom(response.code, key);
-      pushToast("Room created!", "success");
+      if (privateRoom) {
+        const key = await generateRoomKey();
+        const response = await createRoomRequest(key.check);
+        await hydrateRoom(response.code, key, true);
+        pushToast("Private room created — share the link or the key.", "success");
+        return;
+      }
+
+      const response = await createRoomRequest();
+      await hydrateRoom(
+        response.code,
+        await deriveOpenRoomKey(response.code),
+        false,
+      );
+      pushToast("Open room created — the code is all anyone needs.", "success");
     } catch (error) {
       room.fail();
       pushToast(
@@ -297,38 +318,73 @@ export default function CliplinkApp() {
     }
 
     // A shared link carries the key in its fragment; a code read aloud or typed
-    // in does not. Without one there is nothing to decrypt with, so ask.
+    // in does not.
     const fragmentKey =
       typeof window === "undefined"
         ? null
         : parseRoomKeyFromHash(window.location.hash);
-    const key = fragmentKey ? await importRoomKey(fragmentKey) : null;
-    if (!key) {
-      setKeyPrompt({ code: normalized, mismatch: false });
+    const fromFragment = fragmentKey ? await importRoomKey(fragmentKey) : null;
+    if (fromFragment) {
+      await joinWithKey(normalized, fromFragment, fromLink, true);
       return;
     }
 
-    await joinWithKey(normalized, key, fromLink);
+    // No key in hand, so ask the room which kind it is before picking one. An
+    // open room's key comes from its code; a private one has to be unlocked,
+    // and until it is, the room is joined but unreadable rather than refused.
+    setIsBusy(true);
+    let key: RoomKey | null;
+    let secret = false;
+    try {
+      const peek = await connectRoom(normalized);
+      if (peek.room.keyCheck) {
+        key = null;
+        secret = true;
+      } else {
+        key = await deriveOpenRoomKey(normalized);
+      }
+    } catch (error) {
+      room.fail();
+      pushToast(
+        error instanceof Error ? error.message : "Room not found.",
+        "error",
+      );
+      return;
+    } finally {
+      setIsBusy(false);
+    }
+
+    await joinWithKey(normalized, key, fromLink, secret);
   }
 
   async function joinWithKey(
     normalized: RoomCode,
-    key: RoomKey,
+    key: RoomKey | null,
     fromLink: boolean,
+    secret: boolean,
   ) {
     setIsBusy(true);
     try {
-      await hydrateRoom(normalized, key);
-      pushToast(fromLink ? "Joined room from link." : "Joined room.", "success");
+      await hydrateRoom(normalized, key, secret);
+      pushToast(
+        key === null
+          ? "Joined, but locked — enter the room key to read it."
+          : fromLink
+            ? "Joined room from link."
+            : "Joined room.",
+        key === null ? "info" : "success",
+      );
     } catch (error) {
-      room.fail();
-      room.setRoomCode(null);
       if (error instanceof RoomKeyMismatchError) {
-        // The room is real and reachable; only the key is wrong. Keeping the
-        // prompt up is more use than dropping them back to the landing page.
+        // The room is real and reachable; only the key is wrong. Joining it
+        // locked beats bouncing back to the landing page — the room is there,
+        // the countdown runs, and the key can arrive by another route.
+        await hydrateRoom(normalized, null, true).catch(() => {});
         setKeyPrompt({ code: normalized, mismatch: true });
         return;
       }
+      room.fail();
+      room.setRoomCode(null);
       updateUrl(null, null);
       pushToast(
         error instanceof Error ? error.message : "Room not found.",
@@ -444,7 +500,7 @@ export default function CliplinkApp() {
       );
       return;
     }
-    await joinWithKey(keyPrompt?.code ?? "", key, false);
+    await joinWithKey(keyPrompt?.code ?? "", key, false, true);
   }
 
   async function shareRoom(code: RoomCode) {
@@ -546,9 +602,12 @@ export default function CliplinkApp() {
   );
   const sheetOpen = showQrSheet || showShortcuts || showPalette;
   const expiresIn = useRoomExpiry(room.expiresAt);
-  const status = statusFor(room.status, room.realtimeReady);
+  const status = room.locked
+    ? { label: "LOCKED", tone: "warn" as const }
+    : statusFor(room.status, room.realtimeReady);
   const trimmedLength = editor.text.trim().length;
-  const canSend = trimmedLength > 0 && trimmedLength <= MAX_CLIP_CHARS;
+  const canSend =
+    trimmedLength > 0 && trimmedLength <= MAX_CLIP_CHARS && !room.locked;
 
   const actions = createRoomActions({
     joined,
@@ -561,6 +620,10 @@ export default function CliplinkApp() {
     copyRoomLink: () => void copyRoomLink(roomCode!),
     copyRoomKey: () => void copyRoomKey(),
     copyRoomLinkWithoutKey: () => void copyRoomLinkWithoutKey(roomCode!),
+    hasRoomKey: Boolean(roomKeyEncoded),
+    locked: room.locked,
+    enterRoomKey: () =>
+      setKeyPrompt({ code: roomCode!, mismatch: false }),
     shareRoom: () => void shareRoom(roomCode!),
     openQr: () => setShowQrSheet(true),
     leave: requestLeave,
@@ -688,7 +751,7 @@ export default function CliplinkApp() {
                 joinCode={joinCode}
                 isBusy={isBusy}
                 onJoinCodeChange={setJoinCode}
-                onCreate={() => void createRoom()}
+                onCreate={(privateRoom) => void createRoom(privateRoom)}
                 onJoin={() => void joinExistingRoom(joinCode)}
               />
             ) : (
@@ -708,6 +771,7 @@ export default function CliplinkApp() {
                 <ClipEditor
                   editor={editor}
                   realtimeReady={room.realtimeReady}
+                  locked={room.locked}
                   dragActive={dragActive}
                   isBusy={isBusy}
                   canSend={canSend}

@@ -129,7 +129,6 @@ It is a stock Next.js App Router build, so anywhere that runs Next.js 16 with We
 
 ## Roadmap
 
-- **End-to-end encryption for clips** — clip text currently reaches Redis in plaintext; see [Security](SECURITY.md)
 - **Test coverage** — none today, starting with the transport state machine and the file-transfer lifecycle
 - **WebRTC reliability** across restrictive NATs
 

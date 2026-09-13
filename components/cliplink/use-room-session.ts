@@ -88,6 +88,9 @@ export function useRoomSession({
   onSignal,
 }: RoomSessionOptions) {
   const [roomCode, setRoomCode] = useState<RoomCode | null>(null);
+  // Joined, but with no key to read the room with. The clips still arrive and
+  // still cannot be opened; the room is legible as a room and nothing more.
+  const [locked, setLocked] = useState(false);
   const [status, setStatus] = useState<RoomStatus>("offline");
   const [realtimeReady, setRealtimeReady] = useState(false);
   const [history, setHistory] = useState<SessionClip[]>([]);
@@ -390,7 +393,8 @@ export function useRoomSession({
     }
   }
 
-  async function hydrate(nextRoomCode: RoomCode, key: RoomKey) {
+  /** A null key joins the room locked: everything works except reading it. */
+  async function hydrate(nextRoomCode: RoomCode, key: RoomKey | null) {
     transport.setRoomKey(nextRoomCode, key);
     // Claimed up front, because hydrating writes ?room= to the URL and the
     // searchParams effect would otherwise read that back as a fresh link and
@@ -429,6 +433,7 @@ export function useRoomSession({
     }
 
     setRoomCode(nextRoomCode);
+    setLocked(key === null);
     setHistory(nextHistory);
     ttlSecondsRef.current = response.room.ttlSeconds;
     setExpiresAt(response.room.expiresAt ?? null);
@@ -488,6 +493,7 @@ export function useRoomSession({
     transport.disconnect();
     transport.clearRoomKey();
     setRoomCode(null);
+    setLocked(false);
     setHistory([]);
     setExpiresAt(null);
     setStatus("offline");
@@ -507,6 +513,7 @@ export function useRoomSession({
   return {
     roomCode,
     setRoomCode,
+    locked,
     status,
     realtimeReady,
     history,

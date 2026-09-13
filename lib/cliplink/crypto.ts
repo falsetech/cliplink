@@ -152,6 +152,25 @@ export async function generateRoomKey(): Promise<RoomKey> {
   return deriveRoomKey(crypto.getRandomValues(new Uint8Array(KEY_BYTES)));
 }
 
+/**
+ * The key for an *open* room: derived from the room code, so there is nothing
+ * extra to share and the code alone opens the room.
+ *
+ * This is deliberately NOT end-to-end. The server receives the room code in
+ * order to route anything at all, so it can derive this key too. What it buys
+ * is one wire format instead of two — an open room is encrypted in Redis and
+ * over the wire exactly like any other, and nothing downstream needs a second
+ * code path — plus protection from anyone who has the stored data but not the
+ * code. Rooms that need the server excluded generate a real key instead.
+ */
+export async function deriveOpenRoomKey(roomCode: string): Promise<RoomKey> {
+  const seed = await crypto.subtle.digest(
+    "SHA-256",
+    encoder.encode(`cliplink:open-room:${roomCode}`),
+  );
+  return deriveRoomKey(new Uint8Array(seed));
+}
+
 /** Strips the grouping dashes and anything else a paste may have carried in. */
 export function normalizeRoomKey(value: string | null | undefined) {
   return (value ?? "").toUpperCase().replace(/[^0-9A-Z]/g, "");

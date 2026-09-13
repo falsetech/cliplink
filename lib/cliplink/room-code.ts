@@ -28,8 +28,10 @@ export const ROOM_KEY_FRAGMENT_PARAM = "k";
  * go through here, or it will hand someone a room they cannot read.
  */
 export function buildRoomUrl(code: string, origin: string, roomKey?: string) {
-  const url = new URL(origin);
-  url.searchParams.set("room", code);
+  const url = new URL(`/room/${code}`, origin);
+  // The key goes in the fragment and nowhere else. A path segment or a query
+  // parameter travels to the server in the request line and is written to its
+  // logs; a fragment is never sent at all.
   url.hash = roomKey ? `${ROOM_KEY_FRAGMENT_PARAM}=${roomKey}` : "";
   return url.toString();
 }

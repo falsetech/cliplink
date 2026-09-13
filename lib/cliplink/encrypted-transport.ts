@@ -34,7 +34,7 @@ export class RoomKeyMismatchError extends Error {
 
 export type EncryptedTransport = TransportClient & {
   /** Set on join, cleared on leave. Null means nothing can be sent or read. */
-  setRoomKey: (roomCode: RoomCode, key: RoomKey) => void;
+  setRoomKey: (roomCode: RoomCode, key: RoomKey | null) => void;
   clearRoomKey: () => void;
 };
 
