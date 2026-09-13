@@ -75,10 +75,16 @@ export async function GET(
           if (!peerId || envelope.from === peerId) {
             return;
           }
+          if (envelope.kind === "peer-left") {
+            send({ type: "peer-left", from: envelope.from });
+            return;
+          }
           if (envelope.to !== undefined && envelope.to !== peerId) {
             return;
           }
-          send({ type: "signal", from: envelope.from, payload: envelope.payload });
+          // Relayed verbatim. The payload is sealed to the room key, which the
+          // server does not have and is not meant to.
+          send({ type: "signal", from: envelope.from, sealed: envelope.sealed });
         },
       });
 
@@ -103,9 +109,10 @@ export async function GET(
         }
 
         void publishSignal(code, {
+          kind: "sealed",
           from: peerId,
           to: message.to,
-          payload: message.payload,
+          sealed: message.sealed,
         });
       });
 
@@ -144,8 +151,10 @@ export async function GET(
         closed = true;
         unsubscribe();
         if (peerId) {
-          // Lets other peers drop this peer's file offers even if the tab crashed.
-          void publishSignal(code, { from: peerId, payload: { type: "peer-left" } });
+          // Lets other peers drop this peer's file offers even if the tab
+          // crashed. The one signal the server originates, and so the one it
+          // cannot seal — it has no key.
+          void publishSignal(code, { kind: "peer-left", from: peerId });
         }
       });
     },

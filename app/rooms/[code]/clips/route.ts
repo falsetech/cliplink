@@ -13,7 +13,7 @@ import type {
   PollClipsResponse,
 } from "@/lib/cliplink/types";
 import {
-  validateClipText,
+  validateClipCiphertext,
   validateRoomCode,
   validateSenderId,
 } from "@/lib/cliplink/validation";
@@ -78,7 +78,7 @@ export async function POST(
     return errorResponse(400, "invalid_sender_id", "Invalid sender id.");
   }
 
-  const validatedText = validateClipText(payload.text);
+  const validatedText = validateClipCiphertext(payload.text);
   if (!validatedText.ok) {
     return errorResponse(400, "invalid_clip_text", validatedText.message);
   }

@@ -5,12 +5,12 @@ import {
 } from "@/lib/cliplink/http";
 import type {
   RoomCode,
-  TransportClient,
+  SealedTransport,
   WsClientMessage,
   WsServerMessage,
 } from "@/lib/cliplink/types";
 
-export function createWebSocketTransport(): TransportClient {
+export function createWebSocketTransport(): SealedTransport {
   let socketCleanup: (() => void) | null = null;
   let activeSocket: WebSocket | null = null;
 
@@ -61,7 +61,11 @@ export function createWebSocketTransport(): TransportClient {
             return;
           }
           if (message.type === "signal") {
-            handlers.onSignal?.(message.from, message.payload);
+            handlers.onSealedSignal?.(message.from, message.sealed);
+            return;
+          }
+          if (message.type === "peer-left") {
+            handlers.onPeerLeft?.(message.from);
             return;
           }
           if (message.type === "error") {
@@ -94,11 +98,15 @@ export function createWebSocketTransport(): TransportClient {
       };
     },
 
-    sendSignal(payload, to) {
+    canSend() {
+      return activeSocket?.readyState === WebSocket.OPEN;
+    },
+
+    sendSealedSignal(sealed, to) {
       if (!activeSocket || activeSocket.readyState !== WebSocket.OPEN) {
         return false;
       }
-      const message: WsClientMessage = { type: "signal", to, payload };
+      const message: WsClientMessage = { type: "signal", to, sealed };
       activeSocket.send(JSON.stringify(message));
       return true;
     },

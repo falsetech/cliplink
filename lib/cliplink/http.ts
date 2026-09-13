@@ -50,9 +50,15 @@ export async function pollClipsRequest(
   return parseResponse<PollClipsResponse>(response);
 }
 
-export async function createRoomRequest() {
+export async function createRoomRequest(keyCheck: string) {
   const response = await fetch("/rooms", {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    // The fingerprint, never the key — so a joiner can be told their key is
+    // wrong without the server being any closer to holding it.
+    body: JSON.stringify({ keyCheck }),
   });
   return parseResponse<CreateRoomResponse>(response);
 }

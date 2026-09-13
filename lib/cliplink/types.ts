@@ -12,6 +12,12 @@ export type Room = {
   createdAt: number;
   /** The room's configured lifetime. Every write resets the clock to this. */
   ttlSeconds: number;
+  /**
+   * Fingerprint of the room key, or null for a room created before one was
+   * set. One-way, so holding it lets the server tell a joiner their key is
+   * wrong without being any closer to holding the key.
+   */
+  keyCheck: string | null;
   clips: Clip[];
 };
 
@@ -31,6 +37,8 @@ export type ApiError = {
 
 export type CreateRoomRequest = {
   ttlSeconds?: number;
+  /** Fingerprint of the key the creator generated. Never the key itself. */
+  keyCheck?: string;
 };
 
 export type CreateRoomResponse = {
@@ -48,6 +56,8 @@ export type GetRoomResponse = {
      * recompute the new deadline without asking the server for it again.
      */
     ttlSeconds: number;
+    /** Lets a joiner be told their key is wrong before any clip arrives. */
+    keyCheck?: string;
     /**
      * When the room expires, in epoch ms. Optional so that a backend which
      * cannot answer degrades to hiding the countdown rather than failing.
@@ -112,23 +122,61 @@ export type SignalPayload =
   | { type: "rtc-candidate"; transferId: string; candidate: RtcCandidate }
   | { type: "transfer-cancel"; transferId: string; reason: string };
 
-export type SignalEnvelope = {
-  from: PeerId;
-  to?: PeerId;
-  payload: SignalPayload;
-};
+/**
+ * What the server relays. Sealed envelopes carry an encrypted `SignalPayload`
+ * the server cannot read; `peer-left` is the one signal the server originates
+ * itself, which is exactly why it cannot be sealed — the server has no key.
+ * Keeping it a separate kind is honest about that, rather than letting one
+ * message type sometimes be readable and sometimes not.
+ */
+export type SignalEnvelope =
+  | { kind: "sealed"; from: PeerId; to?: PeerId; sealed: string }
+  | { kind: "peer-left"; from: PeerId };
 
 export type WsClientMessage = {
   type: "signal";
   to?: PeerId;
-  payload: SignalPayload;
+  sealed: string;
 };
 
 export type WsServerMessage =
   | { type: "ready" }
   | { type: "clip"; clip: Clip }
-  | { type: "signal"; from: PeerId; payload: SignalPayload }
+  | { type: "signal"; from: PeerId; sealed: string }
+  | { type: "peer-left"; from: PeerId }
   | { type: "error"; reason: string };
+
+/**
+ * The wire side of the transport, which deals only in ciphertext: clip `text`
+ * is sealed, and signals are opaque strings. `encrypted-transport.ts` adapts
+ * one of these into the plaintext `TransportClient` the UI consumes, so the
+ * UI's retry and backoff state machine never learns that encryption happened.
+ */
+export type SealedTransport = {
+  connect: (roomCode: RoomCode) => Promise<GetRoomResponse>;
+  sendClip: (
+    roomCode: RoomCode,
+    payload: CreateClipRequest,
+  ) => Promise<CreateClipResponse>;
+  pollClips: (roomCode: RoomCode, afterId: number) => Promise<PollClipsResponse>;
+  streamClips: (
+    roomCode: RoomCode,
+    afterId: number,
+    peerId: PeerId,
+    handlers: {
+      onOpen?: () => void;
+      onClips: (clips: Clip[]) => void;
+      onSealedSignal?: (from: PeerId, sealed: string) => void;
+      /** Server-originated, and so the one signal that arrives unsealed. */
+      onPeerLeft?: (from: PeerId) => void;
+      onDisconnect: (reason: StreamDisconnectReason) => void;
+    },
+  ) => (() => void) | null;
+  /** Synchronous, so a caller can know there is a socket before it seals. */
+  canSend: () => boolean;
+  sendSealedSignal: (sealed: string, to?: PeerId) => boolean;
+  disconnect: () => void;
+};
 
 export type TransportClient = {
   connect: (roomCode: RoomCode) => Promise<GetRoomResponse>;

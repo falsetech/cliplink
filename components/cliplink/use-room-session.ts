@@ -16,11 +16,19 @@ import type {
   SessionClip,
   SignalPayload,
 } from "@/lib/cliplink/types";
+import { createEncryptedTransport } from "@/lib/cliplink/encrypted-transport";
+import type { RoomKey } from "@/lib/cliplink/crypto";
 import { createWebSocketTransport } from "@/lib/cliplink/ws";
 
 import type { PushToast } from "./use-toasts";
 
-export const transport = createWebSocketTransport();
+/**
+ * One transport for the life of the tab, so `transport.sendSignal` keeps a
+ * stable identity — the file-transfer manager memoises on it, and a fresh
+ * closure each render would reset the manager in a loop. The room key is a
+ * mutable slot inside it for the same reason.
+ */
+export const transport = createEncryptedTransport(createWebSocketTransport());
 
 // Identifies this page load for peer-to-peer signaling. Unlike the sender id it
 // isn't kept in sessionStorage, so duplicated tabs don't share an identity.
@@ -382,7 +390,8 @@ export function useRoomSession({
     }
   }
 
-  async function hydrate(nextRoomCode: RoomCode) {
+  async function hydrate(nextRoomCode: RoomCode, key: RoomKey) {
+    transport.setRoomKey(nextRoomCode, key);
     // Claimed up front, because hydrating writes ?room= to the URL and the
     // searchParams effect would otherwise read that back as a fresh link and
     // join the room a second time — two connects, two sockets, two toasts.
@@ -477,6 +486,7 @@ export function useRoomSession({
     clearSyncReset();
     clearRealtimeRetry();
     transport.disconnect();
+    transport.clearRoomKey();
     setRoomCode(null);
     setHistory([]);
     setExpiresAt(null);

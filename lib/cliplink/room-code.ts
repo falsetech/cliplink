@@ -18,8 +18,29 @@ export function generateRoomCode() {
   }).join("");
 }
 
-export function buildRoomUrl(code: string, origin: string) {
+/** The fragment key the room key travels under. */
+export const ROOM_KEY_FRAGMENT_PARAM = "k";
+
+/**
+ * A shareable room link. The key goes in the fragment, which browsers do not
+ * send to the server — that is the whole reason the encryption is end-to-end
+ * and not merely at rest. Anything that builds a link, QR or share sheet must
+ * go through here, or it will hand someone a room they cannot read.
+ */
+export function buildRoomUrl(code: string, origin: string, roomKey?: string) {
   const url = new URL(origin);
   url.searchParams.set("room", code);
+  url.hash = roomKey ? `${ROOM_KEY_FRAGMENT_PARAM}=${roomKey}` : "";
   return url.toString();
+}
+
+/** Reads the room key back out of a `#k=…` fragment. */
+export function parseRoomKeyFromHash(hash: string) {
+  const params = new URLSearchParams(hash.replace(/^#/, ""));
+  return params.get(ROOM_KEY_FRAGMENT_PARAM);
+}
+
+/** The fragment to append when routing, so a replace does not drop the key. */
+export function roomKeyFragment(roomKey: string | null) {
+  return roomKey ? `#${ROOM_KEY_FRAGMENT_PARAM}=${roomKey}` : "";
 }

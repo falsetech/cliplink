@@ -14,8 +14,11 @@ type QrSheetProps = {
   open: boolean;
   roomCode: string;
   qrCodeUrl: string;
+  /** Already grouped for reading; the room key this device generated. */
+  roomKey: string;
   onClose: () => void;
   onCopyLink: () => void;
+  onCopyKey: () => void;
   onShare: () => void;
 };
 
@@ -23,8 +26,10 @@ export function QrSheet({
   open,
   roomCode,
   qrCodeUrl,
+  roomKey,
   onClose,
   onCopyLink,
+  onCopyKey,
   onShare,
 }: QrSheetProps) {
   return (
@@ -37,7 +42,9 @@ export function QrSheet({
       <QrSheetBody
         roomCode={roomCode}
         qrCodeUrl={qrCodeUrl}
+        roomKey={roomKey}
         onCopyLink={onCopyLink}
+        onCopyKey={onCopyKey}
         onShare={onShare}
       />
     </Sheet>
@@ -47,9 +54,14 @@ export function QrSheet({
 function QrSheetBody({
   roomCode,
   qrCodeUrl,
+  roomKey,
   onCopyLink,
+  onCopyKey,
   onShare,
-}: Pick<QrSheetProps, "roomCode" | "qrCodeUrl" | "onCopyLink" | "onShare">) {
+}: Pick<
+  QrSheetProps,
+  "roomCode" | "qrCodeUrl" | "roomKey" | "onCopyLink" | "onCopyKey" | "onShare"
+>) {
   const close = useSheetClose();
 
   return (
@@ -84,9 +96,26 @@ function QrSheetBody({
       </div>
 
       <p className="m-0 text-xs text-pretty text-dim">
-        Scan this code or copy the link to open the room instantly on another
-        device.
+        The link carries the key and opens the room straight away. The QR code
+        does not — scanning it asks for the key, because the image is drawn by
+        an outside service and the key must not reach one.
       </p>
+
+      <div className="flex flex-col gap-2 rounded-surface border border-line bg-surface p-3">
+        <p className="m-0 text-2xs tracking-label-wide text-muted uppercase">
+          Room key
+        </p>
+        <p className="m-0 font-mono text-2xs leading-relaxed break-all text-dim select-all">
+          {roomKey}
+        </p>
+        <button
+          className={secondaryButtonClass}
+          type="button"
+          onClick={onCopyKey}
+        >
+          Copy Key
+        </button>
+      </div>
 
       <div className="flex flex-col gap-2.5 sm:flex-row">
         <button

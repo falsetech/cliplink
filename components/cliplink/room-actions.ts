@@ -37,6 +37,8 @@ export type RoomActionContext = {
   hasIncoming: boolean;
   send: () => void;
   copyRoomLink: () => void;
+  copyRoomKey: () => void;
+  copyRoomLinkWithoutKey: () => void;
   shareRoom: () => void;
   openQr: () => void;
   leave: () => void;
@@ -132,6 +134,22 @@ export function createRoomActions(ctx: RoomActionContext): RoomAction[] {
       keywords: ["invite", "url", "share"],
       enabled: ctx.joined,
       perform: ctx.copyRoomLink,
+    },
+    {
+      id: "copy-link-no-key",
+      label: "Copy link without key",
+      group: "Room",
+      keywords: ["invite", "url", "safer", "separate", "channel"],
+      enabled: ctx.joined,
+      perform: ctx.copyRoomLinkWithoutKey,
+    },
+    {
+      id: "copy-key",
+      label: "Copy room key",
+      group: "Room",
+      keywords: ["encryption", "secret", "unlock", "password"],
+      enabled: ctx.joined,
+      perform: ctx.copyRoomKey,
     },
     {
       id: "share",
