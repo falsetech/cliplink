@@ -1,8 +1,4 @@
-import {
-  MAX_ROOM_CLIPS,
-  RATE_LIMIT_WINDOW_MS,
-  ROOM_TTL_SECONDS,
-} from "@/lib/cliplink/constants";
+import { MAX_ROOM_CLIPS, ROOM_TTL_SECONDS } from "@/lib/cliplink/constants";
 import { getRedis } from "@/lib/cliplink/redis";
 import { generateRoomCode } from "@/lib/cliplink/room-code";
 import type { Clip, Room } from "@/lib/cliplink/types";
@@ -89,7 +85,7 @@ const memoryAdapter: StorageAdapter = {
           expiresAt: createdAt + ttlSeconds * 1000,
         });
         getMemoryClipsStore().set(code, []);
-        return { code, createdAt, clips: [] };
+        return { code, createdAt, ttlSeconds, clips: [] };
       }
     }
 
@@ -103,7 +99,12 @@ const memoryAdapter: StorageAdapter = {
     }
 
     const clips = getMemoryClipsStore().get(code) ?? [];
-    return { code: meta.code, createdAt: meta.createdAt, clips };
+    return {
+      code: meta.code,
+      createdAt: meta.createdAt,
+      ttlSeconds: meta.ttlSeconds,
+      clips,
+    };
   },
 
   async appendClip(code, clip) {
@@ -116,7 +117,12 @@ const memoryAdapter: StorageAdapter = {
     const nextClips = trimClips([...(clipsStore.get(code) ?? []), clip]);
     clipsStore.set(code, nextClips);
     meta.expiresAt = Date.now() + meta.ttlSeconds * 1000;
-    return { code: meta.code, createdAt: meta.createdAt, clips: nextClips };
+    return {
+      code: meta.code,
+      createdAt: meta.createdAt,
+      ttlSeconds: meta.ttlSeconds,
+      clips: nextClips,
+    };
   },
 
   async getClipsAfter(code, afterId) {
@@ -167,7 +173,7 @@ function createRedisAdapter(): StorageAdapter {
           const createdAt = Date.now();
           await redis.hset(metaKey(code), { code, createdAt, ttlSeconds });
           await redis.expire(metaKey(code), ttlSeconds);
-          return { code, createdAt, clips: [] };
+          return { code, createdAt, ttlSeconds, clips: [] };
         }
       }
 
@@ -193,7 +199,12 @@ function createRedisAdapter(): StorageAdapter {
         .filter((clip): clip is Clip => clip !== null)
         .sort((a, b) => a.id - b.id);
 
-      return { code: meta.code, createdAt: Number(meta.createdAt), clips };
+      return {
+        code: meta.code,
+        createdAt: Number(meta.createdAt),
+        ttlSeconds: Number(meta.ttlSeconds),
+        clips,
+      };
     },
 
     async appendClip(code, clip) {
@@ -289,8 +300,4 @@ export function createClipId() {
   const now = Date.now();
   const suffix = Math.floor(Math.random() * 1000);
   return now * 1000 + suffix;
-}
-
-export function getRateLimitBucket(timestamp = Date.now()) {
-  return Math.floor(timestamp / RATE_LIMIT_WINDOW_MS);
 }

@@ -88,6 +88,7 @@ export function useRoomSession({
   const [enteringIds, setEnteringIds] = useState<Set<number>>(new Set());
 
   const lastSeenIdRef = useRef(0);
+  const ttlSecondsRef = useRef<number | null>(null);
   const roomCodeRef = useRef<RoomCode | null>(null);
   const pollingRef = useRef<number | null>(null);
   const streamCleanupRef = useRef<(() => void) | null>(null);
@@ -252,6 +253,27 @@ export function useRoomSession({
     markArrival(latest.id);
     haptic("arrive");
     void autoCopyIncoming(latest.text);
+    advanceExpiry(latest.ts);
+  }
+
+  /**
+   * A clip from another device extended the room, but only its sender got the
+   * refreshed expiry back in a response. The server's rule is deterministic —
+   * every write pushes the deadline `ttlSeconds` past the write — so the new
+   * expiry is derivable here from the clip's own server-assigned timestamp,
+   * with no extra round trip. Without this a receiving tab keeps counting down
+   * to the old deadline and can read "expired" for a room that is very much
+   * alive.
+   */
+  function advanceExpiry(clipTs: number) {
+    const ttlSeconds = ttlSecondsRef.current;
+    if (ttlSeconds === null) {
+      return;
+    }
+
+    const deadline = clipTs + ttlSeconds * 1000;
+    // Monotonic: a clip arriving out of order must not drag the countdown back.
+    setExpiresAt((current) => Math.max(current ?? 0, deadline));
   }
 
   function startRealtime(nextRoomCode: RoomCode) {
@@ -399,6 +421,7 @@ export function useRoomSession({
 
     setRoomCode(nextRoomCode);
     setHistory(nextHistory);
+    ttlSecondsRef.current = response.room.ttlSeconds;
     setExpiresAt(response.room.expiresAt ?? null);
     setStatus("live");
     // Rows present at hydration are not arrivals, so they must not animate in.
@@ -461,6 +484,7 @@ export function useRoomSession({
     setEnteringIds(new Set());
     initializedRoomRef.current = null;
     lastSeenIdRef.current = 0;
+    ttlSecondsRef.current = null;
     realtimeRetryCountRef.current = 0;
     realtimeOpenedRef.current = false;
   }

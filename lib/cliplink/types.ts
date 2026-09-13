@@ -10,6 +10,8 @@ export type Clip = {
 export type Room = {
   code: RoomCode;
   createdAt: number;
+  /** The room's configured lifetime. Every write resets the clock to this. */
+  ttlSeconds: number;
   clips: Clip[];
 };
 
@@ -40,6 +42,12 @@ export type GetRoomResponse = {
   room: {
     code: RoomCode;
     createdAt: number;
+    /**
+     * The room's configured lifetime. Writes reset the expiry to this many
+     * seconds out, which lets a client that sees someone else's clip arrive
+     * recompute the new deadline without asking the server for it again.
+     */
+    ttlSeconds: number;
     /**
      * When the room expires, in epoch ms. Optional so that a backend which
      * cannot answer degrades to hiding the countdown rather than failing.
