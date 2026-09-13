@@ -13,6 +13,12 @@ type StorageAdapter = {
   appendClip(code: string, clip: Clip): Promise<Room | null>;
   getClipsAfter(code: string, afterId: number): Promise<Clip[] | null>;
   touchRoom(code: string): Promise<boolean>;
+  /**
+   * When the room expires, in epoch ms, or null if it is already gone. This is
+   * a read: it must never extend the TTL, which only `appendClip` and
+   * `touchRoom` are allowed to do.
+   */
+  getRoomExpiresAt(code: string): Promise<number | null>;
 };
 
 type MemoryMeta = {
@@ -132,6 +138,10 @@ const memoryAdapter: StorageAdapter = {
     meta.expiresAt = Date.now() + meta.ttlSeconds * 1000;
     return true;
   },
+
+  async getRoomExpiresAt(code) {
+    return readMemoryMeta(code)?.expiresAt ?? null;
+  },
 };
 
 function parseClipMember(member: string): Clip | null {
@@ -244,6 +254,19 @@ function createRedisAdapter(): StorageAdapter {
       await redis.expire(clipsKey(code), ttlSeconds);
       return true;
     },
+
+    async getRoomExpiresAt(code) {
+      const redis = getRedis();
+      if (!redis) {
+        throw new Error("Redis client unavailable");
+      }
+
+      // PTTL is a read, and reads never refresh — only EXPIRE/PEXPIRE do — so
+      // a tab polling this cannot keep a room alive. Milliseconds rather than
+      // TTL's whole seconds, so the countdown does not jitter between reads.
+      const ttl = await redis.pttl(metaKey(code));
+      return ttl >= 0 ? Date.now() + ttl : null;
+    },
   };
 }
 
@@ -259,6 +282,7 @@ export const storage: StorageAdapter = {
   appendClip: (code, clip) => activeAdapter().appendClip(code, clip),
   getClipsAfter: (code, afterId) => activeAdapter().getClipsAfter(code, afterId),
   touchRoom: (code) => activeAdapter().touchRoom(code),
+  getRoomExpiresAt: (code) => activeAdapter().getRoomExpiresAt(code),
 };
 
 export function createClipId() {

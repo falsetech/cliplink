@@ -40,6 +40,11 @@ export type GetRoomResponse = {
   room: {
     code: RoomCode;
     createdAt: number;
+    /**
+     * When the room expires, in epoch ms. Optional so that a backend which
+     * cannot answer degrades to hiding the countdown rather than failing.
+     */
+    expiresAt?: number;
   };
   clips: Clip[];
 };
@@ -51,6 +56,8 @@ export type CreateClipRequest = {
 
 export type CreateClipResponse = {
   clip: Clip;
+  /** The refreshed expiry, since writing extends the room's TTL. */
+  expiresAt?: number;
 };
 
 export type PollClipsResponse = {
@@ -87,6 +94,8 @@ export type RtcCandidate = {
  */
 export type SignalPayload =
   | { type: "hello" }
+  /** Reply to `hello`, so a peer with no open offers still announces itself. */
+  | { type: "hello-ack" }
   | ({ type: "file-offer" } & FileOffer)
   | { type: "file-revoke"; offerId: string }
   | { type: "peer-left" }

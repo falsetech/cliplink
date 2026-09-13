@@ -1,0 +1,488 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+
+import {
+  MAX_SESSION_HISTORY,
+  POLL_INTERVAL_MS,
+} from "@/lib/cliplink/constants";
+import { writeClipboard } from "@/lib/cliplink/clipboard";
+import { haptic } from "@/lib/cliplink/haptics";
+import { createRandomId } from "@/lib/cliplink/session";
+import type {
+  PeerId,
+  RoomCode,
+  RoomStatus,
+  SessionClip,
+  SignalPayload,
+} from "@/lib/cliplink/types";
+import { createWebSocketTransport } from "@/lib/cliplink/ws";
+
+import type { PushToast } from "./use-toasts";
+
+export const transport = createWebSocketTransport();
+
+// Identifies this page load for peer-to-peer signaling. Unlike the sender id it
+// isn't kept in sessionStorage, so duplicated tabs don't share an identity.
+export const peerId = createRandomId();
+
+/** How long the localised arrival highlight stays on the panel and new row. */
+const ARRIVAL_CUE_MS = 500;
+
+export function clearTimer(ref: React.RefObject<number | null>) {
+  if (ref.current) {
+    window.clearTimeout(ref.current);
+    ref.current = null;
+  }
+}
+
+function sortClipsNewestFirst(clips: SessionClip[]) {
+  return [...clips].sort((left, right) => right.id - left.id);
+}
+
+function mergeHistory(current: SessionClip[], additions: SessionClip[]) {
+  const seen = new Set(current.map((clip) => clip.id));
+  const merged = [...current];
+
+  for (const clip of additions) {
+    if (!seen.has(clip.id)) {
+      merged.push(clip);
+      seen.add(clip.id);
+    }
+  }
+
+  return sortClipsNewestFirst(merged).slice(0, MAX_SESSION_HISTORY);
+}
+
+type RoomSessionOptions = {
+  pushToast: PushToast;
+  senderIdRef: React.RefObject<string>;
+  /** Fired once the socket is open, so open file offers can be re-announced. */
+  onRealtimeOpen: () => void;
+  /** Fired when the socket drops, so peer-derived state can be cleared. */
+  onRealtimeClose: () => void;
+  onSignal: (from: PeerId, payload: SignalPayload) => void;
+};
+
+/**
+ * The room's connection and clip state: WebSocket with a polling fallback,
+ * exponential-backoff reconnect, session history, and the arrival cue.
+ *
+ * Everything here is imperative and timer-driven, which is exactly why it is
+ * worth keeping out of the view. Callers get plain state plus three verbs —
+ * `hydrate`, `send`, `leave`.
+ */
+export function useRoomSession({
+  pushToast,
+  senderIdRef,
+  onRealtimeOpen,
+  onRealtimeClose,
+  onSignal,
+}: RoomSessionOptions) {
+  const [roomCode, setRoomCode] = useState<RoomCode | null>(null);
+  const [status, setStatus] = useState<RoomStatus>("offline");
+  const [realtimeReady, setRealtimeReady] = useState(false);
+  const [history, setHistory] = useState<SessionClip[]>([]);
+  const [arrivalId, setArrivalId] = useState<number | null>(null);
+  const [expiresAt, setExpiresAt] = useState<number | null>(null);
+  const [enteringIds, setEnteringIds] = useState<Set<number>>(new Set());
+
+  const lastSeenIdRef = useRef(0);
+  const roomCodeRef = useRef<RoomCode | null>(null);
+  const pollingRef = useRef<number | null>(null);
+  const streamCleanupRef = useRef<(() => void) | null>(null);
+  const syncResetRef = useRef<number | null>(null);
+  const initializedRoomRef = useRef<string | null>(null);
+  const realtimeRetryRef = useRef<number | null>(null);
+  const realtimeRetryCountRef = useRef(0);
+  const realtimeOpenedRef = useRef(false);
+  const arrivalResetRef = useRef<number | null>(null);
+
+  // A reconnect scheduled minutes ago must call today's handlers, not the ones
+  // captured when the timer was set.
+  const handlersRef = useRef({
+    pushToast,
+    onRealtimeOpen,
+    onRealtimeClose,
+    onSignal,
+  });
+  useEffect(() => {
+    handlersRef.current = {
+      pushToast,
+      onRealtimeOpen,
+      onRealtimeClose,
+      onSignal,
+    };
+  });
+
+  useEffect(() => {
+    roomCodeRef.current = roomCode;
+  }, [roomCode]);
+
+  useEffect(() => {
+    const timers = [syncResetRef, realtimeRetryRef, arrivalResetRef];
+    const polling = pollingRef;
+    const stream = streamCleanupRef;
+
+    return () => {
+      if (polling.current) {
+        window.clearInterval(polling.current);
+        polling.current = null;
+      }
+      stream.current?.();
+      stream.current = null;
+      for (const timer of timers) {
+        clearTimer(timer);
+      }
+      transport.disconnect();
+    };
+  }, []);
+
+  function clearRealtimeRetry() {
+    clearTimer(realtimeRetryRef);
+  }
+
+  function clearSyncReset() {
+    clearTimer(syncResetRef);
+  }
+
+  function markSyncing() {
+    clearSyncReset();
+    setStatus("syncing");
+    syncResetRef.current = window.setTimeout(() => {
+      setStatus("live");
+      syncResetRef.current = null;
+    }, 600);
+  }
+
+  /**
+   * Highlights the panel and the row that just landed. This replaces a
+   * full-viewport flash: an abrupt whole-screen brightness jump on every
+   * incoming message is a photosensitivity risk, and it drew the eye away from
+   * the thing that actually changed.
+   */
+  function markArrival(clipId: number) {
+    clearTimer(arrivalResetRef);
+    // Clearing for a frame first restarts the animation. Without it a second
+    // clip arriving inside the cue window leaves the class already applied, so
+    // the panel never flashes again and the arrival goes unmarked.
+    setArrivalId(null);
+    window.requestAnimationFrame(() => {
+      setArrivalId(clipId);
+      arrivalResetRef.current = window.setTimeout(() => {
+        setArrivalId(null);
+        arrivalResetRef.current = null;
+      }, ARRIVAL_CUE_MS);
+    });
+  }
+
+  function markEntering(ids: number[]) {
+    setEnteringIds((current) => {
+      const next = new Set(current);
+      for (const id of ids) {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function stopPolling() {
+    if (pollingRef.current) {
+      window.clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+  }
+
+  function stopStream() {
+    if (streamCleanupRef.current) {
+      const cleanup = streamCleanupRef.current;
+      streamCleanupRef.current = null;
+      cleanup();
+    }
+  }
+
+  function startPolling(nextRoomCode: RoomCode) {
+    stopPolling();
+    pollingRef.current = window.setInterval(() => {
+      void pollForUpdates(nextRoomCode);
+    }, POLL_INTERVAL_MS);
+  }
+
+  function scheduleRealtimeRetry(nextRoomCode: RoomCode) {
+    clearRealtimeRetry();
+    const attempt = realtimeRetryCountRef.current;
+    const delay = Math.min(15_000, 2_000 * 2 ** attempt);
+    realtimeRetryRef.current = window.setTimeout(() => {
+      realtimeRetryRef.current = null;
+      if (roomCodeRef.current === nextRoomCode && !streamCleanupRef.current) {
+        startRealtime(nextRoomCode);
+      }
+    }, delay);
+  }
+
+  async function autoCopyIncoming(text: string) {
+    try {
+      await writeClipboard(text);
+      handlersRef.current.pushToast("Received clip — copied!", "success", {
+        unprompted: true,
+      });
+    } catch {
+      handlersRef.current.pushToast(
+        "Received clip. Clipboard access was blocked.",
+        "info",
+        { unprompted: true },
+      );
+    }
+  }
+
+  function applyIncomingClips(clips: SessionClip[]) {
+    if (clips.length === 0) {
+      return;
+    }
+
+    setHistory((current) => mergeHistory(current, clips));
+    setStatus("live");
+    markEntering(clips.map((clip) => clip.id));
+    let latest = clips[0];
+    for (const clip of clips) {
+      if (clip.id > latest.id) {
+        latest = clip;
+      }
+    }
+    markArrival(latest.id);
+    haptic("arrive");
+    void autoCopyIncoming(latest.text);
+  }
+
+  function startRealtime(nextRoomCode: RoomCode) {
+    stopPolling();
+    stopStream();
+    clearRealtimeRetry();
+    realtimeOpenedRef.current = false;
+    const cleanup = transport.streamClips(
+      nextRoomCode,
+      lastSeenIdRef.current,
+      peerId,
+      {
+        onOpen: () => {
+          const hadFallback = realtimeRetryCountRef.current > 0;
+          realtimeOpenedRef.current = true;
+          realtimeRetryCountRef.current = 0;
+          setStatus("live");
+          setRealtimeReady(true);
+          handlersRef.current.onRealtimeOpen();
+          if (hadFallback) {
+            handlersRef.current.pushToast(
+              "Realtime connection restored.",
+              "success",
+              { unprompted: true },
+            );
+          }
+        },
+        onClips: (clips) => {
+          const incoming = clips
+            .filter((clip) => clip.senderId !== senderIdRef.current)
+            .map((clip) => ({
+              ...clip,
+              direction: "incoming" as const,
+            }));
+
+          for (const clip of clips) {
+            lastSeenIdRef.current = Math.max(lastSeenIdRef.current, clip.id);
+          }
+
+          applyIncomingClips(incoming.reverse());
+        },
+        onSignal: (from, payload) => handlersRef.current.onSignal(from, payload),
+        onDisconnect: (reason) => {
+          streamCleanupRef.current = null;
+          setRealtimeReady(false);
+          handlersRef.current.onRealtimeClose();
+          if (reason === "error" && roomCodeRef.current === nextRoomCode) {
+            const hadOpened = realtimeOpenedRef.current;
+            realtimeOpenedRef.current = false;
+            startPolling(nextRoomCode);
+            realtimeRetryCountRef.current += 1;
+            scheduleRealtimeRetry(nextRoomCode);
+            handlersRef.current.pushToast(
+              hadOpened
+                ? "Realtime connection dropped. Using polling for now."
+                : "Realtime unavailable. Using polling for now.",
+              "info",
+              { unprompted: true },
+            );
+          }
+        },
+      },
+    );
+
+    if (!cleanup) {
+      startPolling(nextRoomCode);
+      return;
+    }
+
+    streamCleanupRef.current = cleanup;
+  }
+
+  async function pollForUpdates(nextRoomCode: RoomCode) {
+    try {
+      const response = await transport.pollClips(
+        nextRoomCode,
+        lastSeenIdRef.current,
+      );
+      const incoming = response.clips.filter(
+        (clip) => clip.senderId !== senderIdRef.current,
+      );
+
+      if (response.clips.length > 0) {
+        lastSeenIdRef.current = response.clips.reduce(
+          (highest, clip) => Math.max(highest, clip.id),
+          lastSeenIdRef.current,
+        );
+      }
+
+      if (incoming.length === 0) {
+        return;
+      }
+
+      const additions: SessionClip[] = incoming.map((clip) => ({
+        ...clip,
+        direction: "incoming",
+      }));
+
+      applyIncomingClips(additions.reverse());
+    } catch (error) {
+      setStatus("error");
+      handlersRef.current.pushToast(
+        error instanceof Error ? error.message : "Polling failed.",
+        "error",
+      );
+    }
+  }
+
+  async function hydrate(nextRoomCode: RoomCode) {
+    // Claimed up front, because hydrating writes ?room= to the URL and the
+    // searchParams effect would otherwise read that back as a fresh link and
+    // join the room a second time — two connects, two sockets, two toasts.
+    initializedRoomRef.current = nextRoomCode;
+    const response = await transport.connect(nextRoomCode);
+    let nextHistory = sortClipsNewestFirst(
+      response.clips.map((clip) => ({
+        ...clip,
+        direction:
+          clip.senderId === senderIdRef.current ? "outgoing" : "incoming",
+      })),
+    ).slice(0, MAX_SESSION_HISTORY);
+
+    let lastSeenId = response.clips.reduce(
+      (highest, clip) => Math.max(highest, clip.id),
+      0,
+    );
+
+    try {
+      const bootstrapDelta = await transport.pollClips(nextRoomCode, lastSeenId);
+      if (bootstrapDelta.clips.length > 0) {
+        const additions: SessionClip[] = bootstrapDelta.clips.map((clip) => ({
+          ...clip,
+          direction:
+            clip.senderId === senderIdRef.current ? "outgoing" : "incoming",
+        }));
+        nextHistory = mergeHistory(nextHistory, additions);
+        lastSeenId = bootstrapDelta.clips.reduce(
+          (highest, clip) => Math.max(highest, clip.id),
+          lastSeenId,
+        );
+      }
+    } catch {
+      // Ignore bootstrap delta errors and fall back to the initial snapshot.
+    }
+
+    setRoomCode(nextRoomCode);
+    setHistory(nextHistory);
+    setExpiresAt(response.room.expiresAt ?? null);
+    setStatus("live");
+    // Rows present at hydration are not arrivals, so they must not animate in.
+    setEnteringIds(new Set());
+    lastSeenIdRef.current = lastSeenId;
+    startRealtime(nextRoomCode);
+  }
+
+  /** Returns true when the clip was accepted, so the caller can clear the editor. */
+  async function send(text: string) {
+    if (!roomCodeRef.current) {
+      return false;
+    }
+
+    try {
+      const response = await transport.sendClip(roomCodeRef.current, {
+        text,
+        senderId: senderIdRef.current,
+      });
+
+      const sessionClip: SessionClip = {
+        ...response.clip,
+        direction: "outgoing",
+      };
+
+      setHistory((current) => mergeHistory(current, [sessionClip]));
+      markEntering([response.clip.id]);
+      // Writing extends the room's TTL, so the countdown jumps forward.
+      if (response.expiresAt !== undefined) {
+        setExpiresAt(response.expiresAt);
+      }
+      lastSeenIdRef.current = Math.max(lastSeenIdRef.current, response.clip.id);
+      markSyncing();
+      // The new history row and the status dot already confirm the send, so the
+      // haptic is the only extra channel it needs.
+      haptic("commit");
+      return true;
+    } catch (error) {
+      setStatus("error");
+      handlersRef.current.pushToast(
+        error instanceof Error ? error.message : "Could not send clip.",
+        "error",
+      );
+      return false;
+    }
+  }
+
+  function leave() {
+    setRealtimeReady(false);
+    onRealtimeClose();
+    stopPolling();
+    stopStream();
+    clearSyncReset();
+    clearRealtimeRetry();
+    transport.disconnect();
+    setRoomCode(null);
+    setHistory([]);
+    setExpiresAt(null);
+    setStatus("offline");
+    setEnteringIds(new Set());
+    initializedRoomRef.current = null;
+    lastSeenIdRef.current = 0;
+    realtimeRetryCountRef.current = 0;
+    realtimeOpenedRef.current = false;
+  }
+
+  function fail() {
+    setStatus("error");
+    initializedRoomRef.current = null;
+  }
+
+  return {
+    roomCode,
+    setRoomCode,
+    status,
+    realtimeReady,
+    history,
+    arrivalId,
+    enteringIds,
+    expiresAt,
+    initializedRoomRef,
+    hydrate,
+    send,
+    leave,
+    fail,
+  };
+}
