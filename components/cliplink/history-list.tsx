@@ -1,10 +1,19 @@
 "use client";
 
-import { formatHistoryTime, truncatePreview } from "@/lib/cliplink/format";
+import { useState } from "react";
+
+import {
+  detectClipKind,
+  formatHistoryTime,
+  truncatePreview,
+} from "@/lib/cliplink/format";
 import type { SessionClip } from "@/lib/cliplink/types";
 import { cn } from "@/lib/utils";
 
 import { panelSurfaceStyle, rowClass } from "./ui";
+
+const rowActionClass =
+  "inline-flex min-h-11 items-center rounded-control border border-transparent px-2 text-2xs text-muted transition-[color,border-color,scale] duration-150 ease-out hover:border-line-strong hover:text-fg focus-visible:border-line-strong focus-visible:text-fg active:scale-[0.96] md:min-h-10 md:shrink-0";
 
 type HistoryListProps = {
   history: SessionClip[];
@@ -19,6 +28,8 @@ export function HistoryList({
   enteringIds,
   onCopy,
 }: HistoryListProps) {
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+
   return (
     <div className="flex flex-col gap-2.5">
       <div className="flex items-center gap-2 text-2xs tracking-label-wide text-muted uppercase">
@@ -43,48 +54,108 @@ export function HistoryList({
               )}
             >
               <div className="overflow-hidden">
-                <div
-                  className={cn(
-                    rowClass,
-                    clip.direction === "incoming"
-                      ? "border-l-2 border-l-incoming-line"
-                      : "border-l-2 border-l-muted",
-                    arrivalId === clip.id && "arrival-cue",
-                  )}
-                  style={panelSurfaceStyle}
-                >
-                  <div className="flex min-w-13 flex-col gap-1 md:min-w-16">
-                    <span
-                      className={cn(
-                        "text-2xs tracking-label uppercase",
-                        clip.direction === "incoming"
-                          ? "text-incoming"
-                          : "text-muted",
-                      )}
-                    >
-                      {clip.direction === "incoming" ? "↓ IN" : "↑ OUT"}
-                    </span>
-                    <span className="text-2xs tracking-label text-muted uppercase tabular-nums">
-                      {formatHistoryTime(clip.ts)}
-                    </span>
-                  </div>
-                  <div className="min-w-0 truncate text-2xs text-dim md:text-xs">
-                    {truncatePreview(clip.text)}
-                  </div>
-                  <button
-                    className="col-start-2 mt-1 inline-flex min-h-11 items-center justify-self-start rounded-control border border-transparent px-2 text-2xs text-muted transition-[color,border-color,scale] duration-150 ease-out hover:border-line-strong hover:text-fg focus-visible:border-line-strong focus-visible:text-fg active:scale-[0.96] md:mt-0 md:min-h-10 md:shrink-0"
-                    type="button"
-                    aria-label="Copy this clip"
-                    onClick={() => onCopy(clip.text)}
-                  >
-                    copy
-                  </button>
-                </div>
+                <HistoryRow
+                  clip={clip}
+                  expanded={expandedId === clip.id}
+                  arriving={arrivalId === clip.id}
+                  onToggle={() =>
+                    setExpandedId((current) =>
+                      current === clip.id ? null : clip.id,
+                    )
+                  }
+                  onCopy={() => onCopy(clip.text)}
+                />
               </div>
             </div>
           ))
         )}
       </div>
+    </div>
+  );
+}
+
+function HistoryRow({
+  clip,
+  expanded,
+  arriving,
+  onToggle,
+  onCopy,
+}: {
+  clip: SessionClip;
+  expanded: boolean;
+  arriving: boolean;
+  onToggle: () => void;
+  onCopy: () => void;
+}) {
+  const incoming = clip.direction === "incoming";
+  const detected = detectClipKind(clip.text);
+
+  return (
+    <div
+      className={cn(
+        rowClass,
+        incoming ? "border-l-2 border-l-incoming-line" : "border-l-2 border-l-muted",
+        arriving && "arrival-cue",
+        // The expanded body spans the full width, so the row stops being a
+        // single line and becomes a block on every breakpoint.
+        expanded && "md:grid md:grid-cols-[64px_1fr]",
+      )}
+      style={panelSurfaceStyle}
+    >
+      <div className="flex min-w-13 flex-col gap-1 md:min-w-16">
+        <span
+          className={cn(
+            "text-2xs tracking-label uppercase",
+            incoming ? "text-incoming" : "text-muted",
+          )}
+        >
+          {incoming ? "↓ IN" : "↑ OUT"}
+        </span>
+        <span className="text-2xs tracking-label text-muted uppercase tabular-nums">
+          {formatHistoryTime(clip.ts)}
+        </span>
+      </div>
+
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+        <button
+          className={cn(
+            "min-w-0 cursor-pointer rounded-control border-0 bg-transparent p-0 text-left text-2xs text-dim transition-colors duration-150 hover:text-fg focus-visible:text-fg md:text-xs",
+            !expanded && "truncate",
+          )}
+          type="button"
+          aria-expanded={expanded}
+          aria-label={expanded ? "Collapse this clip" : "Expand this clip"}
+          onClick={onToggle}
+        >
+          {expanded ? (
+            <span className="block break-words whitespace-pre-wrap">
+              {clip.text}
+            </span>
+          ) : (
+            truncatePreview(clip.text)
+          )}
+        </button>
+
+        {expanded && detected.kind === "url" ? (
+          <a
+            className={cn(rowActionClass, "self-start")}
+            href={detected.url}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            open link ↗
+          </a>
+        ) : null}
+      </div>
+
+      <button
+        className={cn(rowActionClass, "col-start-2 mt-1 justify-self-start md:mt-0")}
+        type="button"
+        aria-label="Copy this clip"
+        onClick={onCopy}
+      >
+        copy
+      </button>
     </div>
   );
 }

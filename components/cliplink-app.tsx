@@ -29,6 +29,7 @@ import {
   panelSurfaceStyle,
 } from "@/components/cliplink/ui";
 import { useClipEditor } from "@/components/cliplink/use-clip-editor";
+import { useRoomExpiry } from "@/components/cliplink/use-room-expiry";
 import { useFileTransfer } from "@/components/cliplink/use-file-transfer";
 import {
   clearTimer,
@@ -36,6 +37,7 @@ import {
   transport,
   useRoomSession,
 } from "@/components/cliplink/use-room-session";
+import { usePresence } from "@/components/cliplink/use-presence";
 import { useShortcuts } from "@/components/cliplink/use-shortcuts";
 import { useToasts } from "@/components/cliplink/use-toasts";
 
@@ -53,10 +55,15 @@ const subscribeToNothing = () => () => {};
 /** A destructive confirmation that never times out is a trap of its own. */
 const CONFIRM_WINDOW_MS = 4000;
 
-function statusLabel(status: RoomStatus) {
+/**
+ * The badge distinguishes the socket from the polling fallback. On polling,
+ * Attach and Download are disabled and delivery is slower, and until now
+ * nothing said so.
+ */
+function statusLabel(status: RoomStatus, realtimeReady: boolean) {
   switch (status) {
     case "live":
-      return "LIVE";
+      return realtimeReady ? "LIVE" : "POLLING";
     case "syncing":
       return "SYNCING";
     case "error":
@@ -99,15 +106,24 @@ export default function CliplinkApp() {
 
   const files = useFileTransfer({
     peerId,
-    sendSignal: (payload, to) => transport.sendSignal(payload, to),
+    // The transport's own method, not a wrapper: useFileTransfer memoises on
+    // this identity, and a fresh closure each render resets the manager in a
+    // loop.
+    sendSignal: transport.sendSignal,
     pushToast,
   });
+
+  const presence = usePresence({ sendSignal: transport.sendSignal });
 
   const room = useRoomSession({
     pushToast,
     senderIdRef,
     onRealtimeOpen: () => files.announce(),
-    onSignal: (from, payload) => files.handleSignal(from, payload),
+    onRealtimeClose: () => presence.reset(),
+    onSignal: (from, payload) => {
+      presence.handleSignal(from, payload);
+      files.handleSignal(from, payload);
+    },
   });
 
   const editor = useClipEditor({
@@ -383,6 +399,7 @@ export default function CliplinkApp() {
     (clip) => clip.direction === "incoming",
   );
   const sheetOpen = showQrSheet || showShortcuts || showPalette;
+  const expiresIn = useRoomExpiry(room.expiresAt);
 
   const actions = createRoomActions({
     joined,
@@ -471,7 +488,7 @@ export default function CliplinkApp() {
                     "bg-danger text-danger after:opacity-100",
                 )}
               />
-              <span>{statusLabel(room.status)}</span>
+              <span>{statusLabel(room.status, room.realtimeReady)}</span>
             </div>
             <button
               className={chromeButtonClass}
@@ -525,6 +542,8 @@ export default function CliplinkApp() {
                   onShare={() => void shareRoom(roomCode!)}
                   onOpenQr={() => setShowQrSheet(true)}
                   onLeave={requestLeave}
+                  expiresIn={expiresIn}
+                  deviceCount={presence.deviceCount}
                 />
 
                 <ClipEditor

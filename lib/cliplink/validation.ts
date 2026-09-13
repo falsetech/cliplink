@@ -105,6 +105,9 @@ function parseSignalPayload(input: unknown): SignalPayload | null {
     case "hello":
       return { type: "hello" };
 
+    case "hello-ack":
+      return { type: "hello-ack" };
+
     case "file-offer": {
       const { offerId, name, size, mime } = input;
       if (

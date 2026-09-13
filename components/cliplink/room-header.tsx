@@ -1,5 +1,6 @@
 "use client";
 
+import { formatCountdown } from "@/lib/cliplink/format";
 import { cn } from "@/lib/utils";
 
 import { IconCopy, IconQr } from "./icons";
@@ -13,6 +14,10 @@ type RoomHeaderProps = {
   onShare: () => void;
   onOpenQr: () => void;
   onLeave: () => void;
+  /** Milliseconds until the room expires, or null when unknown. */
+  expiresIn: number | null;
+  /** Devices in the room, including this one. */
+  deviceCount: number;
 };
 
 export function RoomHeader({
@@ -23,6 +28,8 @@ export function RoomHeader({
   onShare,
   onOpenQr,
   onLeave,
+  expiresIn,
+  deviceCount,
 }: RoomHeaderProps) {
   return (
     <div className="flex flex-col items-stretch justify-between gap-4 md:flex-row md:items-start">
@@ -39,6 +46,24 @@ export function RoomHeader({
         >
           {roomCode}
         </button>
+
+        <div className="flex items-center gap-2 text-2xs tracking-label text-muted uppercase">
+          {deviceCount > 1 ? (
+            <span>{deviceCount} devices</span>
+          ) : null}
+          {deviceCount > 1 && expiresIn !== null ? (
+            <span aria-hidden="true">·</span>
+          ) : null}
+          {expiresIn !== null ? (
+            // aria-live is off on purpose: a countdown that announces itself
+            // every tick is hostile to a screen reader.
+            <span aria-live="off" className="tabular-nums">
+              {expiresIn === 0
+                ? "expired"
+                : `expires in ${formatCountdown(expiresIn)}`}
+            </span>
+          ) : null}
+        </div>
       </div>
 
       <div className="flex flex-wrap justify-start gap-2 md:justify-end">

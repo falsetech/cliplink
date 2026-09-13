@@ -104,6 +104,18 @@ export async function POST(
 
   await publishClip(code, clip);
 
-  const response: CreateClipResponse = { clip };
+  // The append just extended the TTL, so the client's copy is already stale.
+  // Returning it here beats making every sender follow up with a second call.
+  let expiresAt: number | null = null;
+  try {
+    expiresAt = await storage.getRoomExpiresAt(code);
+  } catch {
+    // The clip is stored; a missing countdown is not worth failing the send.
+  }
+
+  const response: CreateClipResponse = {
+    clip,
+    ...(expiresAt === null ? {} : { expiresAt }),
+  };
   return noStoreJson(response, { status: 201 });
 }

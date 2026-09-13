@@ -59,6 +59,8 @@ type RoomSessionOptions = {
   senderIdRef: React.RefObject<string>;
   /** Fired once the socket is open, so open file offers can be re-announced. */
   onRealtimeOpen: () => void;
+  /** Fired when the socket drops, so peer-derived state can be cleared. */
+  onRealtimeClose: () => void;
   onSignal: (from: PeerId, payload: SignalPayload) => void;
 };
 
@@ -74,6 +76,7 @@ export function useRoomSession({
   pushToast,
   senderIdRef,
   onRealtimeOpen,
+  onRealtimeClose,
   onSignal,
 }: RoomSessionOptions) {
   const [roomCode, setRoomCode] = useState<RoomCode | null>(null);
@@ -81,6 +84,7 @@ export function useRoomSession({
   const [realtimeReady, setRealtimeReady] = useState(false);
   const [history, setHistory] = useState<SessionClip[]>([]);
   const [arrivalId, setArrivalId] = useState<number | null>(null);
+  const [expiresAt, setExpiresAt] = useState<number | null>(null);
   const [enteringIds, setEnteringIds] = useState<Set<number>>(new Set());
 
   const lastSeenIdRef = useRef(0);
@@ -96,9 +100,19 @@ export function useRoomSession({
 
   // A reconnect scheduled minutes ago must call today's handlers, not the ones
   // captured when the timer was set.
-  const handlersRef = useRef({ pushToast, onRealtimeOpen, onSignal });
+  const handlersRef = useRef({
+    pushToast,
+    onRealtimeOpen,
+    onRealtimeClose,
+    onSignal,
+  });
   useEffect(() => {
-    handlersRef.current = { pushToast, onRealtimeOpen, onSignal };
+    handlersRef.current = {
+      pushToast,
+      onRealtimeOpen,
+      onRealtimeClose,
+      onSignal,
+    };
   });
 
   useEffect(() => {
@@ -283,6 +297,7 @@ export function useRoomSession({
         onDisconnect: (reason) => {
           streamCleanupRef.current = null;
           setRealtimeReady(false);
+          handlersRef.current.onRealtimeClose();
           if (reason === "error" && roomCodeRef.current === nextRoomCode) {
             const hadOpened = realtimeOpenedRef.current;
             realtimeOpenedRef.current = false;
@@ -384,6 +399,7 @@ export function useRoomSession({
 
     setRoomCode(nextRoomCode);
     setHistory(nextHistory);
+    setExpiresAt(response.room.expiresAt ?? null);
     setStatus("live");
     // Rows present at hydration are not arrivals, so they must not animate in.
     setEnteringIds(new Set());
@@ -410,6 +426,10 @@ export function useRoomSession({
 
       setHistory((current) => mergeHistory(current, [sessionClip]));
       markEntering([response.clip.id]);
+      // Writing extends the room's TTL, so the countdown jumps forward.
+      if (response.expiresAt !== undefined) {
+        setExpiresAt(response.expiresAt);
+      }
       lastSeenIdRef.current = Math.max(lastSeenIdRef.current, response.clip.id);
       markSyncing();
       // The new history row and the status dot already confirm the send, so the
@@ -428,6 +448,7 @@ export function useRoomSession({
 
   function leave() {
     setRealtimeReady(false);
+    onRealtimeClose();
     stopPolling();
     stopStream();
     clearSyncReset();
@@ -435,6 +456,7 @@ export function useRoomSession({
     transport.disconnect();
     setRoomCode(null);
     setHistory([]);
+    setExpiresAt(null);
     setStatus("offline");
     setEnteringIds(new Set());
     initializedRoomRef.current = null;
@@ -456,6 +478,7 @@ export function useRoomSession({
     history,
     arrivalId,
     enteringIds,
+    expiresAt,
     initializedRoomRef,
     hydrate,
     send,
