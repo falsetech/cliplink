@@ -27,7 +27,7 @@ Nothing persists. Rooms expire on a timer, history is session-local, and files n
 ## Features
 
 - **Zero auth, zero install** — create or join a room in one click, in any modern browser
-- **Join three ways** — 6-character code, shared URL (`/room/X7KP2M#k=…`), or in-room QR code
+- **Join three ways** — 6-character code, shared URL (`/room/X7KP2M#k=…`), or in-room QR code, encoded locally so the key never leaves the device
 - **Encrypted both ways** — private rooms generate an AES-GCM-256 key in the browser that never reaches the server, carried in the URL fragment or pasted in; open rooms derive their key from the code, so the code alone opens them. Private rooms joined without a key open locked and unlock in place
 - **Realtime text sync** — WebSocket transport, with HTTP polling as an automatic fallback
 - **Auto-copy on receive** — incoming clips land on your clipboard, with a toast and a subtle flash

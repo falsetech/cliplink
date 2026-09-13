@@ -662,19 +662,14 @@ export default function CliplinkApp({ initialRoomCode }: CliplinkAppProps) {
     onTypeahead: () => editor.focus(),
   });
 
-  // Deliberately keyless. The QR image is rendered by a third-party service
-  // from whatever is put in this query string, so anything encoded here is
-  // handed to that service — and the one thing that must never leave this
-  // device is the key. Scanning therefore lands on the room and then asks for
-  // the key, the same as typing the code does.
-  const qrPayloadUrl = roomCode
+  // Carries the key, because the code is drawn here rather than fetched from a
+  // service that would be handed the URL to draw it.
+  const roomShareUrl = roomCode
     ? buildRoomUrl(
         roomCode,
         typeof window !== "undefined" ? window.location.href : "",
+        roomKeyEncoded ?? undefined,
       )
-    : "";
-  const qrCodeUrl = qrPayloadUrl
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=0&data=${encodeURIComponent(qrPayloadUrl)}`
     : "";
 
   return (
@@ -813,7 +808,7 @@ export default function CliplinkApp({ initialRoomCode }: CliplinkAppProps) {
         <QrSheet
           open={showQrSheet}
           roomCode={roomCode!}
-          qrCodeUrl={qrCodeUrl}
+          shareUrl={roomShareUrl}
           roomKey={formatRoomKey(roomKeyEncoded ?? "")}
           onClose={() => setShowQrSheet(false)}
           onCopyLink={() => void copyRoomLink(roomCode!)}

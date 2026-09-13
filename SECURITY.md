@@ -24,7 +24,7 @@ The room key is never placed in a path segment or a query parameter, only in the
 
 **What the server can still see.** Encryption is not invisibility. The server holds, and an attacker who takes it would hold: the room code, clip IDs and timestamps, sender IDs, the size of each ciphertext, peer IDs, and the timing and volume of traffic. It also holds a one-way fingerprint of the room key, which lets it tell a joiner their key is wrong without being any closer to holding the key. It does **not** hold clip text, file names, file sizes, or SDP.
 
-**The QR code does not carry the key.** The QR image is rendered by a third-party service from a URL passed in a query string, so the key is deliberately excluded — sending it there would hand the key to that service. Scanning opens the room and then asks for the key. A shared *link* does carry the key in its fragment; when that matters, "copy link without key" sends the two halves through different channels.
+**The QR code carries the key, and is drawn locally.** It used to be fetched from a third-party service with the URL in a query string, which would have handed that service the key. The symbol is now encoded in the browser and drawn as an SVG, so nothing leaves the device to produce it and scanning opens the room in one step. When link and key should travel separately, "copy link without key" splits them.
 
 **Encryption is confidentiality and integrity, not a transcript.** Each message is independently sealed. Replay and reordering of signaling messages by a malicious server are not prevented. Clip IDs are server-assigned.
 

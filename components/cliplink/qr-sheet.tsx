@@ -1,7 +1,6 @@
 "use client";
 
-import Image from "next/image";
-
+import { QrCode } from "./qr-code";
 import { Sheet, useSheetClose } from "./sheet";
 import { IconX } from "./icons";
 import {
@@ -13,7 +12,8 @@ import {
 type QrSheetProps = {
   open: boolean;
   roomCode: string;
-  qrCodeUrl: string;
+  /** The full room URL, key fragment included — encoded on this device. */
+  shareUrl: string;
   /** Already grouped for reading; the room key this device generated. */
   roomKey: string;
   onClose: () => void;
@@ -25,7 +25,7 @@ type QrSheetProps = {
 export function QrSheet({
   open,
   roomCode,
-  qrCodeUrl,
+  shareUrl,
   roomKey,
   onClose,
   onCopyLink,
@@ -41,7 +41,7 @@ export function QrSheet({
     >
       <QrSheetBody
         roomCode={roomCode}
-        qrCodeUrl={qrCodeUrl}
+        shareUrl={shareUrl}
         roomKey={roomKey}
         onCopyLink={onCopyLink}
         onCopyKey={onCopyKey}
@@ -53,14 +53,14 @@ export function QrSheet({
 
 function QrSheetBody({
   roomCode,
-  qrCodeUrl,
+  shareUrl,
   roomKey,
   onCopyLink,
   onCopyKey,
   onShare,
 }: Pick<
   QrSheetProps,
-  "roomCode" | "qrCodeUrl" | "roomKey" | "onCopyLink" | "onCopyKey" | "onShare"
+  "roomCode" | "shareUrl" | "roomKey" | "onCopyLink" | "onCopyKey" | "onShare"
 >) {
   const close = useSheetClose();
 
@@ -85,20 +85,17 @@ function QrSheetBody({
         </button>
       </div>
 
-      <div className="flex justify-center rounded-surface border border-image-edge bg-white p-4">
-        <Image
-          src={qrCodeUrl}
-          alt={`QR code for room ${roomCode}`}
-          width={280}
-          height={280}
-          unoptimized
+      <div className="flex justify-center rounded-surface border border-image-edge bg-white p-2">
+        <QrCode
+          value={shareUrl}
+          label={`QR code for room ${roomCode}`}
+          size={280}
         />
       </div>
 
       <p className="m-0 text-xs text-pretty text-dim">
-        The link carries the key and opens the room straight away. The QR code
-        does not — scanning it asks for the key, because the image is drawn by
-        an outside service and the key must not reach one.
+        Scan this code or copy the link to open the room on another device. The
+        code is drawn on this device, so the key it carries never leaves it.
       </p>
 
       <div className="flex flex-col gap-2 rounded-surface border border-line bg-surface p-3">
