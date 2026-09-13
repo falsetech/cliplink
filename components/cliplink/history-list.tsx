@@ -10,10 +10,20 @@ import {
 import type { SessionClip } from "@/lib/cliplink/types";
 import { cn } from "@/lib/utils";
 
+import { IconChevron } from "./icons";
 import { panelSurfaceStyle, rowClass } from "./ui";
 
 const rowActionClass =
-  "inline-flex min-h-11 items-center rounded-control border border-transparent px-2 text-2xs text-muted transition-[color,border-color,scale] duration-150 ease-out hover:border-line-strong hover:text-fg focus-visible:border-line-strong focus-visible:text-fg active:scale-[0.96] md:min-h-10 md:shrink-0";
+  "inline-flex min-h-11 items-center rounded-control border border-transparent px-2 text-2xs text-muted transition-[color,border-color,background-color,scale] duration-150 ease-out hover:border-line-strong hover:text-fg focus-visible:border-line-strong focus-visible:text-fg active:scale-[0.96] active:bg-white/4 md:min-h-10 md:shrink-0";
+
+/**
+ * A clip only earns a disclosure control if there is something behind it.
+ * `truncatePreview` cuts at 120 characters, and a newline is hidden by the
+ * single-line clamp even when the text is short.
+ */
+function isExpandable(text: string) {
+  return text.length > 120 || text.includes("\n");
+}
 
 type HistoryListProps = {
   history: SessionClip[];
@@ -89,6 +99,8 @@ function HistoryRow({
 }) {
   const incoming = clip.direction === "incoming";
   const detected = detectClipKind(clip.text);
+  const expandable = isExpandable(clip.text);
+  const open = expandable && expanded;
 
   return (
     <div
@@ -96,9 +108,6 @@ function HistoryRow({
         rowClass,
         incoming ? "border-l-2 border-l-incoming-line" : "border-l-2 border-l-muted",
         arriving && "arrival-cue",
-        // The expanded body spans the full width, so the row stops being a
-        // single line and becomes a block on every breakpoint.
-        expanded && "md:grid md:grid-cols-[64px_1fr]",
       )}
       style={panelSurfaceStyle}
     >
@@ -116,40 +125,77 @@ function HistoryRow({
         </span>
       </div>
 
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-        <button
-          className={cn(
-            "min-w-0 cursor-pointer rounded-control border-0 bg-transparent p-0 text-left text-2xs text-dim transition-colors duration-150 hover:text-fg focus-visible:text-fg md:text-xs",
-            !expanded && "truncate",
-          )}
-          type="button"
-          aria-expanded={expanded}
-          aria-label={expanded ? "Collapse this clip" : "Expand this clip"}
-          onClick={onToggle}
-        >
-          {expanded ? (
-            <span className="block break-words whitespace-pre-wrap">
-              {clip.text}
-            </span>
-          ) : (
-            truncatePreview(clip.text)
-          )}
-        </button>
-
-        {expanded && detected.kind === "url" ? (
-          <a
-            className={cn(rowActionClass, "self-start")}
-            href={detected.url}
-            target="_blank"
-            rel="noopener noreferrer"
+      <div className="flex min-w-0 flex-1 flex-col">
+        {expandable ? (
+          // The whole content column is the target, not just the glyph. The
+          // negative inset lets a 40px-tall hit area sit inside a tighter row
+          // without pushing the row open.
+          <button
+            className="group -my-2 -ml-1.5 flex min-h-10 min-w-0 cursor-pointer items-start gap-1.5 rounded-control border-0 bg-transparent px-1.5 py-2 text-left transition-colors duration-100 ease-out hover:bg-white/2 focus-visible:bg-white/2 active:bg-white/4"
+            type="button"
+            aria-expanded={expanded}
+            onClick={onToggle}
           >
-            open link ↗
-          </a>
+            <span
+              className={cn(
+                "mt-px shrink-0 text-muted transition-[rotate,color] duration-200 ease-out group-hover:text-dim",
+                // Hints the direction the content will open (down), rather
+                // than only reporting the state after the fact.
+                expanded && "rotate-90",
+              )}
+            >
+              <IconChevron size={12} />
+            </span>
+            <span
+              className={cn(
+                "min-w-0 text-2xs text-dim md:text-xs",
+                open ? "break-words whitespace-pre-wrap" : "truncate",
+              )}
+            >
+              {open ? clip.text : truncatePreview(clip.text)}
+            </span>
+          </button>
+        ) : (
+          // No affordance where there is nothing to reveal. The 12px chevron
+          // gutter is still reserved so every row's text starts on one line.
+          <span className="min-w-0 truncate pl-[18px] text-2xs text-dim md:text-xs">
+            {clip.text}
+          </span>
+        )}
+
+        {detected.kind === "url" ? (
+          // Collapses to zero height rather than unmounting, so the reveal has
+          // something to animate between.
+          <div
+            className={cn(
+              "grid transition-[grid-template-rows,opacity] duration-200 ease-(--ease-out-quint)",
+              open || !expandable
+                ? "grid-rows-[1fr] opacity-100"
+                : "grid-rows-[0fr] opacity-0",
+            )}
+          >
+            <div className="overflow-hidden">
+              <a
+                className={cn(rowActionClass, "ml-[15px] mt-1")}
+                href={detected.url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                open link ↗
+              </a>
+            </div>
+          </div>
         ) : null}
       </div>
 
       <button
-        className={cn(rowActionClass, "col-start-2 mt-1 justify-self-start md:mt-0")}
+        // The row aligns to the top, so a 40px box centring its label would
+        // drop "copy" below the clip's first line. Same inset as the
+        // disclosure control, so the two labels share a baseline.
+        className={cn(
+          rowActionClass,
+          "col-start-2 mt-1 justify-self-start md:-my-2 md:mt-0 md:items-start md:py-2.5",
+        )}
         type="button"
         aria-label="Copy this clip"
         onClick={onCopy}

@@ -94,6 +94,15 @@ export function IconArrowUp(props: IconProps) {
   );
 }
 
+/** Points right when closed; the caller rotates it to point down when open. */
+export function IconChevron(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M9 6l6 6-6 6" />
+    </Svg>
+  );
+}
+
 export function IconX(props: IconProps) {
   return (
     <Svg {...props}>
