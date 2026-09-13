@@ -195,7 +195,7 @@ export default function CliplinkApp({ initialRoomCode }: CliplinkAppProps) {
     return () => observer.disconnect();
   }, []);
 
-  const joinFromSearchParams = useEffectEvent((requestedRoom: string) => {
+  const joinFromRoute = useEffectEvent((requestedRoom: string) => {
     void joinExistingRoom(requestedRoom, true);
   });
 
@@ -207,7 +207,7 @@ export default function CliplinkApp({ initialRoomCode }: CliplinkAppProps) {
     }
 
     room.initializedRoomRef.current = requestedRoom;
-    joinFromSearchParams(requestedRoom);
+    joinFromRoute(requestedRoom);
   }, [initialRoomCode, room.initializedRoomRef]);
 
   useEffect(() => {
