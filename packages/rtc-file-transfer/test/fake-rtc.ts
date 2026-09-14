@@ -18,6 +18,13 @@ export class FakeNetwork {
   flowing = true;
   maxBuffered = 0;
   lowEvents = 0;
+  /** Flip a byte in the next binary message sent. */
+  corruptNext = false;
+  /** Stop flowing once this many binary bytes have been delivered. */
+  pauseAfterBytes: number | null = null;
+  deliveredBytes = 0;
+  /** Every string message sent over a data channel, in order. */
+  readonly strings: string[] = [];
   readonly pcs: FakePeerConnection[] = [];
   readonly offers = new Map<string, FakePeerConnection>();
 
@@ -51,6 +58,12 @@ export class FakeDataChannel extends EventTarget {
       throw new Error("InvalidStateError");
     }
     const copy = typeof data === "string" ? data : data.slice(0);
+    if (typeof copy === "string") {
+      this.net.strings.push(copy);
+    } else if (this.net.corruptNext) {
+      this.net.corruptNext = false;
+      new Uint8Array(copy)[0] ^= 0xff;
+    }
     this.queue.push(copy);
     this.bufferedAmount += typeof copy === "string" ? copy.length : copy.byteLength;
     this.net.maxBuffered = Math.max(this.net.maxBuffered, this.bufferedAmount);
@@ -76,9 +89,24 @@ export class FakeDataChannel extends EventTarget {
     const batch = this.queue;
     this.queue = [];
     this.bufferedAmount = 0;
-    for (const data of batch) {
+    for (const [index, data] of batch.entries()) {
       if (this.remote?.readyState === "open") {
         this.remote.dispatchEvent(new MessageEvent("message", { data }));
+      }
+      if (typeof data !== "string") {
+        this.net.deliveredBytes += data.byteLength;
+        const pauseAt = this.net.pauseAfterBytes;
+        if (pauseAt !== null && this.net.deliveredBytes >= pauseAt) {
+          this.net.pauseAfterBytes = null;
+          this.net.flowing = false;
+          this.queue = batch.slice(index + 1).concat(this.queue);
+          this.bufferedAmount = this.queue.reduce(
+            (total, item) =>
+              total + (typeof item === "string" ? item.length : item.byteLength),
+            0,
+          );
+          return;
+        }
       }
     }
     if (wasAbove) {
@@ -188,7 +216,7 @@ export class FakePeerConnection extends EventTarget {
 }
 
 type PeerOptions = Partial<
-  Pick<FileTransferOptions, "limits" | "createId" | "iceServers">
+  Pick<FileTransferOptions, "limits" | "createId" | "iceServers" | "capabilities">
 >;
 
 export type TestPeer = {

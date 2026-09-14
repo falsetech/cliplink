@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Capability negotiation on top of protocol v1 through optional `caps` fields, fully compatible with older peers.
+- `blocks`: every 1 MiB is verified against a SHA-256 digest sent in-band. A mismatch fails with the new code `corrupt`.
+- `resume`: a download that fails part way keeps its verified bytes (`FileItem.resumableBytes`), and `request` continues from there into the same sink.
+- New `capabilities` option, and `BLOCK_BYTES`, `CAPABILITIES`, and `Capability` exports.
+
 ## 0.3.0
 
 - `request(id, { sink })` streams a download into a `FileSink` (for example a file on disk) instead of memory. New `FileItem.savedToSink` and failure code `write-error`.

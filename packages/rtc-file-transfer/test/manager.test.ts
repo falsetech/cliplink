@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 
-import { sanitizeFileName, type FileItem } from "../src/index.ts";
+import { BLOCK_BYTES, sanitizeFileName, type FileItem } from "../src/index.ts";
 import { FakeSignaling, randomBytes, waitFor, type TestPeer } from "./fake-rtc.ts";
 
 let bus: FakeSignaling;
@@ -393,6 +393,124 @@ describe("file transfer", () => {
     bus.connected = false;
     assert.equal(bob.manager.request(incoming(bob)[0].id), false);
     assert.equal(incoming(bob)[0].status, "offered");
+  });
+});
+
+describe("verified blocks and resume", () => {
+  const MB = BLOCK_BYTES;
+
+  it("verifies blocks when both peers support them", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice");
+    bus.addPeer("peer-bob00");
+    const source = randomBytes(2 * MB + 123);
+
+    const { bob } = await offerAndRequest(source);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"));
+    assert.deepEqual(new Uint8Array(await incoming(bob)[0].blob!.arrayBuffer()), source);
+    assert.equal(bus.net.strings.filter((message) => message.startsWith("{")).length, 3);
+  });
+
+  for (const [label, aliceCaps, bobCaps] of [
+    ["a v1 receiver", undefined, []],
+    ["a v1 sender", [], undefined],
+  ] as const) {
+    it(`falls back to plain v1 with ${label}`, async () => {
+      bus = new FakeSignaling();
+      bus.addPeer("peer-alice", { capabilities: aliceCaps && [...aliceCaps] });
+      bus.addPeer("peer-bob00", { capabilities: bobCaps && [...bobCaps] });
+      const source = randomBytes(MB + 5);
+
+      const { bob } = await offerAndRequest(source);
+      await waitFor(() => bob.notices.some((notice) => notice.type === "received"));
+      assert.deepEqual(new Uint8Array(await incoming(bob)[0].blob!.arrayBuffer()), source);
+      assert.deepEqual([...new Set(bus.net.strings)].sort(), ["ack", "done"]);
+    });
+  }
+
+  it("fails a corrupted block, and a retry delivers the file intact", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice");
+    bus.addPeer("peer-bob00");
+    const source = randomBytes(MB + 77);
+    bus.net.corruptNext = true;
+
+    const { bob } = await offerAndRequest(source);
+    await waitFor(() => failure(bob) !== undefined);
+    assert.equal(failure(bob)?.code, "corrupt");
+    assert.equal(incoming(bob)[0].resumableBytes, 0);
+
+    assert.equal(bob.manager.request(incoming(bob)[0].id), true);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"));
+    assert.deepEqual(new Uint8Array(await incoming(bob)[0].blob!.arrayBuffer()), source);
+  });
+
+  it("resumes a stalled download from its last verified block, into the same sink", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice", { limits: { stallMs: 100 } });
+    bus.addPeer("peer-bob00", { limits: { stallMs: 100 } });
+    const offsets: Array<number | undefined> = [];
+    bus.transform = (payload) => {
+      if (payload.type === "file-request") {
+        offsets.push(payload.offset);
+      }
+      return payload;
+    };
+    const source = randomBytes(3 * MB + 999);
+    const written: Uint8Array<ArrayBuffer>[] = [];
+    let closes = 0;
+    let aborts = 0;
+    const sink = {
+      write: (chunk: Uint8Array<ArrayBuffer>) => void written.push(chunk.slice()),
+      close: () => void (closes += 1),
+      abort: () => void (aborts += 1),
+    };
+
+    bus.net.pauseAfterBytes = 2 * MB + 4096;
+    const [alice, bob] = [bus.peers.get("peer-alice")!, bus.peers.get("peer-bob00")!];
+    alice.manager.offerFiles([new File([source], "big.bin")]);
+    await waitFor(() => incoming(bob).length === 1);
+    bob.manager.request(incoming(bob)[0].id, { sink });
+
+    await waitFor(() => failure(bob) !== undefined);
+    assert.equal(failure(bob)?.code, "stalled");
+    assert.equal(incoming(bob)[0].resumableBytes, 2 * MB);
+    assert.equal(aborts, 0);
+
+    bus.net.setFlowing(true);
+    // A new sink is ignored (and aborted) while the old one can resume.
+    let ignoredAborted = false;
+    bob.manager.request(incoming(bob)[0].id, {
+      sink: { write() {}, close() {}, abort: () => void (ignoredAborted = true) },
+    });
+    await waitFor(() => incoming(bob)[0].status === "done", 5_000);
+
+    assert.equal(ignoredAborted, true);
+    assert.deepEqual(offsets, [undefined, 2 * MB]);
+    assert.equal(closes, 1);
+    assert.equal(aborts, 0);
+    assert.deepEqual(new Uint8Array(await new Blob(written).arrayBuffer()), source);
+    assert.equal(incoming(bob)[0].savedToSink, true);
+  });
+
+  it("releases a resumable download when it is dismissed", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice", { limits: { stallMs: 100 } });
+    bus.addPeer("peer-bob00", { limits: { stallMs: 100 } });
+    bus.net.pauseAfterBytes = MB + 1;
+    let aborted = false;
+
+    const [alice, bob] = [bus.peers.get("peer-alice")!, bus.peers.get("peer-bob00")!];
+    alice.manager.offerFiles([new File([randomBytes(2 * MB)], "a.bin")]);
+    await waitFor(() => incoming(bob).length === 1);
+    bob.manager.request(incoming(bob)[0].id, {
+      sink: { write() {}, close() {}, abort: () => void (aborted = true) },
+    });
+    await waitFor(() => failure(bob) !== undefined);
+    assert.equal(incoming(bob)[0].resumableBytes, MB);
+
+    bob.manager.dismiss(incoming(bob)[0].id);
+    await waitFor(() => aborted);
   });
 });
 

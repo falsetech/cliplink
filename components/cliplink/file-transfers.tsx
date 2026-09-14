@@ -67,6 +67,16 @@ function statusText(item: FileListItem) {
   }
 }
 
+function downloadLabel(item: FileListItem) {
+  if (item.status !== "failed") {
+    return "download";
+  }
+  if (item.resumableBytes && item.size > 0) {
+    return `resume · ${Math.floor((item.resumableBytes / item.size) * 100)}%`;
+  }
+  return "retry";
+}
+
 function FileActions({
   item,
   canTransfer,
@@ -102,7 +112,7 @@ function FileActions({
             title={canTransfer ? undefined : OFFLINE_HINT}
             onClick={() => onDownload(item.id)}
           >
-            {item.status === "failed" ? "retry" : "download"}
+            {downloadLabel(item)}
           </button>
           {item.status === "failed" ? (
             <button
