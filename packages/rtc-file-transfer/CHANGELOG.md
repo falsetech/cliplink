@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - `FileItem.bytesPerSecond` and `FileItem.etaMs` on incoming items while they transfer.
 
