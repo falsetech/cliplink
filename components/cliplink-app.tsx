@@ -107,9 +107,14 @@ const DOT_TONE: Record<StatusTone, string> = {
 type CliplinkAppProps = {
   /** Present when rendered at /room/[code]; absent on the landing page. */
   initialRoomCode?: string;
+  /** Rendered by the server page, so the star count is fetched and cached there. */
+  repoLink?: React.ReactNode;
 };
 
-export default function CliplinkApp({ initialRoomCode }: CliplinkAppProps) {
+export default function CliplinkApp({
+  initialRoomCode,
+  repoLink,
+}: CliplinkAppProps) {
   const router = useRouter();
 
   const [joinCode, setJoinCode] = useState("");
@@ -718,6 +723,7 @@ export default function CliplinkApp({ initialRoomCode }: CliplinkAppProps) {
                 </span>
               </button>
             ) : null}
+            {repoLink}
             <button
               className={chromeButtonClass}
               type="button"
