@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- README: npm badges, a link to the source repository, and contributing steps.
+- First release published from CI through npm trusted publishing, with provenance.
+
 ## 0.1.0
 
 - First release, extracted from [cliplink](https://github.com/thebkht/cliplink).
