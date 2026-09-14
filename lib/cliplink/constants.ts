@@ -49,7 +49,3 @@ export const MAX_FILE_NAME_CHARS = 255;
 export const MAX_SIGNAL_BYTES = 24 * 1024;
 export const SIGNAL_RATE_WINDOW_MS = 10_000;
 export const SIGNAL_RATE_MAX_MESSAGES = 200;
-export const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
-  { urls: "stun:stun.l.google.com:19302" },
-  { urls: "stun:stun.cloudflare.com:3478" },
-];

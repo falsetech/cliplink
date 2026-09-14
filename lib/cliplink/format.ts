@@ -23,6 +23,24 @@ export function formatBytes(bytes: number) {
   return `${value.toFixed(value >= 100 ? 0 : 1)} ${units[unit]}`;
 }
 
+/** Transfer rate, e.g. `3.1 MB/s`. */
+export function formatRate(bytesPerSecond: number) {
+  return `${formatBytes(Math.round(bytesPerSecond))}/s`;
+}
+
+/** Rough duration for a transfer ETA, e.g. `22s`, `4m`, or `1h 5m`. */
+export function formatDuration(ms: number) {
+  const seconds = Math.max(1, Math.ceil(ms / 1000));
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 export function truncatePreview(text: string, maxLength = 120) {
   return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
 }

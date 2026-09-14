@@ -81,6 +81,8 @@ When your signaling layer sees a peer disconnect, tell the manager with `files.h
 
 The manager returns `handleSignal`, `announce`, `offerFiles`, `request`, `cancel`, `revoke`, `dismiss` and `dispose`.
 
+While an incoming item is `transferring`, it also carries `bytesPerSecond` (a smoothed rate) and `etaMs`. Both are cleared when the transfer ends.
+
 `offerFiles` returns `{ offered, rejected }`. Each rejection is `{ file, code: "empty" | "too-large", limit }`.
 
 ### Failure codes

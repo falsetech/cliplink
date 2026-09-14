@@ -3,7 +3,12 @@
 import Image from "next/image";
 import type { CSSProperties } from "react";
 
-import { formatBytes, formatHistoryTime } from "@/lib/cliplink/format";
+import {
+  formatBytes,
+  formatDuration,
+  formatHistoryTime,
+  formatRate,
+} from "@/lib/cliplink/format";
 import { cn } from "@/lib/utils";
 
 import type { FileListItem } from "./use-file-transfer";
@@ -41,8 +46,16 @@ function statusText(item: FileListItem) {
   switch (item.status) {
     case "connecting":
       return `${size} · Connecting…`;
-    case "transferring":
-      return `${formatBytes(item.bytes)} of ${size}`;
+    case "transferring": {
+      const parts = [`${formatBytes(item.bytes)} of ${size}`];
+      if (item.bytesPerSecond) {
+        parts.push(formatRate(item.bytesPerSecond));
+      }
+      if (item.etaMs !== undefined) {
+        parts.push(`${formatDuration(item.etaMs)} left`);
+      }
+      return parts.join(" · ");
+    }
     case "done":
       return `${size} · Saved`;
     case "failed":
