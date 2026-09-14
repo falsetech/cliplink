@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 
 import CliplinkApp from "@/components/cliplink-app";
 import { AppSkeleton } from "@/components/cliplink/app-skeleton";
+import { RepoStars } from "@/components/cliplink/repo-stars";
 import { isValidRoomCode, normalizeRoomCode } from "@/lib/cliplink/room-code";
 
 type RoomPageProps = {
@@ -29,7 +30,7 @@ export default async function RoomPage({ params }: RoomPageProps) {
 
   return (
     <Suspense fallback={<AppSkeleton />}>
-      <CliplinkApp initialRoomCode={normalized} />
+      <CliplinkApp initialRoomCode={normalized} repoLink={<RepoStars />} />
     </Suspense>
   );
 }

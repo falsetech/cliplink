@@ -1,19 +1,10 @@
 import {
   DEFAULT_ICE_SERVERS,
-  FILE_BUFFER_HIGH_BYTES,
-  FILE_BUFFER_LOW_BYTES,
-  FILE_CHUNK_BYTES,
-  MAX_FILE_BYTES,
-  MAX_SESSION_FILES,
-  TRANSFER_STALL_MS,
-} from "@/lib/cliplink/constants";
-import { createRandomId } from "@/lib/cliplink/session";
-import type {
-  FileOffer,
-  PeerId,
-  RtcCandidate,
-  SignalPayload,
-} from "@/lib/cliplink/types";
+  DEFAULT_LIMITS,
+  createRandomId,
+  type TransferLimits,
+} from "./defaults.ts";
+import type { FileOffer, FileSignal, PeerId, RtcCandidate } from "./protocol.ts";
 
 export type FileItemStatus =
   | "offered"
@@ -22,6 +13,30 @@ export type FileItemStatus =
   | "done"
   | "failed"
   | "revoked";
+
+export type FailureCode =
+  /** No bytes moved for `limits.stallMs`. */
+  | "stalled"
+  /** ICE failed; usually a network that blocks peer-to-peer without TURN. */
+  | "nat"
+  /** The sender could not read its own file. */
+  | "read-error"
+  /** Offer/answer exchange failed. */
+  | "negotiation"
+  /** "done" arrived before the announced size. */
+  | "incomplete"
+  /** More bytes arrived than were announced. */
+  | "overflow"
+  /** This peer canceled its download. */
+  | "canceled"
+  /** The sender stopped sharing the file. */
+  | "revoked"
+  /** The sender disconnected before the download started. */
+  | "sender-left"
+  /** The data channel closed before the file finished. */
+  | "closed"
+  /** The other peer canceled; `message` is the reason it sent. */
+  | "remote-canceled";
 
 export type FileItem = FileOffer & {
   /** Unique per sender: `${peerId}:${offerId}`. */
@@ -36,6 +51,7 @@ export type FileItem = FileOffer & {
   /** Assembled file once an incoming transfer completes. Lives in memory only. */
   blob?: Blob;
   error?: string;
+  errorCode?: FailureCode;
   /** Devices currently pulling / that finished pulling this file (outgoing only). */
   activeTransfers: number;
   completedTransfers: number;
@@ -44,15 +60,32 @@ export type FileItem = FileOffer & {
 export type TransferNotice =
   | { type: "incoming-offer"; item: FileItem }
   | { type: "received"; item: FileItem }
-  | { type: "failed"; item: FileItem; message: string };
+  | { type: "failed"; item: FileItem; code: FailureCode; message: string };
 
-type ManagerOptions = {
-  peerId: PeerId;
-  sendSignal: (payload: SignalPayload, to?: PeerId) => boolean;
-  onItemsChange: (items: FileItem[]) => void;
-  onNotice: (notice: TransferNotice) => void;
-  iceServers?: RTCIceServer[];
+export type OfferRejection = {
+  file: File;
+  code: "empty" | "too-large";
+  /** The limit that was exceeded, in bytes (0 for `empty`). */
+  limit: number;
 };
+
+export type FileTransferOptions = {
+  peerId: PeerId;
+  /**
+   * Deliver a signal to one peer (`to`) or to every peer. Return false when
+   * there is no channel to carry it; the manager then treats it as not sent.
+   */
+  sendSignal: (payload: FileSignal, to?: PeerId) => boolean;
+  onItemsChange: (items: FileItem[]) => void;
+  onNotice?: (notice: TransferNotice) => void;
+  iceServers?: RTCIceServer[];
+  limits?: Partial<TransferLimits>;
+  createId?: () => string;
+  /** Override for environments without a global `RTCPeerConnection`. */
+  createPeerConnection?: (config: RTCConfiguration) => RTCPeerConnection;
+};
+
+type Timer = ReturnType<typeof setTimeout>;
 
 type Transfer = {
   id: string;
@@ -62,7 +95,7 @@ type Transfer = {
   pc: RTCPeerConnection;
   channel: RTCDataChannel | null;
   pendingCandidates: RTCIceCandidateInit[];
-  stallTimer: number | null;
+  stallTimer: Timer | null;
   chunks: ArrayBuffer[];
   received: number;
   doneSent: boolean;
@@ -73,8 +106,19 @@ const DONE_MESSAGE = "done";
 const ACK_MESSAGE = "ack";
 const PROGRESS_EMIT_MS = 100;
 const RECEIVER_CLOSE_GRACE_MS = 5_000;
-const NAT_ERROR =
-  "Couldn't connect directly to the other device. This network blocks peer-to-peer.";
+
+const MESSAGES: Record<Exclude<FailureCode, "remote-canceled">, string> = {
+  stalled: "The transfer stalled. Try again.",
+  nat: "Couldn't connect directly to the other device. This network blocks peer-to-peer.",
+  "read-error": "Couldn't read the file on the sending device.",
+  negotiation: "Couldn't negotiate a connection.",
+  incomplete: "The file arrived incomplete. Try again.",
+  overflow: "The sender sent more data than announced.",
+  canceled: "Download canceled.",
+  revoked: "The sender stopped sharing this file.",
+  "sender-left": "The sender left.",
+  closed: "The connection closed before the file finished.",
+};
 
 export type FileTransferManager = ReturnType<typeof createFileTransferManager>;
 
@@ -83,7 +127,7 @@ function itemKey(peerId: PeerId, offerId: string) {
 }
 
 /** Replaces path separators and control characters in peer-supplied names. */
-function sanitizeFileName(name: string) {
+export function sanitizeFileName(name: string) {
   const cleaned = Array.from(name, (char) => {
     const code = char.charCodeAt(0);
     return char === "/" || char === "\\" || code < 32 || code === 127 ? "_" : char;
@@ -93,38 +137,27 @@ function sanitizeFileName(name: string) {
   return cleaned || "file";
 }
 
-/** Reads `NEXT_PUBLIC_ICE_SERVERS` (JSON array) so a TURN relay can be added without code changes. */
-export function resolveIceServers(): RTCIceServer[] {
-  const raw = process.env.NEXT_PUBLIC_ICE_SERVERS;
-  if (!raw) {
-    return DEFAULT_ICE_SERVERS;
-  }
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) && parsed.length > 0
-      ? (parsed as RTCIceServer[])
-      : DEFAULT_ICE_SERVERS;
-  } catch {
-    return DEFAULT_ICE_SERVERS;
-  }
-}
-
 /**
  * Peer-to-peer file transfer over WebRTC data channels.
  *
  * Senders announce file metadata over the signaling channel and keep only a
  * `File` reference in memory. A receiver that asks for a file gets its own
- * RTCPeerConnection; bytes flow browser-to-browser and are never stored or
- * relayed by the server.
+ * RTCPeerConnection; bytes flow peer-to-peer and never pass through the
+ * signaling server.
  */
-export function createFileTransferManager(options: ManagerOptions) {
-  const { peerId: selfId, sendSignal, onItemsChange, onNotice } = options;
+export function createFileTransferManager(options: FileTransferOptions) {
+  const { peerId: selfId, sendSignal, onItemsChange } = options;
+  const onNotice = options.onNotice ?? (() => {});
   const iceServers = options.iceServers ?? DEFAULT_ICE_SERVERS;
+  const limits: TransferLimits = { ...DEFAULT_LIMITS, ...options.limits };
+  const createId = options.createId ?? createRandomId;
+  const newPeerConnection =
+    options.createPeerConnection ?? ((config) => new RTCPeerConnection(config));
 
   const items = new Map<string, FileItem>();
   const outgoingFiles = new Map<string, File>();
   const transfers = new Map<string, Transfer>();
-  let emitTimer: number | null = null;
+  let emitTimer: Timer | null = null;
   let disposed = false;
 
   // ---------------------------------------------------------------------------
@@ -132,7 +165,7 @@ export function createFileTransferManager(options: ManagerOptions) {
 
   function emit() {
     if (emitTimer !== null) {
-      window.clearTimeout(emitTimer);
+      clearTimeout(emitTimer);
       emitTimer = null;
     }
     if (disposed) {
@@ -147,7 +180,7 @@ export function createFileTransferManager(options: ManagerOptions) {
   /** Coalesces high-frequency progress updates. */
   function emitSoon() {
     if (emitTimer === null && !disposed) {
-      emitTimer = window.setTimeout(emit, PROGRESS_EMIT_MS);
+      emitTimer = setTimeout(emit, PROGRESS_EMIT_MS);
     }
   }
 
@@ -163,11 +196,11 @@ export function createFileTransferManager(options: ManagerOptions) {
   function addItem(item: FileItem) {
     items.set(item.id, item);
 
-    // Evict the oldest idle items beyond the session cap.
-    if (items.size > MAX_SESSION_FILES) {
+    // Evict the oldest idle items beyond the cap.
+    if (items.size > limits.maxItems) {
       const oldestFirst = [...items.values()].sort((a, b) => a.ts - b.ts);
       for (const candidate of oldestFirst) {
-        if (items.size <= MAX_SESSION_FILES) {
+        if (items.size <= limits.maxItems) {
           break;
         }
         if (candidate.direction === "incoming" && !hasActiveTransfer(candidate.id)) {
@@ -177,7 +210,7 @@ export function createFileTransferManager(options: ManagerOptions) {
     }
   }
 
-  function toOffer(item: FileItem): SignalPayload {
+  function toOffer(item: FileItem): FileSignal {
     return {
       type: "file-offer",
       offerId: item.offerId,
@@ -196,11 +229,11 @@ export function createFileTransferManager(options: ManagerOptions) {
 
   function touch(transfer: Transfer) {
     if (transfer.stallTimer !== null) {
-      window.clearTimeout(transfer.stallTimer);
+      clearTimeout(transfer.stallTimer);
     }
-    transfer.stallTimer = window.setTimeout(() => {
-      failTransfer(transfer, "The transfer stalled. Try again.", true);
-    }, TRANSFER_STALL_MS);
+    transfer.stallTimer = setTimeout(() => {
+      failTransfer(transfer, "stalled", true);
+    }, limits.stallMs);
   }
 
   function closeTransfer(transfer: Transfer) {
@@ -209,7 +242,7 @@ export function createFileTransferManager(options: ManagerOptions) {
     }
     transfer.closed = true;
     if (transfer.stallTimer !== null) {
-      window.clearTimeout(transfer.stallTimer);
+      clearTimeout(transfer.stallTimer);
       transfer.stallTimer = null;
     }
     transfer.chunks = [];
@@ -237,10 +270,17 @@ export function createFileTransferManager(options: ManagerOptions) {
     }
   }
 
-  function failTransfer(transfer: Transfer, message: string, notifyRemote: boolean) {
+  function failTransfer(
+    transfer: Transfer,
+    code: FailureCode,
+    notifyRemote: boolean,
+    remoteReason?: string,
+  ) {
     if (transfer.closed) {
       return;
     }
+    const message =
+      code === "remote-canceled" ? (remoteReason ?? "The transfer was canceled.") : MESSAGES[code];
     if (notifyRemote) {
       sendSignal(
         { type: "transfer-cancel", transferId: transfer.id, reason: message },
@@ -258,14 +298,15 @@ export function createFileTransferManager(options: ManagerOptions) {
     if (item && item.status !== "done") {
       item.status = "failed";
       item.error = message;
+      item.errorCode = code;
       item.bytes = 0;
       emit();
-      onNotice({ type: "failed", item: { ...item }, message });
+      onNotice({ type: "failed", item: { ...item }, code, message });
     }
   }
 
   function createPeerConnection(transfer: Omit<Transfer, "pc">): RTCPeerConnection {
-    const pc = new RTCPeerConnection({ iceServers });
+    const pc = newPeerConnection({ iceServers });
 
     pc.addEventListener("icecandidate", (event) => {
       if (!event.candidate) {
@@ -287,7 +328,7 @@ export function createFileTransferManager(options: ManagerOptions) {
     pc.addEventListener("connectionstatechange", () => {
       const current = transfers.get(transfer.id);
       if (current && pc.connectionState === "failed") {
-        failTransfer(current, NAT_ERROR, true);
+        failTransfer(current, "nat", true);
       }
     });
 
@@ -321,7 +362,9 @@ export function createFileTransferManager(options: ManagerOptions) {
   async function pumpFile(transfer: Transfer, channel: RTCDataChannel, file: File) {
     const maxMessage = transfer.pc.sctp?.maxMessageSize;
     const chunkSize =
-      maxMessage && maxMessage > 0 ? Math.min(FILE_CHUNK_BYTES, maxMessage) : FILE_CHUNK_BYTES;
+      maxMessage && maxMessage > 0
+        ? Math.min(limits.chunkBytes, maxMessage)
+        : limits.chunkBytes;
 
     try {
       let offset = 0;
@@ -329,7 +372,7 @@ export function createFileTransferManager(options: ManagerOptions) {
         if (transfer.closed || channel.readyState !== "open") {
           return;
         }
-        if (channel.bufferedAmount > FILE_BUFFER_HIGH_BYTES) {
+        if (channel.bufferedAmount > limits.bufferHighBytes) {
           await waitForDrain(channel);
           continue;
         }
@@ -344,8 +387,30 @@ export function createFileTransferManager(options: ManagerOptions) {
       channel.send(DONE_MESSAGE);
       transfer.doneSent = true;
     } catch {
-      failTransfer(transfer, "Couldn't read the file on the sending device.", true);
+      failTransfer(transfer, "read-error", true);
     }
+  }
+
+  function newTransfer(
+    id: string,
+    role: Transfer["role"],
+    remotePeer: PeerId,
+    itemId: string,
+  ): Transfer {
+    const base = {
+      id,
+      role,
+      remotePeer,
+      itemId,
+      channel: null,
+      pendingCandidates: [],
+      stallTimer: null,
+      chunks: [],
+      received: 0,
+      doneSent: false,
+      closed: false,
+    };
+    return { ...base, pc: createPeerConnection(base) };
   }
 
   async function startSend(from: PeerId, offerId: string, transferId: string) {
@@ -363,27 +428,14 @@ export function createFileTransferManager(options: ManagerOptions) {
       return;
     }
 
-    const base = {
-      id: transferId,
-      role: "send" as const,
-      remotePeer: from,
-      itemId: id,
-      channel: null,
-      pendingCandidates: [],
-      stallTimer: null,
-      chunks: [],
-      received: 0,
-      doneSent: false,
-      closed: false,
-    };
-    const transfer: Transfer = { ...base, pc: createPeerConnection(base) };
+    const transfer = newTransfer(transferId, "send", from, id);
     transfers.set(transferId, transfer);
     item.activeTransfers += 1;
     emit();
 
     const channel = transfer.pc.createDataChannel("file", { ordered: true });
     channel.binaryType = "arraybuffer";
-    channel.bufferedAmountLowThreshold = FILE_BUFFER_LOW_BYTES;
+    channel.bufferedAmountLowThreshold = limits.bufferLowBytes;
     transfer.channel = channel;
 
     channel.addEventListener("open", () => {
@@ -413,7 +465,7 @@ export function createFileTransferManager(options: ManagerOptions) {
         from,
       );
     } catch {
-      failTransfer(transfer, "Couldn't start the transfer.", true);
+      failTransfer(transfer, "negotiation", true);
     }
   }
 
@@ -432,7 +484,7 @@ export function createFileTransferManager(options: ManagerOptions) {
           return;
         }
         if (transfer.received !== item.size) {
-          failTransfer(transfer, "The file arrived incomplete. Try again.", true);
+          failTransfer(transfer, "incomplete", true);
           return;
         }
         item.blob = new Blob(transfer.chunks, {
@@ -441,14 +493,18 @@ export function createFileTransferManager(options: ManagerOptions) {
         item.status = "done";
         item.bytes = item.size;
         item.error = undefined;
+        item.errorCode = undefined;
         transfer.chunks = [];
         channel.send(ACK_MESSAGE);
         if (transfer.stallTimer !== null) {
-          window.clearTimeout(transfer.stallTimer);
-          transfer.stallTimer = null;
+          clearTimeout(transfer.stallTimer);
         }
-        // The sender closes on ack; close ourselves if it never does.
-        window.setTimeout(() => closeTransfer(transfer), RECEIVER_CLOSE_GRACE_MS);
+        // The sender closes on ack; close ourselves if it never does. Reusing
+        // the stall slot means closeTransfer and dispose clear this timer too.
+        transfer.stallTimer = setTimeout(
+          () => closeTransfer(transfer),
+          RECEIVER_CLOSE_GRACE_MS,
+        );
         emit();
         onNotice({ type: "received", item: { ...item } });
         return;
@@ -456,7 +512,7 @@ export function createFileTransferManager(options: ManagerOptions) {
 
       transfer.received += event.data.byteLength;
       if (transfer.received > item.size) {
-        failTransfer(transfer, "The sender sent more data than announced.", true);
+        failTransfer(transfer, "overflow", true);
         return;
       }
       transfer.chunks.push(event.data);
@@ -471,7 +527,7 @@ export function createFileTransferManager(options: ManagerOptions) {
       if (item?.status === "done") {
         closeTransfer(transfer);
       } else {
-        failTransfer(transfer, "The connection closed before the file finished.", false);
+        failTransfer(transfer, "closed", false);
       }
     });
   }
@@ -480,7 +536,7 @@ export function createFileTransferManager(options: ManagerOptions) {
   // Signal handling
 
   function handleOffer(from: PeerId, offer: FileOffer) {
-    if (offer.size <= 0 || offer.size > MAX_FILE_BYTES) {
+    if (offer.size <= 0 || offer.size > limits.maxFileBytes) {
       return;
     }
     const id = itemKey(from, offer.offerId);
@@ -490,6 +546,7 @@ export function createFileTransferManager(options: ManagerOptions) {
       if (existing.status === "revoked") {
         existing.status = "offered";
         existing.error = undefined;
+        existing.errorCode = undefined;
         emit();
       }
       return;
@@ -514,16 +571,17 @@ export function createFileTransferManager(options: ManagerOptions) {
     onNotice({ type: "incoming-offer", item: { ...item } });
   }
 
-  function revokeIncoming(item: FileItem, message: string) {
+  function revokeIncoming(item: FileItem, code: "revoked" | "sender-left") {
     if (item.status === "offered" || item.status === "failed") {
       item.status = "revoked";
       item.error = undefined;
+      item.errorCode = undefined;
       return true;
     }
     if (item.status === "connecting" || item.status === "transferring") {
       for (const transfer of [...transfers.values()]) {
         if (transfer.itemId === item.id) {
-          failTransfer(transfer, message, false);
+          failTransfer(transfer, code, false);
         }
       }
     }
@@ -553,11 +611,15 @@ export function createFileTransferManager(options: ManagerOptions) {
         await flushCandidates(transfer);
       }
     } catch {
-      failTransfer(transfer, "Couldn't negotiate a connection.", true);
+      failTransfer(transfer, "negotiation", true);
     }
   }
 
-  function handleSignal(from: PeerId, payload: SignalPayload) {
+  /**
+   * Feed every signal from `from` in here. Signals from other peers are
+   * untrusted: validate them with `parseFileSignal` first.
+   */
+  function handleSignal(from: PeerId, payload: FileSignal) {
     if (disposed || from === selfId) {
       return;
     }
@@ -575,19 +637,20 @@ export function createFileTransferManager(options: ManagerOptions) {
 
       case "file-revoke": {
         const item = items.get(itemKey(from, payload.offerId));
-        if (item && revokeIncoming(item, "The sender stopped sharing this file.")) {
+        if (item && revokeIncoming(item, "revoked")) {
           emit();
         }
         return;
       }
 
       case "peer-left": {
-        // Established data channels are P2P and outlive the socket, so only
-        // idle offers are dropped here; in-flight transfers settle on their own.
+        // Established data channels are P2P and outlive the signaling socket,
+        // so only idle offers are dropped here; in-flight transfers settle on
+        // their own.
         let changed = false;
         for (const item of items.values()) {
           if (item.direction === "incoming" && item.peerId === from) {
-            changed = revokeIncoming(item, "The sender left.") || changed;
+            changed = revokeIncoming(item, "sender-left") || changed;
           }
         }
         if (changed) {
@@ -630,7 +693,7 @@ export function createFileTransferManager(options: ManagerOptions) {
       case "transfer-cancel": {
         const transfer = transfers.get(payload.transferId);
         if (transfer && transfer.remotePeer === from) {
-          failTransfer(transfer, payload.reason, false);
+          failTransfer(transfer, "remote-canceled", false, payload.reason);
         }
         return;
       }
@@ -643,7 +706,7 @@ export function createFileTransferManager(options: ManagerOptions) {
   return {
     handleSignal,
 
-    /** Call once the realtime socket is ready: asks peers for their offers and re-announces ours. */
+    /** Call once signaling is ready: asks peers for their offers and re-announces ours. */
     announce() {
       if (!sendSignal({ type: "hello" })) {
         return;
@@ -654,20 +717,20 @@ export function createFileTransferManager(options: ManagerOptions) {
     },
 
     offerFiles(files: File[]) {
-      const rejected: Array<{ name: string; reason: string }> = [];
+      const rejected: OfferRejection[] = [];
       let offered = 0;
 
       for (const file of files) {
         if (file.size === 0) {
-          rejected.push({ name: file.name, reason: "is empty" });
+          rejected.push({ file, code: "empty", limit: 0 });
           continue;
         }
-        if (file.size > MAX_FILE_BYTES) {
-          rejected.push({ name: file.name, reason: "is over the 500 MB limit" });
+        if (file.size > limits.maxFileBytes) {
+          rejected.push({ file, code: "too-large", limit: limits.maxFileBytes });
           continue;
         }
 
-        const offerId = createRandomId();
+        const offerId = createId();
         const item: FileItem = {
           id: itemKey(selfId, offerId),
           offerId,
@@ -705,7 +768,7 @@ export function createFileTransferManager(options: ManagerOptions) {
       sendSignal({ type: "file-revoke", offerId: item.offerId });
       for (const transfer of [...transfers.values()]) {
         if (transfer.itemId === id) {
-          failTransfer(transfer, "The sender stopped sharing this file.", true);
+          failTransfer(transfer, "revoked", true);
         }
       }
       emit();
@@ -722,21 +785,8 @@ export function createFileTransferManager(options: ManagerOptions) {
         return false;
       }
 
-      const transferId = createRandomId();
-      const base = {
-        id: transferId,
-        role: "receive" as const,
-        remotePeer: item.peerId,
-        itemId: id,
-        channel: null,
-        pendingCandidates: [],
-        stallTimer: null,
-        chunks: [],
-        received: 0,
-        doneSent: false,
-        closed: false,
-      };
-      const transfer: Transfer = { ...base, pc: createPeerConnection(base) };
+      const transferId = createId();
+      const transfer = newTransfer(transferId, "receive", item.peerId, id);
       transfer.pc.addEventListener("datachannel", (event) => {
         attachReceiveChannel(transfer, event.channel);
       });
@@ -755,6 +805,7 @@ export function createFileTransferManager(options: ManagerOptions) {
       item.status = "connecting";
       item.bytes = 0;
       item.error = undefined;
+      item.errorCode = undefined;
       touch(transfer);
       emit();
       return true;
@@ -764,7 +815,7 @@ export function createFileTransferManager(options: ManagerOptions) {
     cancel(id: string) {
       for (const transfer of [...transfers.values()]) {
         if (transfer.itemId === id && transfer.role === "receive") {
-          failTransfer(transfer, "Download canceled.", true);
+          failTransfer(transfer, "canceled", true);
         }
       }
     },

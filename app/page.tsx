@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 
 import CliplinkApp from "@/components/cliplink-app";
 import { AppSkeleton } from "@/components/cliplink/app-skeleton";
+import { RepoStars } from "@/components/cliplink/repo-stars";
 import { isValidRoomCode, normalizeRoomCode } from "@/lib/cliplink/room-code";
 
 type HomeProps = {
@@ -22,7 +23,7 @@ export default async function Home({ searchParams }: HomeProps) {
 
   return (
     <Suspense fallback={<AppSkeleton />}>
-      <CliplinkApp />
+      <CliplinkApp repoLink={<RepoStars />} />
     </Suspense>
   );
 }
