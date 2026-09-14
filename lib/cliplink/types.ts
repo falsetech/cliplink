@@ -1,3 +1,5 @@
+import type { FileSignal, PeerId } from "@thebkht/rtc-file-transfer";
+
 export type RoomCode = string;
 
 export type Clip = {
@@ -84,26 +86,12 @@ export type PollClipsResponse = {
 
 export type StreamDisconnectReason = "error" | "closed";
 
-export type PeerId = string;
-
-export type FileOffer = {
-  offerId: string;
-  name: string;
-  size: number;
-  mime: string;
-};
-
-export type RtcDescription = {
-  type: "offer" | "answer";
-  sdp: string;
-};
-
-export type RtcCandidate = {
-  candidate: string;
-  sdpMid?: string | null;
-  sdpMLineIndex?: number | null;
-  usernameFragment?: string | null;
-};
+export type {
+  FileOffer,
+  PeerId,
+  RtcCandidate,
+  RtcDescription,
+} from "@thebkht/rtc-file-transfer";
 
 /**
  * Ephemeral signaling messages relayed between peers over the room socket.
@@ -111,16 +99,9 @@ export type RtcCandidate = {
  * themselves travel peer-to-peer over WebRTC data channels.
  */
 export type SignalPayload =
-  | { type: "hello" }
+  | FileSignal
   /** Reply to `hello`, so a peer with no open offers still announces itself. */
-  | { type: "hello-ack" }
-  | ({ type: "file-offer" } & FileOffer)
-  | { type: "file-revoke"; offerId: string }
-  | { type: "peer-left" }
-  | { type: "file-request"; offerId: string; transferId: string }
-  | { type: "rtc-description"; transferId: string; description: RtcDescription }
-  | { type: "rtc-candidate"; transferId: string; candidate: RtcCandidate }
-  | { type: "transfer-cancel"; transferId: string; reason: string };
+  | { type: "hello-ack" };
 
 /**
  * What the server relays. Sealed envelopes carry an encrypted `SignalPayload`

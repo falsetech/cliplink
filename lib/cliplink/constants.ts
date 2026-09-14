@@ -40,13 +40,9 @@ export const ROOM_CREATE_RATE_LIMIT = {
 } as const;
 
 // Peer-to-peer file transfer. Files never touch the server; only signaling does.
+// Chunking, buffer, and stall tuning live in @thebkht/rtc-file-transfer.
 export const MAX_FILE_BYTES = 500 * 1024 * 1024;
 export const MAX_FILE_NAME_CHARS = 255;
-export const FILE_CHUNK_BYTES = 64 * 1024;
-export const FILE_BUFFER_HIGH_BYTES = 4 * 1024 * 1024;
-export const FILE_BUFFER_LOW_BYTES = 1024 * 1024;
-export const TRANSFER_STALL_MS = 20_000;
-export const MAX_SESSION_FILES = 20;
 // Sealing inflates a signal by base64's 4/3 plus a nonce and a tag, and an SDP
 // offer already approached the old 16 KB ceiling. Left there, the socket's
 // maxPayload would have dropped large offers with no error to see.

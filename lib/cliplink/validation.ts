@@ -1,3 +1,5 @@
+import { parseFileSignal } from "@thebkht/rtc-file-transfer";
+
 import {
   MAX_CLIP_CHARS,
   MAX_CLIP_CIPHERTEXT_CHARS,
@@ -13,8 +15,6 @@ import { isValidRoomCode } from "@/lib/cliplink/room-code";
 import type { SignalPayload, WsClientMessage } from "@/lib/cliplink/types";
 
 const MAX_ID_CHARS = 64;
-const MAX_MIME_CHARS = 255;
-const MAX_REASON_CHARS = 200;
 const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 export function validateRoomCode(code: string) {
@@ -139,14 +139,6 @@ function isBoundedString(value: unknown, max: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= max;
 }
 
-function isOptionalNullable<T>(value: unknown, check: (v: unknown) => v is T) {
-  return value === undefined || value === null || check(value);
-}
-
-function isId(value: unknown): value is string {
-  return validatePeerId(value);
-}
-
 /**
  * Runs in the browser now, on a payload that has just been decrypted. The
  * server relays signals it cannot read, so this — rebuilding a payload from
@@ -154,98 +146,14 @@ function isId(value: unknown): value is string {
  * server's.
  */
 export function parseSignalPayload(input: unknown): SignalPayload | null {
-  if (!isRecord(input)) {
-    return null;
+  if (isRecord(input) && input.type === "hello-ack") {
+    return { type: "hello-ack" };
   }
-
-  switch (input.type) {
-    case "hello":
-      return { type: "hello" };
-
-    case "hello-ack":
-      return { type: "hello-ack" };
-
-    case "file-offer": {
-      const { offerId, name, size, mime } = input;
-      if (
-        !isId(offerId) ||
-        !isBoundedString(name, MAX_FILE_NAME_CHARS) ||
-        typeof size !== "number" ||
-        !Number.isSafeInteger(size) ||
-        size <= 0 ||
-        size > MAX_FILE_BYTES ||
-        !(typeof mime === "string" && mime.length <= MAX_MIME_CHARS)
-      ) {
-        return null;
-      }
-      return { type: "file-offer", offerId, name, size, mime };
-    }
-
-    case "file-revoke":
-      return isId(input.offerId) ? { type: "file-revoke", offerId: input.offerId } : null;
-
-    case "file-request":
-      return isId(input.offerId) && isId(input.transferId)
-        ? { type: "file-request", offerId: input.offerId, transferId: input.transferId }
-        : null;
-
-    case "rtc-description": {
-      const { transferId, description } = input;
-      if (
-        !isId(transferId) ||
-        !isRecord(description) ||
-        (description.type !== "offer" && description.type !== "answer") ||
-        !isBoundedString(description.sdp, MAX_SIGNAL_BYTES)
-      ) {
-        return null;
-      }
-      return {
-        type: "rtc-description",
-        transferId,
-        description: { type: description.type, sdp: description.sdp },
-      };
-    }
-
-    case "rtc-candidate": {
-      const { transferId, candidate } = input;
-      if (
-        !isId(transferId) ||
-        !isRecord(candidate) ||
-        typeof candidate.candidate !== "string" ||
-        candidate.candidate.length > 1024 ||
-        !isOptionalNullable(candidate.sdpMid, (v): v is string =>
-          isBoundedString(v, MAX_ID_CHARS),
-        ) ||
-        !isOptionalNullable(candidate.sdpMLineIndex, (v): v is number =>
-          typeof v === "number" && Number.isInteger(v) && v >= 0,
-        ) ||
-        !isOptionalNullable(candidate.usernameFragment, (v): v is string =>
-          isBoundedString(v, 256),
-        )
-      ) {
-        return null;
-      }
-      return {
-        type: "rtc-candidate",
-        transferId,
-        candidate: {
-          candidate: candidate.candidate,
-          sdpMid: candidate.sdpMid as string | null | undefined,
-          sdpMLineIndex: candidate.sdpMLineIndex as number | null | undefined,
-          usernameFragment: candidate.usernameFragment as string | null | undefined,
-        },
-      };
-    }
-
-    case "transfer-cancel":
-      return isId(input.transferId) && isBoundedString(input.reason, MAX_REASON_CHARS)
-        ? { type: "transfer-cancel", transferId: input.transferId, reason: input.reason }
-        : null;
-
-    // "peer-left" is server-generated only; clients may not send it.
-    default:
-      return null;
-  }
+  return parseFileSignal(input, {
+    maxFileBytes: MAX_FILE_BYTES,
+    maxNameChars: MAX_FILE_NAME_CHARS,
+    maxSdpChars: MAX_SIGNAL_BYTES,
+  });
 }
 
 /**

@@ -3,12 +3,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  DEFAULT_ICE_SERVERS,
   createFileTransferManager,
-  resolveIceServers,
   type FileItem,
   type FileTransferManager,
+  type OfferRejection,
   type TransferNotice,
-} from "@/lib/cliplink/file-transfer";
+} from "@thebkht/rtc-file-transfer";
+
+import { MAX_FILE_BYTES } from "@/lib/cliplink/constants";
 import type { PeerId, SignalPayload } from "@/lib/cliplink/types";
 
 export type FileListItem = FileItem & {
@@ -23,6 +26,29 @@ type UseFileTransferOptions = {
   sendSignal: (payload: SignalPayload, to?: PeerId) => boolean;
   pushToast: (message: string, tone?: ToastTone) => void;
 };
+
+/** Reads `NEXT_PUBLIC_ICE_SERVERS` (JSON array) so a TURN relay can be added without code changes. */
+function resolveIceServers(): RTCIceServer[] {
+  const raw = process.env.NEXT_PUBLIC_ICE_SERVERS;
+  if (!raw) {
+    return DEFAULT_ICE_SERVERS;
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) && parsed.length > 0
+      ? (parsed as RTCIceServer[])
+      : DEFAULT_ICE_SERVERS;
+  } catch {
+    return DEFAULT_ICE_SERVERS;
+  }
+}
+
+function rejectionText({ file, code, limit }: OfferRejection) {
+  const name = file.name || "File";
+  return code === "empty"
+    ? `${name} is empty.`
+    : `${name} is over the ${limit / (1024 * 1024)} MB limit.`;
+}
 
 function saveFile(url: string, name: string) {
   const anchor = document.createElement("a");
@@ -96,10 +122,12 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
       if (!managerRef.current) {
         managerRef.current = createFileTransferManager({
           peerId,
+          // hello-ack is presence, not file transfer, and never reaches here.
           sendSignal,
           onItemsChange: syncItems,
           onNotice: handleNotice,
           iceServers: resolveIceServers(),
+          limits: { maxFileBytes: MAX_FILE_BYTES },
         });
       }
       return managerRef.current;
@@ -107,7 +135,9 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
 
     return {
       handleSignal(from: PeerId, payload: SignalPayload) {
-        getManager().handleSignal(from, payload);
+        if (payload.type !== "hello-ack") {
+          getManager().handleSignal(from, payload);
+        }
       },
 
       announce() {
@@ -119,8 +149,8 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
           return;
         }
         const { offered, rejected } = getManager().offerFiles(files);
-        for (const { name, reason } of rejected) {
-          toastRef.current(`${name || "File"} ${reason}.`, "error");
+        for (const rejection of rejected) {
+          toastRef.current(rejectionText(rejection), "error");
         }
         if (offered > 0) {
           toastRef.current(
