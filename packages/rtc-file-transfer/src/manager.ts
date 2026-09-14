@@ -52,6 +52,10 @@ export type FileItem = FileOffer & {
   blob?: Blob;
   error?: string;
   errorCode?: FailureCode;
+  /** Smoothed receive rate (incoming, while transferring). */
+  bytesPerSecond?: number;
+  /** Estimated time left at `bytesPerSecond` (incoming, while transferring). */
+  etaMs?: number;
   /** Devices currently pulling / that finished pulling this file (outgoing only). */
   activeTransfers: number;
   completedTransfers: number;
@@ -98,6 +102,11 @@ type Transfer = {
   stallTimer: Timer | null;
   chunks: ArrayBuffer[];
   received: number;
+  /** Last rate sample: when it was taken and how many bytes had arrived. */
+  rateAt: number;
+  rateBytes: number;
+  /** Exponential moving average of the receive rate, in bytes per second. */
+  rate: number;
   doneSent: boolean;
   closed: boolean;
 };
@@ -106,6 +115,9 @@ const DONE_MESSAGE = "done";
 const ACK_MESSAGE = "ack";
 const PROGRESS_EMIT_MS = 100;
 const RECEIVER_CLOSE_GRACE_MS = 5_000;
+const RATE_SAMPLE_MS = 500;
+/** Weight of the newest sample; low enough that one slow chunk doesn't swing the ETA. */
+const RATE_SMOOTHING = 0.3;
 
 const MESSAGES: Record<Exclude<FailureCode, "remote-canceled">, string> = {
   stalled: "The transfer stalled. Try again.",
@@ -227,6 +239,36 @@ export function createFileTransferManager(options: FileTransferOptions) {
   // ---------------------------------------------------------------------------
   // Transfer lifecycle
 
+  function clearRate(item: FileItem) {
+    item.bytesPerSecond = undefined;
+    item.etaMs = undefined;
+  }
+
+  function sampleRate(transfer: Transfer, item: FileItem) {
+    const now = Date.now();
+    if (transfer.rateAt === 0) {
+      transfer.rateAt = now;
+      transfer.rateBytes = transfer.received;
+      return;
+    }
+    const elapsed = now - transfer.rateAt;
+    if (elapsed < RATE_SAMPLE_MS) {
+      return;
+    }
+    const instant = ((transfer.received - transfer.rateBytes) * 1000) / elapsed;
+    transfer.rate =
+      transfer.rate === 0
+        ? instant
+        : RATE_SMOOTHING * instant + (1 - RATE_SMOOTHING) * transfer.rate;
+    transfer.rateAt = now;
+    transfer.rateBytes = transfer.received;
+    item.bytesPerSecond = Math.round(transfer.rate);
+    item.etaMs =
+      transfer.rate > 0
+        ? Math.round(((item.size - transfer.received) / transfer.rate) * 1000)
+        : undefined;
+  }
+
   function touch(transfer: Transfer) {
     if (transfer.stallTimer !== null) {
       clearTimeout(transfer.stallTimer);
@@ -300,6 +342,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       item.error = message;
       item.errorCode = code;
       item.bytes = 0;
+      clearRate(item);
       emit();
       onNotice({ type: "failed", item: { ...item }, code, message });
     }
@@ -407,6 +450,9 @@ export function createFileTransferManager(options: FileTransferOptions) {
       stallTimer: null,
       chunks: [],
       received: 0,
+      rateAt: 0,
+      rateBytes: 0,
+      rate: 0,
       doneSent: false,
       closed: false,
     };
@@ -494,6 +540,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
         item.bytes = item.size;
         item.error = undefined;
         item.errorCode = undefined;
+        clearRate(item);
         transfer.chunks = [];
         channel.send(ACK_MESSAGE);
         if (transfer.stallTimer !== null) {
@@ -518,6 +565,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       transfer.chunks.push(event.data);
       item.bytes = transfer.received;
       item.status = "transferring";
+      sampleRate(transfer, item);
       touch(transfer);
       emitSoon();
     });
@@ -806,6 +854,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       item.bytes = 0;
       item.error = undefined;
       item.errorCode = undefined;
+      clearRate(item);
       touch(transfer);
       emit();
       return true;
