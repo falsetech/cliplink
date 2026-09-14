@@ -498,10 +498,13 @@ export function createFileTransferManager(options: FileTransferOptions) {
         channel.send(ACK_MESSAGE);
         if (transfer.stallTimer !== null) {
           clearTimeout(transfer.stallTimer);
-          transfer.stallTimer = null;
         }
-        // The sender closes on ack; close ourselves if it never does.
-        setTimeout(() => closeTransfer(transfer), RECEIVER_CLOSE_GRACE_MS);
+        // The sender closes on ack; close ourselves if it never does. Reusing
+        // the stall slot means closeTransfer and dispose clear this timer too.
+        transfer.stallTimer = setTimeout(
+          () => closeTransfer(transfer),
+          RECEIVER_CLOSE_GRACE_MS,
+        );
         emit();
         onNotice({ type: "received", item: { ...item } });
         return;
