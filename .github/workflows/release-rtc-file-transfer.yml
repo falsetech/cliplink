@@ -1,14 +1,16 @@
 name: Release rtc-file-transfer
 
 # Push a tag like `rtc-file-transfer@v0.1.0` after bumping the version in
-# packages/rtc-file-transfer/package.json and its CHANGELOG.
+# packages/rtc-file-transfer/package.json and its CHANGELOG. The job publishes
+# to npm, then creates the GitHub release from that version's CHANGELOG section.
 on:
   push:
     tags:
       - "rtc-file-transfer@v*"
 
 permissions:
-  contents: read
+  # Creating the GitHub release.
+  contents: write
   # npm trusted publishing and provenance: no long-lived NPM_TOKEN.
   id-token: write
 
@@ -56,3 +58,33 @@ jobs:
       - name: Publish
         if: steps.version.outputs.published != 'true'
         run: pnpm -F @thebkht/rtc-file-transfer publish --provenance --access public --no-git-checks
+
+      # Runs after a skipped publish too, so re-running an old tag backfills a
+      # missing release. An existing release is left as it is.
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "::notice::Release ${GITHUB_REF_NAME} already exists; leaving it."
+            exit 0
+          fi
+          version=$(node -p "require('./packages/rtc-file-transfer/package.json').version")
+          section=$(awk -v heading="## ${version}" '
+            $0 == heading { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' packages/rtc-file-transfer/CHANGELOG.md)
+          if [ -z "$(printf '%s' "${section}" | tr -d '[:space:]')" ]; then
+            echo "CHANGELOG.md has no entries under '## ${version}'" >&2
+            exit 1
+          fi
+          {
+            echo "📦 https://www.npmjs.com/package/@thebkht/rtc-file-transfer"
+            echo
+            printf '%s\n' "${section}"
+          } > release-notes.md
+          gh release create "${GITHUB_REF_NAME}" \
+            --verify-tag \
+            --title "@thebkht/rtc-file-transfer ${version}" \
+            --notes-file release-notes.md
