@@ -1,5 +1,11 @@
 # @thebkht/rtc-file-transfer
 
+[![npm version](https://img.shields.io/npm/v/@thebkht/rtc-file-transfer.svg)](https://www.npmjs.com/package/@thebkht/rtc-file-transfer)
+[![npm downloads](https://img.shields.io/npm/dm/@thebkht/rtc-file-transfer.svg)](https://www.npmjs.com/package/@thebkht/rtc-file-transfer)
+[![types](https://img.shields.io/npm/types/@thebkht/rtc-file-transfer.svg)](https://www.npmjs.com/package/@thebkht/rtc-file-transfer)
+[![license](https://img.shields.io/npm/l/@thebkht/rtc-file-transfer.svg)](https://github.com/thebkht/cliplink/blob/main/packages/rtc-file-transfer/LICENSE)
+[![CI](https://github.com/thebkht/cliplink/actions/workflows/ci.yml/badge.svg)](https://github.com/thebkht/cliplink/actions/workflows/ci.yml)
+
 Send files peer-to-peer over WebRTC data channels, with the parts that are easy to get wrong already done:
 
 - **Backpressure.** Stops sending at a high-water mark on `bufferedAmount` and resumes on `bufferedamountlow`, so large files don't fill the send queue and kill the channel.
@@ -10,7 +16,7 @@ Send files peer-to-peer over WebRTC data channels, with the parts that are easy 
 
 It has zero dependencies, is framework-agnostic ESM, and works with your own signaling: WebSocket, Socket.IO, Supabase Realtime, `BroadcastChannel`, or anything else that moves JSON between peers. File bytes never pass through your server.
 
-Extracted from [cliplink](https://cliplink.thebkht.com), where it runs in production.
+Extracted from [CLIPLINK](https://cliplink.thebkht.com) ([source](https://github.com/thebkht/cliplink)), where it runs in production. Try a transfer there between two devices to see it working.
 
 ## Install
 
@@ -94,6 +100,18 @@ Protocol v1 is a set of small JSON messages (`hello`, `file-offer`, `file-revoke
 ## Why not simple-peer or PeerJS?
 
 Both give you a connection and a channel. Neither gives you file semantics: you still have to write chunking, flow control against `bufferedAmount`, completion and integrity checks, stall handling, and offer/withdraw state. This package covers only that layer, and you can use it next to either library.
+
+## Contributing
+
+Issues and pull requests go to [thebkht/cliplink](https://github.com/thebkht/cliplink/issues). The package lives in `packages/rtc-file-transfer`:
+
+```sh
+pnpm install
+pnpm -F @thebkht/rtc-file-transfer test
+pnpm -F @thebkht/rtc-file-transfer build
+```
+
+The tests use Node's built-in test runner against an in-memory WebRTC fake, so they need no browser. Changes to the wire protocol must stay compatible with v1 peers. See the [changelog](https://github.com/thebkht/cliplink/blob/main/packages/rtc-file-transfer/CHANGELOG.md) for release history.
 
 ## License
 

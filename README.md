@@ -7,6 +7,8 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/thebkht/cliplink/actions/workflows/ci.yml/badge.svg)](https://github.com/thebkht/cliplink/actions/workflows/ci.yml)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org)
+[![GitHub stars](https://img.shields.io/github/stars/thebkht/cliplink?style=flat)](https://github.com/thebkht/cliplink/stargazers)
+[![npm: @thebkht/rtc-file-transfer](https://img.shields.io/npm/v/@thebkht/rtc-file-transfer.svg?label=rtc-file-transfer)](https://www.npmjs.com/package/@thebkht/rtc-file-transfer)
 
 [**Live demo → cliplink.thebkht.com**](https://cliplink.thebkht.com)
 
@@ -34,7 +36,7 @@ Nothing persists. Rooms expire on a timer, history is session-local, and files n
 - **Session history** — last 20 clips with direction, timestamp, one-click copy, expand-in-place, and an Open action on link clips
 - **Keyboard-first** — every room action has a binding; `?` shows the cheat sheet and `⌘K`/`Ctrl+K` opens the command palette
 - **Know the state** — device count, a live expiry countdown, and a badge that says when you have dropped to the polling fallback
-- **Peer-to-peer file transfer** — up to 500 MB per file over WebRTC data channels, via attach, drag-and-drop, or paste. Bytes flow browser-to-browser; the server only relays signaling
+- **Peer-to-peer file transfer** — up to 500 MB per file over WebRTC data channels, via attach, drag-and-drop, or paste. Bytes flow browser-to-browser; the server only relays signaling. The transfer engine is published on its own as [`@thebkht/rtc-file-transfer`](https://www.npmjs.com/package/@thebkht/rtc-file-transfer)
 - **Ephemeral by design** — per-room TTL configurable from 1h to 24h (6h default), max 50 clips retained per room
 - **Rate limited** — token buckets shared across instances through Redis: a burst of 60 clips refilling at 1/second, and 10 room creations refilling at 1 per 10 seconds
 
@@ -85,7 +87,11 @@ Two things here are worth reading even if you never run CLIPLINK:
 
 **The transport abstraction.** Both realtime transports implement one `TransportClient` interface ([`lib/cliplink/types.ts`](lib/cliplink/types.ts)), so the room UI's retry/backoff/fallback state machine is written once. WebSockets ([`lib/cliplink/ws.ts`](lib/cliplink/ws.ts)) replaced an earlier SSE implementation without the UI changing at all; polling ([`lib/cliplink/http.ts`](lib/cliplink/http.ts)) remains the fallback. Running WebSockets on Vercel Functions is documented thinly elsewhere — this is a complete working example.
 
-**Server-free file transfer.** [`@thebkht/rtc-file-transfer`](packages/rtc-file-transfer) implements offer/accept, chunking with backpressure, stall detection, and withdrawal over raw WebRTC data channels — no TURN-dependent SaaS in the middle. It lives in this repo as a workspace package, is published to npm, and works with any signaling channel.
+**Server-free file transfer.** [`@thebkht/rtc-file-transfer`](packages/rtc-file-transfer) implements offer/accept, chunking with backpressure, stall detection, and withdrawal over raw WebRTC data channels — no TURN-dependent SaaS in the middle. It lives in this repo as a workspace package, is [published to npm](https://www.npmjs.com/package/@thebkht/rtc-file-transfer), and works with any signaling channel:
+
+```bash
+npm install @thebkht/rtc-file-transfer
+```
 
 The API surface is four routes: `POST /rooms` (create), `GET /rooms/:code` (fetch), `POST|GET /rooms/:code/clips` (send / poll after id), and `GET /rooms/:code/socket` (WebSocket upgrade for clips and signaling).
 
@@ -127,6 +133,14 @@ vercel domains add <your-domain>   # optional
 ```
 
 It is a stock Next.js App Router build, so anywhere that runs Next.js 16 with WebSocket support will work.
+
+## Packages
+
+| Package | Version | Description |
+| --- | --- | --- |
+| [`@thebkht/rtc-file-transfer`](packages/rtc-file-transfer) | [![npm](https://img.shields.io/npm/v/@thebkht/rtc-file-transfer.svg)](https://www.npmjs.com/package/@thebkht/rtc-file-transfer) | Peer-to-peer file transfer over WebRTC data channels, with backpressure, stall detection, and offer/revoke. Bring your own signaling. |
+
+Packages release independently. To publish one, bump its version and changelog, merge to `main`, then push a tag like `rtc-file-transfer@v0.1.1`. The [release workflow](.github/workflows/release-rtc-file-transfer.yml) tests and builds the package, then publishes it to npm with provenance through trusted publishing, so no npm token is stored in the repo.
 
 ## Roadmap
 
