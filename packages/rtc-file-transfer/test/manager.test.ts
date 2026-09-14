@@ -180,6 +180,57 @@ describe("file transfer", () => {
     await waitFor(() => outgoing(alice).completedTransfers === 1);
   });
 
+  it("does not count a delivery whose slow commit then fails", async () => {
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice", { limits: { stallMs: 50 } });
+    const bob = bus.addPeer("peer-bob00", { limits: { stallMs: 50 } });
+
+    alice.manager.offerFiles([new File([randomBytes(8 * 1024)], "doomed.bin")]);
+    await waitFor(() => incoming(bob).length === 1);
+    bob.manager.request(incoming(bob)[0].id, {
+      sink: {
+        write() {},
+        close: () =>
+          new Promise<void>((_, reject) => setTimeout(() => reject(new Error("quota")), 200)),
+        abort() {},
+      },
+    });
+
+    await waitFor(() => failure(bob) !== undefined);
+    assert.equal(failure(bob)?.code, "write-error");
+    await waitFor(() => outgoing(alice).activeTransfers === 0);
+    assert.equal(outgoing(alice).completedTransfers, 0);
+  });
+
+  it("aborts a sink that is still closing when the receiver cancels", async () => {
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00");
+    let closing = false;
+    let aborted = false;
+
+    alice.manager.offerFiles([new File([randomBytes(8 * 1024)], "a.bin")]);
+    await waitFor(() => incoming(bob).length === 1);
+    bob.manager.request(incoming(bob)[0].id, {
+      sink: {
+        write() {},
+        close: () => {
+          closing = true;
+          return new Promise<void>((resolve) => setTimeout(resolve, 200));
+        },
+        abort: () => void (aborted = true),
+      },
+    });
+
+    await waitFor(() => closing);
+    bob.manager.cancel(incoming(bob)[0].id);
+    await waitFor(() => aborted);
+    assert.equal(failure(bob)?.code, "canceled");
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(incoming(bob)[0].status, "failed");
+    assert.equal(bob.notices.some((notice) => notice.type === "received"), false);
+  });
+
   it("aborts the sink when the receiver cancels", async () => {
     bus = new FakeSignaling();
     const alice = bus.addPeer("peer-alice");

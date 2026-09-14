@@ -132,7 +132,7 @@ type Transfer = {
   sink: FileSink | null;
   /** Serialized sink writes; never rejects, since failures fail the transfer. */
   writes: Promise<void>;
-  /** The sink was handed to `close`, so it must not be aborted. */
+  /** The sink's `close` resolved, so it must not be aborted. */
   sinkSettled: boolean;
   /** "done" arrived and the sink is closing. */
   finishing: boolean;
@@ -150,6 +150,11 @@ const DONE_MESSAGE = "done";
 const ACK_MESSAGE = "ack";
 const PROGRESS_EMIT_MS = 100;
 const RECEIVER_CLOSE_GRACE_MS = 5_000;
+/**
+ * How long a sender that has sent "done" waits for the receiver's "ack". Longer
+ * than a stall, because the receiver may be committing a large file to disk.
+ */
+const ACK_TIMEOUT_MS = 2 * 60_000;
 const RATE_SAMPLE_MS = 500;
 /** Weight of the newest sample; low enough that one slow chunk doesn't swing the ETA. */
 const RATE_SMOOTHING = 0.3;
@@ -335,13 +340,6 @@ export function createFileTransferManager(options: FileTransferOptions) {
       clearTimeout(transfer.stallTimer);
     }
     transfer.stallTimer = setTimeout(() => {
-      // After "done" the receiver has every byte and may be slow to commit
-      // them (a disk sink can take a while to close), so a quiet sender is
-      // finished, not stalled.
-      if (transfer.role === "send" && transfer.doneSent) {
-        finishSend(transfer, true);
-        return;
-      }
       failTransfer(transfer, "stalled", true);
     }, limits.stallMs);
   }
@@ -500,6 +498,13 @@ export function createFileTransferManager(options: FileTransferOptions) {
       }
       channel.send(DONE_MESSAGE);
       transfer.doneSent = true;
+      // Only the receiver's ack says the file was saved; its commit may take a
+      // while, so wait for it instead of treating the quiet as a stall. Reusing
+      // the stall slot means closeTransfer clears this timer too.
+      if (transfer.stallTimer !== null) {
+        clearTimeout(transfer.stallTimer);
+      }
+      transfer.stallTimer = setTimeout(() => finishSend(transfer, false), ACK_TIMEOUT_MS);
     } catch {
       failTransfer(transfer, "read-error", true);
     }
@@ -569,8 +574,9 @@ export function createFileTransferManager(options: FileTransferOptions) {
       }
     });
     channel.addEventListener("close", () => {
-      // A close right after "done" means the receiver already has every byte.
-      finishSend(transfer, transfer.doneSent);
+      // Without an ack the receiver never confirmed the save: it may have
+      // failed to commit, or gone away mid-commit.
+      finishSend(transfer, false);
     });
 
     touch(transfer);
@@ -617,13 +623,14 @@ export function createFileTransferManager(options: FileTransferOptions) {
     }
 
     let result: void | Blob;
-    transfer.sinkSettled = true;
     try {
       result = await sink.close();
     } catch {
       failTransfer(transfer, "write-error", true);
       return;
     }
+    // Until close resolves, a cancel still aborts the sink.
+    transfer.sinkSettled = true;
     const item = items.get(transfer.itemId);
     if (transfer.closed || !item) {
       return;
