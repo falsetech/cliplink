@@ -1,0 +1,55 @@
+{
+  "name": "@thebkht/rtc-file-transfer",
+  "version": "0.1.0",
+  "description": "Peer-to-peer file transfer over WebRTC data channels, with chunking, backpressure, stall detection, and offer/revoke. Bring your own signaling.",
+  "license": "MIT",
+  "author": "Bakhtiyor Ganijon",
+  "homepage": "https://github.com/thebkht/cliplink/tree/main/packages/rtc-file-transfer#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thebkht/cliplink.git",
+    "directory": "packages/rtc-file-transfer"
+  },
+  "bugs": {
+    "url": "https://github.com/thebkht/cliplink/issues"
+  },
+  "keywords": [
+    "webrtc",
+    "datachannel",
+    "rtcdatachannel",
+    "file-transfer",
+    "p2p",
+    "peer-to-peer",
+    "backpressure",
+    "bufferedAmount",
+    "chunking"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "types": "./dist/index.d.ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "type-check": "tsc -p tsconfig.build.json --noEmit",
+    "prepublishOnly": "pnpm build && pnpm test"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
