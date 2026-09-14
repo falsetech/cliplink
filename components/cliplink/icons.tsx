@@ -66,6 +66,23 @@ export function IconGitHub({ size = 14 }: Pick<IconProps, "size">) {
   );
 }
 
+/** Filled, so a 10px star keeps its shape instead of thinning to an outline. */
+export function IconStar({ size = 14 }: Pick<IconProps, "size">) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+      focusable="false"
+      className="shrink-0"
+    >
+      <path d="M12 2.5a1 1 0 0 1 .9.56l2.52 5.1 5.63.82a1 1 0 0 1 .55 1.7l-4.07 3.97.96 5.6a1 1 0 0 1-1.45 1.06L12 18.66l-5.04 2.65a1 1 0 0 1-1.45-1.06l.96-5.6-4.07-3.97a1 1 0 0 1 .55-1.7l5.63-.82 2.52-5.1A1 1 0 0 1 12 2.5Z" />
+    </svg>
+  );
+}
+
 export function IconPlus(props: IconProps) {
   return (
     <Svg {...props}>

@@ -69,6 +69,34 @@ describe("file transfer", () => {
     assert.deepEqual(new Uint8Array(await incoming(bob)[0].blob!.arrayBuffer()), source);
   });
 
+  it("reports a receive rate and ETA mid-transfer, and clears them when done", async () => {
+    const limits = { chunkBytes: 1024, bufferHighBytes: 4096, bufferLowBytes: 1024 };
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice", { limits });
+    bus.addPeer("peer-bob00", { limits });
+
+    const { bob } = await offerAndRequest(randomBytes(512 * 1024));
+    await waitFor(() => incoming(bob)[0]?.status === "transferring");
+    // Hold the network long enough that the next chunk closes a rate sample.
+    bus.net.setFlowing(false);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    // Let exactly one flush through, then hold again so the transfer is still
+    // running when the coalesced progress emit fires.
+    bus.net.setFlowing(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    bus.net.setFlowing(false);
+
+    await waitFor(() => (incoming(bob)[0]?.bytesPerSecond ?? 0) > 0);
+    const item = incoming(bob)[0];
+    assert.equal(item.status, "transferring");
+    assert.ok((item.etaMs ?? 0) > 0, "expected an ETA alongside the rate");
+
+    bus.net.setFlowing(true);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"));
+    assert.equal(incoming(bob)[0].bytesPerSecond, undefined);
+    assert.equal(incoming(bob)[0].etaMs, undefined);
+  });
+
   it("rejects empty and oversized files with codes", () => {
     bus = new FakeSignaling();
     const alice = bus.addPeer("peer-alice", { limits: { maxFileBytes: 10 } });

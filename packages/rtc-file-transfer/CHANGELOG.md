@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `FileItem.bytesPerSecond` and `FileItem.etaMs` on incoming items while they transfer.
+
 ## 0.1.1
 
 - README: npm badges, a link to the source repository, and contributing steps.
