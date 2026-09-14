@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+- `request(id, { sink })` streams a download into a `FileSink` (for example a file on disk) instead of memory. New `FileItem.savedToSink` and failure code `write-error`.
+- A sender that has sent every byte waits up to two minutes for the receiver to commit the file instead of reporting a stall, and counts the delivery only once the receiver acknowledges it.
+- Canceling while a sink is still closing aborts the sink.
+
 ## 0.2.0
 
 - `FileItem.bytesPerSecond` and `FileItem.etaMs` on incoming items while they transfer.

@@ -4,9 +4,11 @@ export {
   type FailureCode,
   type FileItem,
   type FileItemStatus,
+  type FileSink,
   type FileTransferManager,
   type FileTransferOptions,
   type OfferRejection,
+  type RequestOptions,
   type TransferNotice,
 } from "./manager.ts";
 export {

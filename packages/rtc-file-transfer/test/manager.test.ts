@@ -97,6 +97,156 @@ describe("file transfer", () => {
     assert.equal(incoming(bob)[0].etaMs, undefined);
   });
 
+  it("streams into a custom sink and settles without a blob", async () => {
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00");
+    const source = randomBytes(200 * 1024 + 3);
+    const written: Uint8Array<ArrayBuffer>[] = [];
+    let closed = false;
+    let aborted = false;
+
+    alice.manager.offerFiles([new File([source], "disk.bin")]);
+    await waitFor(() => incoming(bob).length === 1);
+    const sink = {
+      async write(chunk: Uint8Array<ArrayBuffer>) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        written.push(chunk.slice());
+      },
+      close() {
+        closed = true;
+      },
+      abort() {
+        aborted = true;
+      },
+    };
+    assert.equal(bob.manager.request(incoming(bob)[0].id, { sink }), true);
+
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"));
+    const item = incoming(bob)[0];
+    assert.equal(item.status, "done");
+    assert.equal(item.savedToSink, true);
+    assert.equal(item.blob, undefined);
+    assert.equal(closed, true);
+    assert.equal(aborted, false);
+    assert.deepEqual(new Uint8Array(await new Blob(written).arrayBuffer()), source);
+    await waitFor(() => outgoing(alice).completedTransfers === 1);
+  });
+
+  it("fails with write-error when the sink throws, and releases the sender", async () => {
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00");
+    let aborted = false;
+
+    alice.manager.offerFiles([new File([randomBytes(64 * 1024)], "full.bin")]);
+    await waitFor(() => incoming(bob).length === 1);
+    bob.manager.request(incoming(bob)[0].id, {
+      sink: {
+        write() {
+          throw new Error("disk full");
+        },
+        close() {},
+        abort() {
+          aborted = true;
+        },
+      },
+    });
+
+    await waitFor(() => failure(bob) !== undefined);
+    assert.equal(failure(bob)?.code, "write-error");
+    await waitFor(() => aborted);
+    await waitFor(() => outgoing(alice).activeTransfers === 0);
+    assert.equal(outgoing(alice).completedTransfers, 0);
+  });
+
+  it("waits out a sink that is slow to close without calling it a stall", async () => {
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice", { limits: { stallMs: 50 } });
+    const bob = bus.addPeer("peer-bob00", { limits: { stallMs: 50 } });
+
+    alice.manager.offerFiles([new File([randomBytes(8 * 1024)], "slow.bin")]);
+    await waitFor(() => incoming(bob).length === 1);
+    bob.manager.request(incoming(bob)[0].id, {
+      sink: {
+        write() {},
+        close: () => new Promise<void>((resolve) => setTimeout(resolve, 200)),
+        abort() {},
+      },
+    });
+
+    await waitFor(() => incoming(bob)[0]?.status === "done");
+    assert.equal(failure(bob), undefined);
+    await waitFor(() => outgoing(alice).completedTransfers === 1);
+  });
+
+  it("does not count a delivery whose slow commit then fails", async () => {
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice", { limits: { stallMs: 50 } });
+    const bob = bus.addPeer("peer-bob00", { limits: { stallMs: 50 } });
+
+    alice.manager.offerFiles([new File([randomBytes(8 * 1024)], "doomed.bin")]);
+    await waitFor(() => incoming(bob).length === 1);
+    bob.manager.request(incoming(bob)[0].id, {
+      sink: {
+        write() {},
+        close: () =>
+          new Promise<void>((_, reject) => setTimeout(() => reject(new Error("quota")), 200)),
+        abort() {},
+      },
+    });
+
+    await waitFor(() => failure(bob) !== undefined);
+    assert.equal(failure(bob)?.code, "write-error");
+    await waitFor(() => outgoing(alice).activeTransfers === 0);
+    assert.equal(outgoing(alice).completedTransfers, 0);
+  });
+
+  it("aborts a sink that is still closing when the receiver cancels", async () => {
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00");
+    let closing = false;
+    let aborted = false;
+
+    alice.manager.offerFiles([new File([randomBytes(8 * 1024)], "a.bin")]);
+    await waitFor(() => incoming(bob).length === 1);
+    bob.manager.request(incoming(bob)[0].id, {
+      sink: {
+        write() {},
+        close: () => {
+          closing = true;
+          return new Promise<void>((resolve) => setTimeout(resolve, 200));
+        },
+        abort: () => void (aborted = true),
+      },
+    });
+
+    await waitFor(() => closing);
+    bob.manager.cancel(incoming(bob)[0].id);
+    await waitFor(() => aborted);
+    assert.equal(failure(bob)?.code, "canceled");
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(incoming(bob)[0].status, "failed");
+    assert.equal(bob.notices.some((notice) => notice.type === "received"), false);
+  });
+
+  it("aborts the sink when the receiver cancels", async () => {
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00");
+    bus.net.setFlowing(false);
+    let aborted = false;
+
+    alice.manager.offerFiles([new File([randomBytes(4096)], "a.bin")]);
+    await waitFor(() => incoming(bob).length === 1);
+    bob.manager.request(incoming(bob)[0].id, {
+      sink: { write() {}, close() {}, abort: () => void (aborted = true) },
+    });
+    bob.manager.cancel(incoming(bob)[0].id);
+    await waitFor(() => aborted);
+  });
+
   it("rejects empty and oversized files with codes", () => {
     bus = new FakeSignaling();
     const alice = bus.addPeer("peer-alice", { limits: { maxFileBytes: 10 } });

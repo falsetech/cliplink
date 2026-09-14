@@ -11,7 +11,8 @@ import {
   type TransferNotice,
 } from "@thebkht/rtc-file-transfer";
 
-import { MAX_FILE_BYTES } from "@/lib/cliplink/constants";
+import { DISK_SINK_MIN_BYTES, MAX_FILE_BYTES } from "@/lib/cliplink/constants";
+import { canPickDiskSink, pickDiskSink } from "@/lib/cliplink/file-sink";
 import type { PeerId, SignalPayload } from "@/lib/cliplink/types";
 
 export type FileListItem = FileItem & {
@@ -70,6 +71,7 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
 
   const managerRef = useRef<FileTransferManager | null>(null);
   const urlsRef = useRef(new Map<string, string>());
+  const latestRef = useRef<FileItem[]>([]);
   const toastRef = useRef(pushToast);
 
   useEffect(() => {
@@ -80,6 +82,7 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
     const urls = urlsRef.current;
 
     function syncItems(next: FileItem[]) {
+      latestRef.current = next;
       const alive = new Set<string>();
       for (const item of next) {
         if (item.blob) {
@@ -105,6 +108,10 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
           toast(`${notice.item.name} is ready to download.`, "info");
           return;
         case "received": {
+          if (notice.item.savedToSink) {
+            toast(`Saved ${notice.item.name}.`, "success");
+            return;
+          }
           const url = urls.get(notice.item.id);
           if (url) {
             saveFile(url, notice.item.name);
@@ -161,9 +168,28 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
       },
 
       request(id: string) {
-        if (!getManager().request(id)) {
-          toastRef.current("File transfer needs a live connection.", "info");
+        const notifyOffline = (started: boolean) => {
+          if (!started) {
+            toastRef.current("File transfer needs a live connection.", "info");
+          }
+        };
+
+        const item = latestRef.current.find((candidate) => candidate.id === id);
+        if (!item || item.size < DISK_SINK_MIN_BYTES || !canPickDiskSink()) {
+          notifyOffline(getManager().request(id));
+          return;
         }
+
+        // The picker opens synchronously inside this click, while it still
+        // counts as user activation.
+        pickDiskSink(item.name).then(
+          (sink) => {
+            notifyOffline(getManager().request(id, sink ? { sink } : {}));
+          },
+          () => {
+            // Dismissed the save dialog: no download.
+          },
+        );
       },
 
       cancel(id: string) {
