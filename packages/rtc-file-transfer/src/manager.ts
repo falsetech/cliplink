@@ -35,6 +35,8 @@ export type FailureCode =
   | "sender-left"
   /** The data channel closed before the file finished. */
   | "closed"
+  /** The receiver's `FileSink` threw while writing or closing. */
+  | "write-error"
   /** The other peer canceled; `message` is the reason it sent. */
   | "remote-canceled";
 
@@ -48,8 +50,13 @@ export type FileItem = FileOffer & {
   status: FileItemStatus;
   /** Bytes received so far (incoming only). */
   bytes: number;
-  /** Assembled file once an incoming transfer completes. Lives in memory only. */
+  /**
+   * Assembled file once an incoming transfer completes into the default
+   * in-memory sink, or into a custom sink whose `close` returned a Blob.
+   */
   blob?: Blob;
+  /** The download completed into a custom sink that kept the bytes itself. */
+  savedToSink?: boolean;
   error?: string;
   errorCode?: FailureCode;
   /** Smoothed receive rate (incoming, while transferring). */
@@ -59,6 +66,27 @@ export type FileItem = FileOffer & {
   /** Devices currently pulling / that finished pulling this file (outgoing only). */
   activeTransfers: number;
   completedTransfers: number;
+};
+
+/**
+ * Where an incoming file's bytes go. `request` takes ownership: the manager
+ * calls `close` once every byte has been written, or `abort` if the download
+ * fails or never starts. Writes are serialized, and a sink that throws fails
+ * the transfer with `write-error`.
+ *
+ * The receiver cannot slow the sender down, so bytes that arrive faster than
+ * the sink writes them queue in memory.
+ */
+export type FileSink = {
+  write(chunk: Uint8Array<ArrayBuffer>): void | Promise<void>;
+  /** Return a Blob to expose it as `item.blob`. */
+  close(): void | Blob | Promise<void | Blob>;
+  abort(): void | Promise<void>;
+};
+
+export type RequestOptions = {
+  /** Defaults to an in-memory sink that assembles a Blob. */
+  sink?: FileSink;
 };
 
 export type TransferNotice =
@@ -100,7 +128,14 @@ type Transfer = {
   channel: RTCDataChannel | null;
   pendingCandidates: RTCIceCandidateInit[];
   stallTimer: Timer | null;
-  chunks: ArrayBuffer[];
+  /** Receive side only. */
+  sink: FileSink | null;
+  /** Serialized sink writes; never rejects, since failures fail the transfer. */
+  writes: Promise<void>;
+  /** The sink was handed to `close`, so it must not be aborted. */
+  sinkSettled: boolean;
+  /** "done" arrived and the sink is closing. */
+  finishing: boolean;
   received: number;
   /** Last rate sample: when it was taken and how many bytes had arrived. */
   rateAt: number;
@@ -130,9 +165,35 @@ const MESSAGES: Record<Exclude<FailureCode, "remote-canceled">, string> = {
   revoked: "The sender stopped sharing this file.",
   "sender-left": "The sender left.",
   closed: "The connection closed before the file finished.",
+  "write-error": "Couldn't save the file on this device.",
 };
 
 export type FileTransferManager = ReturnType<typeof createFileTransferManager>;
+
+function createMemorySink(mime: string): FileSink {
+  let parts: Uint8Array<ArrayBuffer>[] = [];
+  return {
+    write(chunk) {
+      parts.push(chunk);
+    },
+    close() {
+      const blob = new Blob(parts, { type: mime || "application/octet-stream" });
+      parts = [];
+      return blob;
+    },
+    abort() {
+      parts = [];
+    },
+  };
+}
+
+function abortSink(sink: FileSink) {
+  Promise.resolve()
+    .then(() => sink.abort())
+    .catch(() => {
+      // nothing more to release
+    });
+}
 
 function itemKey(peerId: PeerId, offerId: string) {
   return `${peerId}:${offerId}`;
@@ -274,6 +335,13 @@ export function createFileTransferManager(options: FileTransferOptions) {
       clearTimeout(transfer.stallTimer);
     }
     transfer.stallTimer = setTimeout(() => {
+      // After "done" the receiver has every byte and may be slow to commit
+      // them (a disk sink can take a while to close), so a quiet sender is
+      // finished, not stalled.
+      if (transfer.role === "send" && transfer.doneSent) {
+        finishSend(transfer, true);
+        return;
+      }
       failTransfer(transfer, "stalled", true);
     }, limits.stallMs);
   }
@@ -287,7 +355,10 @@ export function createFileTransferManager(options: FileTransferOptions) {
       clearTimeout(transfer.stallTimer);
       transfer.stallTimer = null;
     }
-    transfer.chunks = [];
+    if (transfer.sink && !transfer.sinkSettled) {
+      transfer.sinkSettled = true;
+      abortSink(transfer.sink);
+    }
     try {
       transfer.channel?.close();
       transfer.pc.close();
@@ -439,6 +510,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
     role: Transfer["role"],
     remotePeer: PeerId,
     itemId: string,
+    sink: FileSink | null = null,
   ): Transfer {
     const base = {
       id,
@@ -448,7 +520,10 @@ export function createFileTransferManager(options: FileTransferOptions) {
       channel: null,
       pendingCandidates: [],
       stallTimer: null,
-      chunks: [],
+      sink,
+      writes: Promise.resolve(),
+      sinkSettled: false,
+      finishing: false,
       received: 0,
       rateAt: 0,
       rateBytes: 0,
@@ -515,13 +590,75 @@ export function createFileTransferManager(options: FileTransferOptions) {
     }
   }
 
+  function queueWrite(transfer: Transfer, chunk: Uint8Array<ArrayBuffer>) {
+    const sink = transfer.sink;
+    if (!sink) {
+      return;
+    }
+    transfer.writes = transfer.writes
+      .then(() => (transfer.closed ? undefined : sink.write(chunk)))
+      .catch(() => failTransfer(transfer, "write-error", true));
+  }
+
+  async function finishReceive(transfer: Transfer, channel: RTCDataChannel) {
+    const sink = transfer.sink;
+    if (!sink) {
+      return;
+    }
+    transfer.finishing = true;
+    // Committing the file is this device's work, not the sender's silence.
+    if (transfer.stallTimer !== null) {
+      clearTimeout(transfer.stallTimer);
+      transfer.stallTimer = null;
+    }
+    await transfer.writes;
+    if (transfer.closed) {
+      return;
+    }
+
+    let result: void | Blob;
+    transfer.sinkSettled = true;
+    try {
+      result = await sink.close();
+    } catch {
+      failTransfer(transfer, "write-error", true);
+      return;
+    }
+    const item = items.get(transfer.itemId);
+    if (transfer.closed || !item) {
+      return;
+    }
+
+    item.blob = result instanceof Blob ? result : undefined;
+    item.savedToSink = !(result instanceof Blob);
+    item.status = "done";
+    item.bytes = item.size;
+    item.error = undefined;
+    item.errorCode = undefined;
+    clearRate(item);
+
+    if (channel.readyState === "open") {
+      channel.send(ACK_MESSAGE);
+      // The sender closes on ack; close ourselves if it never does. Reusing
+      // the stall slot means closeTransfer and dispose clear this timer too.
+      transfer.stallTimer = setTimeout(
+        () => closeTransfer(transfer),
+        RECEIVER_CLOSE_GRACE_MS,
+      );
+    } else {
+      closeTransfer(transfer);
+    }
+    emit();
+    onNotice({ type: "received", item: { ...item } });
+  }
+
   function attachReceiveChannel(transfer: Transfer, channel: RTCDataChannel) {
     transfer.channel = channel;
     channel.binaryType = "arraybuffer";
 
     channel.addEventListener("message", (event: MessageEvent<ArrayBuffer | string>) => {
       const item = items.get(transfer.itemId);
-      if (!item || transfer.closed) {
+      if (!item || transfer.closed || transfer.finishing) {
         return;
       }
 
@@ -533,27 +670,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
           failTransfer(transfer, "incomplete", true);
           return;
         }
-        item.blob = new Blob(transfer.chunks, {
-          type: item.mime || "application/octet-stream",
-        });
-        item.status = "done";
-        item.bytes = item.size;
-        item.error = undefined;
-        item.errorCode = undefined;
-        clearRate(item);
-        transfer.chunks = [];
-        channel.send(ACK_MESSAGE);
-        if (transfer.stallTimer !== null) {
-          clearTimeout(transfer.stallTimer);
-        }
-        // The sender closes on ack; close ourselves if it never does. Reusing
-        // the stall slot means closeTransfer and dispose clear this timer too.
-        transfer.stallTimer = setTimeout(
-          () => closeTransfer(transfer),
-          RECEIVER_CLOSE_GRACE_MS,
-        );
-        emit();
-        onNotice({ type: "received", item: { ...item } });
+        void finishReceive(transfer, channel);
         return;
       }
 
@@ -562,7 +679,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
         failTransfer(transfer, "overflow", true);
         return;
       }
-      transfer.chunks.push(event.data);
+      queueWrite(transfer, new Uint8Array(event.data));
       item.bytes = transfer.received;
       item.status = "transferring";
       sampleRate(transfer, item);
@@ -574,7 +691,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       const item = items.get(transfer.itemId);
       if (item?.status === "done") {
         closeTransfer(transfer);
-      } else {
+      } else if (!transfer.finishing) {
         failTransfer(transfer, "closed", false);
       }
     });
@@ -822,19 +939,26 @@ export function createFileTransferManager(options: FileTransferOptions) {
       emit();
     },
 
-    /** Ask the sender for an incoming file. Returns false if signaling is unavailable. */
-    request(id: string) {
+    /**
+     * Ask the sender for an incoming file. Returns false if the item can't be
+     * downloaded or signaling is unavailable; a passed sink is aborted then.
+     */
+    request(id: string, options: RequestOptions = {}) {
       const item = items.get(id);
       if (
         !item ||
         item.direction !== "incoming" ||
         (item.status !== "offered" && item.status !== "failed")
       ) {
+        if (options.sink) {
+          abortSink(options.sink);
+        }
         return false;
       }
 
       const transferId = createId();
-      const transfer = newTransfer(transferId, "receive", item.peerId, id);
+      const sink = options.sink ?? createMemorySink(item.mime);
+      const transfer = newTransfer(transferId, "receive", item.peerId, id, sink);
       transfer.pc.addEventListener("datachannel", (event) => {
         attachReceiveChannel(transfer, event.channel);
       });
@@ -845,7 +969,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
           item.peerId,
         )
       ) {
-        transfer.pc.close();
+        closeTransfer(transfer);
         return false;
       }
 
@@ -854,6 +978,8 @@ export function createFileTransferManager(options: FileTransferOptions) {
       item.bytes = 0;
       item.error = undefined;
       item.errorCode = undefined;
+      item.blob = undefined;
+      item.savedToSink = undefined;
       clearRate(item);
       touch(transfer);
       emit();
