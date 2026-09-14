@@ -85,7 +85,7 @@ Two things here are worth reading even if you never run CLIPLINK:
 
 **The transport abstraction.** Both realtime transports implement one `TransportClient` interface ([`lib/cliplink/types.ts`](lib/cliplink/types.ts)), so the room UI's retry/backoff/fallback state machine is written once. WebSockets ([`lib/cliplink/ws.ts`](lib/cliplink/ws.ts)) replaced an earlier SSE implementation without the UI changing at all; polling ([`lib/cliplink/http.ts`](lib/cliplink/http.ts)) remains the fallback. Running WebSockets on Vercel Functions is documented thinly elsewhere — this is a complete working example.
 
-**Server-free file transfer.** [`lib/cliplink/file-transfer.ts`](lib/cliplink/file-transfer.ts) implements offer/accept, chunking with backpressure, stall detection, and withdrawal over raw WebRTC data channels — no TURN-dependent SaaS in the middle.
+**Server-free file transfer.** [`@thebkht/rtc-file-transfer`](packages/rtc-file-transfer) implements offer/accept, chunking with backpressure, stall detection, and withdrawal over raw WebRTC data channels — no TURN-dependent SaaS in the middle. It lives in this repo as a workspace package, is published to npm, and works with any signaling channel.
 
 The API surface is four routes: `POST /rooms` (create), `GET /rooms/:code` (fetch), `POST|GET /rooms/:code/clips` (send / poll after id), and `GET /rooms/:code/socket` (WebSocket upgrade for clips and signaling).
 
@@ -130,7 +130,7 @@ It is a stock Next.js App Router build, so anywhere that runs Next.js 16 with We
 
 ## Roadmap
 
-- **Test coverage** — none today, starting with the transport state machine and the file-transfer lifecycle
+- **Test coverage** — the file-transfer package is tested; the app, starting with the transport state machine, is not yet
 - **WebRTC reliability** across restrictive NATs
 
 Have an idea? [Open an issue](https://github.com/thebkht/cliplink/issues/new/choose).

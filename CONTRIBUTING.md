@@ -23,15 +23,17 @@ You need real Upstash credentials only when your change touches cross-instance b
 
 ## Before you push
 
-CI runs exactly these three, so run them locally first:
+CI runs exactly these, so run them locally first:
 
 ```bash
+pnpm -F @thebkht/rtc-file-transfer test
+pnpm -F @thebkht/rtc-file-transfer build
 pnpm lint
 pnpm type-check
 pnpm build
 ```
 
-There is **no test suite yet**. Adding one is on the roadmap and PRs that start it are very welcome. In the meantime, describe how you verified your change by hand.
+The file-transfer package in `packages/rtc-file-transfer` has tests; the app has **no test suite yet**. Adding one is on the roadmap and PRs that start it are very welcome. In the meantime, describe how you verified your change by hand.
 
 ## Manual verification
 
