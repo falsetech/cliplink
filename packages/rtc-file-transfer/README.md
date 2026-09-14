@@ -79,6 +79,24 @@ When your signaling layer sees a peer disconnect, tell the manager with `files.h
 | `createId` | Id generator for offers and transfers. |
 | `createPeerConnection` | For environments without a global `RTCPeerConnection`, such as Node with a WebRTC polyfill. |
 
+### Where received bytes go
+
+`request(id, { sink })` streams a download into a `FileSink` instead of memory. For example, a file the user picked with `showSaveFilePicker`:
+
+```ts
+const handle = await showSaveFilePicker({ suggestedName: item.name });
+const writable = await handle.createWritable();
+files.request(item.id, {
+  sink: {
+    write: (chunk) => writable.write(chunk),
+    close: () => writable.close(),
+    abort: () => writable.abort(),
+  },
+});
+```
+
+Writes are serialized. `close` runs once every byte has arrived; return a `Blob` from it to expose one as `item.blob`, or return nothing and the item gets `savedToSink: true`. `abort` runs if the download fails or never starts, and a sink that throws fails the transfer with `write-error`. The receiver can't slow the sender down, so bytes that arrive faster than the sink writes them queue in memory. Without a sink, the download is assembled in memory as a `Blob`, as before.
+
 The manager returns `handleSignal`, `announce`, `offerFiles`, `request`, `cancel`, `revoke`, `dismiss` and `dispose`.
 
 While an incoming item is `transferring`, it also carries `bytesPerSecond` (a smoothed rate) and `etaMs`. Both are cleared when the transfer ends.
@@ -87,7 +105,7 @@ While an incoming item is `transferring`, it also carries `bytesPerSecond` (a sm
 
 ### Failure codes
 
-`stalled` · `nat` · `read-error` · `negotiation` · `incomplete` · `overflow` · `canceled` · `revoked` · `sender-left` · `closed` · `remote-canceled`
+`stalled` · `nat` · `read-error` · `negotiation` · `incomplete` · `overflow` · `canceled` · `revoked` · `sender-left` · `closed` · `write-error` · `remote-canceled`
 
 Each failure notice also carries an English `message`. Use the `code` to show your own wording.
 

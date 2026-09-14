@@ -43,6 +43,8 @@ export const ROOM_CREATE_RATE_LIMIT = {
 // Chunking, buffer, and stall tuning live in @thebkht/rtc-file-transfer.
 export const MAX_FILE_BYTES = 500 * 1024 * 1024;
 export const MAX_FILE_NAME_CHARS = 255;
+/** Downloads this large stream to a picked file where the browser allows it. */
+export const DISK_SINK_MIN_BYTES = 64 * 1024 * 1024;
 // Sealing inflates a signal by base64's 4/3 plus a nonce and a tag, and an SDP
 // offer already approached the old 16 KB ceiling. Left there, the socket's
 // maxPayload would have dropped large offers with no error to see.

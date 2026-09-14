@@ -57,7 +57,7 @@ function statusText(item: FileListItem) {
       return parts.join(" · ");
     }
     case "done":
-      return `${size} · Saved`;
+      return item.savedToSink ? `${size} · Saved to disk` : `${size} · Saved`;
     case "failed":
       return item.error ?? "Transfer failed.";
     case "revoked":
@@ -127,6 +127,17 @@ function FileActions({
         </button>
       );
     case "done":
+      if (item.savedToSink) {
+        return (
+          <button
+            className={actionClass}
+            type="button"
+            onClick={() => onDismiss(item.id)}
+          >
+            dismiss
+          </button>
+        );
+      }
       return (
         <button
           className={actionClass}
