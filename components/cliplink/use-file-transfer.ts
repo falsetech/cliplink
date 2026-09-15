@@ -16,6 +16,7 @@ import {
   MAX_FILE_BYTES,
   MAX_FILE_ITEMS,
   MAX_FILES_PER_SHARE,
+  MAX_ZIP_BYTES,
 } from "@/lib/cliplink/constants";
 import type { ShareEntry } from "@/lib/cliplink/dropped-files";
 import {
@@ -25,6 +26,7 @@ import {
   pickDirectory,
 } from "@/lib/cliplink/file-sink";
 import type { PeerId, SignalPayload } from "@/lib/cliplink/types";
+import { createZip } from "@/lib/cliplink/zip";
 
 export type FileListItem = FileItem & {
   /** Object URL for a completed incoming file (download + image thumbnail). */
@@ -65,16 +67,25 @@ function rejectionText({ file, code, limit }: OfferRejection) {
 /** How many files of a batch download at once. */
 const BATCH_CONCURRENCY = 2;
 
+/**
+ * How a group is being saved: into a picked folder, as separate downloads, or
+ * held in memory and saved as one zip at the end.
+ */
+type BatchTarget =
+  | { kind: "folder"; root: FileSystemDirectoryHandle }
+  | { kind: "files" }
+  | { kind: "zip"; name: string };
+
 /** One file waiting in, or running from, a "Download all". */
-type QueuedDownload = {
-  id: string;
-  batchId: string;
-  /** Folder to write into, or null to download into memory and save. */
-  root: FileSystemDirectoryHandle | null;
-};
+type QueuedDownload = { id: string; batchId: string; target: BatchTarget };
 
 /** Progress of one "Download all", reported once it finishes. */
-type BatchRun = { remaining: number; saved: number; failed: number };
+type BatchRun = {
+  target: BatchTarget;
+  remaining: number;
+  saved: number;
+  failed: number;
+};
 
 type DownloadQueue = {
   waiting: QueuedDownload[];
@@ -148,24 +159,53 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
       setItems(next.map((item) => ({ ...item, objectUrl: urls.get(item.id) })));
     }
 
-    function startDownload(id: string, root: FileSystemDirectoryHandle | null) {
+    function startDownload(id: string, target: BatchTarget) {
       const item = latestRef.current.find((candidate) => candidate.id === id);
       if (!item) {
         return false;
       }
       // A resumable download keeps writing into the sink it already has.
       const sink =
-        root && item.resumableBytes === undefined
-          ? createDirectorySink(root, item.path, item.name)
+        target.kind === "folder" && item.resumableBytes === undefined
+          ? createDirectorySink(target.root, item.path, item.name)
           : undefined;
       return getManager().request(id, sink ? { sink } : {});
+    }
+
+    /** Zips every finished in-memory file of the batch and saves the archive. */
+    async function saveZip(batchId: string, name: string) {
+      const toast = toastRef.current;
+      const ready = latestRef.current.filter(
+        (item) =>
+          item.batchId === batchId && item.direction === "incoming" && item.blob,
+      );
+      if (ready.length === 0) {
+        toast("Nothing to zip yet.", "info");
+        return;
+      }
+      try {
+        const zip = await createZip(
+          ready.map((item) => ({
+            name: item.path ? `${item.path}/${item.name}` : item.name,
+            data: item.blob!,
+            lastModified: item.ts,
+          })),
+        );
+        const url = URL.createObjectURL(zip);
+        saveFile(url, `${name}.zip`);
+        // The download has taken its own reference to the bytes by now.
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        toast(`Saved ${name}.zip (${ready.length} file${ready.length === 1 ? "" : "s"}).`, "success");
+      } catch {
+        toast("Could not build the zip.", "error");
+      }
     }
 
     function pumpQueue() {
       while (queue.active.size < BATCH_CONCURRENCY && queue.waiting.length > 0) {
         const next = queue.waiting.shift()!;
         queue.active.set(next.id, next);
-        if (!startDownload(next.id, next.root)) {
+        if (!startDownload(next.id, next.target)) {
           settleQueued(next.id, false);
         }
       }
@@ -184,13 +224,44 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
         if (run.remaining === 0) {
           queue.runs.delete(entry.batchId);
           const toast = toastRef.current;
-          if (run.failed === 0) {
+          if (run.target.kind === "zip") {
+            if (run.failed > 0) {
+              toast(
+                `${run.failed} file${run.failed === 1 ? "" : "s"} failed, so the zip leaves ${run.failed === 1 ? "it" : "them"} out.`,
+                "error",
+              );
+            }
+            void saveZip(entry.batchId, run.target.name);
+          } else if (run.failed === 0) {
             toast(`Saved ${run.saved} file${run.saved === 1 ? "" : "s"}.`, "success");
           } else {
             toast(`Saved ${run.saved}, ${run.failed} failed. Retry them from the list.`, "error");
           }
         }
       }
+      pumpQueue();
+    }
+
+    /** Files of a batch that can still be downloaded and aren't queued already. */
+    function pendingIds(batchId: string) {
+      return latestRef.current
+        .filter(
+          (item) =>
+            item.batchId === batchId &&
+            item.direction === "incoming" &&
+            (item.status === "offered" || item.status === "failed") &&
+            !queue.active.has(item.id) &&
+            !queue.waiting.some((entry) => entry.id === item.id),
+        )
+        .map((item) => item.id);
+    }
+
+    function enqueue(batchId: string, ids: string[], target: BatchTarget) {
+      const run = queue.runs.get(batchId) ?? { target, remaining: 0, saved: 0, failed: 0 };
+      run.target = target;
+      run.remaining += ids.length;
+      queue.runs.set(batchId, run);
+      queue.waiting.push(...ids.map((id) => ({ id, batchId, target })));
       pumpQueue();
     }
 
@@ -214,8 +285,10 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
         }
         case "received": {
           if (queued) {
-            // A "Download all" reports once, when the last file lands.
-            if (!notice.item.savedToSink) {
+            // A "Download all" reports once, when the last file lands, and a
+            // zip is saved whole at the end rather than file by file.
+            const target = queue.active.get(notice.item.id)!.target;
+            if (target.kind === "files" && !notice.item.savedToSink) {
               const url = urls.get(notice.item.id);
               if (url) {
                 saveFile(url, notice.item.name);
@@ -308,33 +381,47 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
        * first, so the batch keeps its structure on disk.
        */
       downloadAll(batchId: string) {
-        const ids = latestRef.current
-          .filter(
-            (item) =>
-              item.batchId === batchId &&
-              item.direction === "incoming" &&
-              (item.status === "offered" || item.status === "failed") &&
-              !queue.active.has(item.id) &&
-              !queue.waiting.some((entry) => entry.id === item.id),
-          )
-          .map((item) => item.id);
+        const ids = pendingIds(batchId);
         if (ids.length === 0) {
           return;
         }
-
-        const enqueue = (root: FileSystemDirectoryHandle | null) => {
-          const run = queue.runs.get(batchId) ?? { remaining: 0, saved: 0, failed: 0 };
-          run.remaining += ids.length;
-          queue.runs.set(batchId, run);
-          queue.waiting.push(...ids.map((id) => ({ id, batchId, root })));
-          pumpQueue();
-        };
-
         // The picker opens synchronously inside this click, while it still
         // counts as user activation.
-        pickDirectory().then(enqueue, () => {
-          // Dismissed the folder dialog: no download.
-        });
+        pickDirectory().then(
+          (root) => enqueue(batchId, ids, root ? { kind: "folder", root } : { kind: "files" }),
+          () => {
+            // Dismissed the folder dialog: no download.
+          },
+        );
+      },
+
+      /**
+       * Downloads the rest of a batch into memory, then saves everything that
+       * arrived as one zip. Refused past MAX_ZIP_BYTES, since it all has to fit
+       * in memory at once.
+       */
+      downloadZip(batchId: string, name: string) {
+        const batch = latestRef.current.filter(
+          (item) => item.batchId === batchId && item.direction === "incoming",
+        );
+        const total = batch.reduce((sum, item) => sum + item.size, 0);
+        if (total > MAX_ZIP_BYTES) {
+          toastRef.current(
+            `Zips are limited to ${MAX_ZIP_BYTES / (1024 * 1024 * 1024)} GB. Use Download all instead.`,
+            "error",
+          );
+          return;
+        }
+        if (queue.runs.has(batchId)) {
+          toastRef.current("This group is already downloading.", "info");
+          return;
+        }
+        const ids = pendingIds(batchId);
+        if (ids.length === 0) {
+          void saveZip(batchId, name);
+          return;
+        }
+        enqueue(batchId, ids, { kind: "zip", name });
       },
 
       request(id: string) {

@@ -51,6 +51,12 @@ export const MAX_FILE_NAME_CHARS = 255;
 export const MAX_FILES_PER_SHARE = 50;
 /** File rows a receiver keeps before evicting idle ones, so two full shares fit. */
 export const MAX_FILE_ITEMS = 100;
+/**
+ * Largest group that can be downloaded as one zip. Every file is held in memory
+ * until the archive is saved, so this is bounded by what a phone can hold, well
+ * below ZIP's own 4 GiB limit.
+ */
+export const MAX_ZIP_BYTES = 1024 * 1024 * 1024;
 /** Downloads this large stream to a picked file where the browser allows it. */
 export const DISK_SINK_MIN_BYTES = 64 * 1024 * 1024;
 // Sealing inflates a signal by base64's 4/3 plus a nonce and a tag, and an SDP

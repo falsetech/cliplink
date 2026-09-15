@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useState, type CSSProperties } from "react";
 
+import { MAX_ZIP_BYTES } from "@/lib/cliplink/constants";
 import {
   formatBytes,
   formatDuration,
@@ -20,6 +21,7 @@ type FileTransfersProps = {
   surfaceStyle: CSSProperties;
   onDownload: (id: string) => void;
   onDownloadAll: (batchId: string) => void;
+  onDownloadZip: (batchId: string, name: string) => void;
   onCancel: (id: string) => void;
   onSave: (id: string, name: string) => void;
   onRevoke: (id: string) => void;
@@ -87,7 +89,7 @@ function FileActions({
   onSave,
   onRevoke,
   onDismiss,
-}: Omit<FileTransfersProps, "items" | "surfaceStyle" | "onDownloadAll"> & {
+}: Omit<FileTransfersProps, "items" | "surfaceStyle" | "onDownloadAll" | "onDownloadZip"> & {
   item: FileListItem;
 }) {
   if (item.direction === "outgoing") {
@@ -372,6 +374,8 @@ function BatchRow({
     (item) => item.status === "offered" || item.status === "failed",
   ).length;
   const finished = items.every((item) => !isActive(item) && item.status !== "offered");
+  const zippable = items.some((item) => item.blob) || downloadable > 0;
+  const canZip = incoming && zippable && total <= MAX_ZIP_BYTES && !anyActive;
 
   return (
     <li className="flex flex-col gap-1.5">
@@ -428,6 +432,21 @@ function BatchRow({
               onClick={() => handlers.onDownloadAll(batchId)}
             >
               {downloadable === items.length ? "download all" : `download ${downloadable}`}
+            </button>
+          ) : null}
+          {canZip ? (
+            <button
+              className={actionClass}
+              type="button"
+              disabled={downloadable > 0 && !handlers.canTransfer}
+              title={
+                downloadable > 0 && !handlers.canTransfer
+                  ? OFFLINE_HINT
+                  : "Save the group as one zip. The files are held in memory until it's saved."
+              }
+              onClick={() => handlers.onDownloadZip(batchId, folder ?? "cliplink-files")}
+            >
+              zip
             </button>
           ) : null}
           {incoming && finished ? (

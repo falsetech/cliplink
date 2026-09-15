@@ -808,6 +808,7 @@ export default function CliplinkApp({
                   surfaceStyle={panelSurfaceStyle}
                   onDownload={files.request}
                   onDownloadAll={files.downloadAll}
+                  onDownloadZip={files.downloadZip}
                   onCancel={files.cancel}
                   onSave={files.save}
                   onRevoke={files.revoke}
