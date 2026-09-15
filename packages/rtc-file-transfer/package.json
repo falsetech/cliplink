@@ -52,6 +52,6 @@
     "prepublishOnly": "pnpm build && pnpm test"
   },
   "devDependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.3"
   }
 }
