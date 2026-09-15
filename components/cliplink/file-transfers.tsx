@@ -1,8 +1,9 @@
 "use client";
 
 import Image from "next/image";
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 
+import { MAX_ZIP_BYTES } from "@/lib/cliplink/constants";
 import {
   formatBytes,
   formatDuration,
@@ -11,13 +12,16 @@ import {
 } from "@/lib/cliplink/format";
 import { cn } from "@/lib/utils";
 
-import type { FileListItem } from "./use-file-transfer";
+import { IconChevron } from "./icons";
+import { sharedFolder, type FileListItem } from "./use-file-transfer";
 
 type FileTransfersProps = {
   items: FileListItem[];
   canTransfer: boolean;
   surfaceStyle: CSSProperties;
   onDownload: (id: string) => void;
+  onDownloadAll: (batchId: string) => void;
+  onDownloadZip: (batchId: string, name: string) => void;
   onCancel: (id: string) => void;
   onSave: (id: string, name: string) => void;
   onRevoke: (id: string) => void;
@@ -85,7 +89,7 @@ function FileActions({
   onSave,
   onRevoke,
   onDismiss,
-}: Omit<FileTransfersProps, "items" | "surfaceStyle"> & {
+}: Omit<FileTransfersProps, "items" | "surfaceStyle" | "onDownloadAll" | "onDownloadZip"> & {
   item: FileListItem;
 }) {
   if (item.direction === "outgoing") {
@@ -170,6 +174,310 @@ function FileActions({
   }
 }
 
+type Handlers = Omit<FileTransfersProps, "items" | "surfaceStyle">;
+
+type Row =
+  | { kind: "file"; item: FileListItem }
+  | { kind: "batch"; batchId: string; items: FileListItem[] };
+
+/**
+ * Files offered together collapse into one row, placed where the newest of
+ * them would be. A batch that is down to one file is just a file again.
+ */
+function groupRows(items: FileListItem[]): Row[] {
+  const batches = new Map<string, FileListItem[]>();
+  for (const item of items) {
+    if (item.batchId) {
+      const key = `${item.peerId}:${item.batchId}`;
+      batches.set(key, [...(batches.get(key) ?? []), item]);
+    }
+  }
+
+  const rows: Row[] = [];
+  const placed = new Set<string>();
+  for (const item of items) {
+    const key = item.batchId && `${item.peerId}:${item.batchId}`;
+    const batch = key ? batches.get(key) : undefined;
+    if (!key || !batch || batch.length < 2) {
+      rows.push({ kind: "file", item });
+    } else if (!placed.has(key)) {
+      placed.add(key);
+      rows.push({ kind: "batch", batchId: item.batchId!, items: batch });
+    }
+  }
+  return rows;
+}
+
+const rowShellClass =
+  "grid grid-cols-[48px_1fr] items-start gap-2.5 rounded-surface border border-line border-l-2 p-3 shadow-row md:flex md:items-center md:gap-3 md:px-4 md:py-3";
+
+function DirectionLabel({
+  incoming,
+  label,
+  ts,
+}: {
+  incoming: boolean;
+  label: string;
+  ts: number;
+}) {
+  return (
+    <div className="flex min-w-13 flex-col gap-1 md:min-w-16">
+      <span
+        className={cn(
+          "text-2xs tracking-label uppercase",
+          incoming ? "text-incoming" : "text-muted",
+        )}
+      >
+        {incoming ? `↓ ${label}` : `↑ ${label}`}
+      </span>
+      <span className="text-2xs tracking-label text-muted uppercase tabular-nums">
+        {formatHistoryTime(ts)}
+      </span>
+    </div>
+  );
+}
+
+function ProgressBar({ percent, label }: { percent: number; label: string }) {
+  return (
+    <div
+      className="h-0.75 w-full overflow-hidden rounded-full bg-line"
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={percent}
+    >
+      {/*
+        scaleX rather than width: this runs against a WebRTC byte
+        counter, and width forces layout on every chunk.
+      */}
+      <div
+        className="h-full w-full origin-left bg-accent transition-transform duration-150 ease-out"
+        style={{ transform: `scaleX(${percent / 100})` }}
+      />
+    </div>
+  );
+}
+
+function isActive(item: FileListItem) {
+  return item.status === "connecting" || item.status === "transferring";
+}
+
+function FileRow({
+  item,
+  surfaceStyle,
+  nested = false,
+  ...handlers
+}: Handlers & { item: FileListItem; surfaceStyle: CSSProperties; nested?: boolean }) {
+  const incoming = item.direction === "incoming";
+  const showProgress = incoming && isActive(item);
+  const percent =
+    item.size > 0 ? Math.min(100, Math.round((item.bytes / item.size) * 100)) : 0;
+  const showThumb = incoming && item.objectUrl && item.mime.startsWith("image/");
+
+  return (
+    <li
+      className={cn(
+        rowShellClass,
+        incoming ? "border-l-incoming-line" : "border-l-muted",
+        nested && "shadow-none",
+      )}
+      style={surfaceStyle}
+    >
+      <DirectionLabel incoming={incoming} label="FILE" ts={item.ts} />
+
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        {showThumb ? (
+          <Image
+            src={item.objectUrl!}
+            alt=""
+            width={40}
+            height={40}
+            unoptimized
+            // A pure-neutral edge; a tinted one picks up the surface
+            // beneath it and reads as dirt on the image.
+            className="h-10 w-10 shrink-0 rounded-none border border-image-edge object-cover"
+          />
+        ) : null}
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className="truncate text-2xs text-fg md:text-xs" title={item.name}>
+            {nested && item.path ? (
+              <span className="text-muted">{item.path}/</span>
+            ) : null}
+            {item.name}
+          </span>
+          <span
+            className={cn(
+              "truncate text-2xs text-muted tabular-nums",
+              item.status === "failed" && "text-danger",
+            )}
+          >
+            {statusText(item)}
+          </span>
+          {showProgress ? (
+            <ProgressBar percent={percent} label={`Downloading ${item.name}`} />
+          ) : null}
+        </div>
+      </div>
+
+      <div className="col-start-2 mt-1 flex gap-1 justify-self-start md:mt-0 md:shrink-0">
+        <FileActions item={item} {...handlers} />
+      </div>
+    </li>
+  );
+}
+
+function batchStatus(items: FileListItem[], incoming: boolean) {
+  const total = items.reduce((sum, item) => sum + item.size, 0);
+  const parts = [`${items.length} files`, formatBytes(total)];
+
+  if (!incoming) {
+    const sending = items.reduce((sum, item) => sum + item.activeTransfers, 0);
+    if (sending > 0) {
+      parts.push(`Sending ${sending}`);
+    }
+    return parts.join(" · ");
+  }
+
+  const done = items.filter((item) => item.status === "done").length;
+  const failed = items.filter((item) => item.status === "failed").length;
+  const active = items.filter(isActive).length;
+  if (done > 0 || active > 0) {
+    parts.push(`${done} of ${items.length} saved`);
+  }
+  if (failed > 0) {
+    parts.push(`${failed} failed`);
+  }
+  return parts.join(" · ");
+}
+
+function BatchRow({
+  batchId,
+  items,
+  surfaceStyle,
+  ...handlers
+}: Handlers & { batchId: string; items: FileListItem[]; surfaceStyle: CSSProperties }) {
+  const [expanded, setExpanded] = useState(false);
+  const first = items[0];
+  const incoming = first.direction === "incoming";
+  const folder = sharedFolder(items.map((item) => item.path));
+  const title = folder ?? `${items.length} files`;
+
+  const total = items.reduce((sum, item) => sum + item.size, 0);
+  const received = items.reduce(
+    (sum, item) => sum + (item.status === "done" ? item.size : item.bytes),
+    0,
+  );
+  const anyActive = incoming && items.some(isActive);
+  const percent = total > 0 ? Math.min(100, Math.round((received / total) * 100)) : 0;
+  const downloadable = items.filter(
+    (item) => item.status === "offered" || item.status === "failed",
+  ).length;
+  const finished = items.every((item) => !isActive(item) && item.status !== "offered");
+  const zippable = items.some((item) => item.blob) || downloadable > 0;
+  const canZip = incoming && zippable && total <= MAX_ZIP_BYTES && !anyActive;
+
+  return (
+    <li className="flex flex-col gap-1.5">
+      <div
+        className={cn(rowShellClass, incoming ? "border-l-incoming-line" : "border-l-muted")}
+        style={surfaceStyle}
+      >
+        <DirectionLabel incoming={incoming} label={folder ? "FOLDER" : "FILES"} ts={first.ts} />
+
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <button
+            className="group -my-2 -ml-1.5 flex min-h-10 min-w-0 cursor-pointer items-center gap-1.5 rounded-control border-0 bg-transparent px-1.5 py-2 text-left transition-colors duration-100 ease-out hover:bg-white/2 focus-visible:bg-white/2 active:bg-white/4"
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((current) => !current)}
+          >
+            <span
+              className={cn(
+                "shrink-0 text-muted transition-[rotate,color] duration-200 ease-out group-hover:text-dim",
+                expanded && "rotate-90",
+              )}
+            >
+              <IconChevron size={12} />
+            </span>
+            <span className="flex min-w-0 flex-col gap-1">
+              <span className="truncate text-2xs text-fg md:text-xs" title={title}>
+                {title}
+              </span>
+              <span className="truncate text-2xs text-muted tabular-nums">
+                {batchStatus(items, incoming)}
+              </span>
+            </span>
+          </button>
+          {anyActive ? (
+            <ProgressBar percent={percent} label={`Downloading ${title}`} />
+          ) : null}
+        </div>
+
+        <div className="col-start-2 mt-1 flex gap-1 justify-self-start md:mt-0 md:shrink-0">
+          {!incoming ? (
+            <button
+              className={actionClass}
+              type="button"
+              onClick={() => items.forEach((item) => handlers.onRevoke(item.id))}
+            >
+              stop sharing
+            </button>
+          ) : downloadable > 0 ? (
+            <button
+              className={cn(actionClass, "text-incoming")}
+              type="button"
+              disabled={!handlers.canTransfer}
+              title={handlers.canTransfer ? undefined : OFFLINE_HINT}
+              onClick={() => handlers.onDownloadAll(batchId)}
+            >
+              {downloadable === items.length ? "download all" : `download ${downloadable}`}
+            </button>
+          ) : null}
+          {canZip ? (
+            <button
+              className={actionClass}
+              type="button"
+              disabled={downloadable > 0 && !handlers.canTransfer}
+              title={
+                downloadable > 0 && !handlers.canTransfer
+                  ? OFFLINE_HINT
+                  : "Save the group as one zip. The files are held in memory until it's saved."
+              }
+              onClick={() => handlers.onDownloadZip(batchId, folder ?? "cliplink-files")}
+            >
+              zip
+            </button>
+          ) : null}
+          {incoming && finished ? (
+            <button
+              className={actionClass}
+              type="button"
+              onClick={() => items.forEach((item) => handlers.onDismiss(item.id))}
+            >
+              dismiss
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {expanded ? (
+        <ul className="m-0 ml-4 flex list-none flex-col gap-1.5 border-l border-line p-0 pl-3">
+          {items.map((item) => (
+            <FileRow
+              key={item.id}
+              item={item}
+              surfaceStyle={surfaceStyle}
+              nested
+              {...handlers}
+            />
+          ))}
+        </ul>
+      ) : null}
+    </li>
+  );
+}
+
 export function FileTransfers({
   items,
   surfaceStyle,
@@ -189,94 +497,24 @@ export function FileTransfers({
         </span>
       </div>
       <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
-        {items.map((item) => {
-          const incoming = item.direction === "incoming";
-          const showProgress =
-            incoming &&
-            (item.status === "connecting" || item.status === "transferring");
-          const percent =
-            item.size > 0
-              ? Math.min(100, Math.round((item.bytes / item.size) * 100))
-              : 0;
-          const showThumb =
-            incoming && item.objectUrl && item.mime.startsWith("image/");
-
-          return (
-            <li
-              key={item.id}
-              className={cn(
-                "grid grid-cols-[48px_1fr] items-start gap-2.5 rounded-surface border border-line border-l-2 p-3 shadow-row md:flex md:items-center md:gap-3 md:px-4 md:py-3",
-                incoming ? "border-l-incoming-line" : "border-l-muted",
-              )}
-              style={surfaceStyle}
-            >
-              <div className="flex min-w-13 flex-col gap-1 md:min-w-16">
-                <span
-                  className={cn(
-                    "text-2xs tracking-label uppercase",
-                    incoming ? "text-incoming" : "text-muted",
-                  )}
-                >
-                  {incoming ? "↓ FILE" : "↑ FILE"}
-                </span>
-                <span className="text-2xs tracking-label text-muted uppercase tabular-nums">
-                  {formatHistoryTime(item.ts)}
-                </span>
-              </div>
-
-              <div className="flex min-w-0 flex-1 items-center gap-3">
-                {showThumb ? (
-                  <Image
-                    src={item.objectUrl!}
-                    alt=""
-                    width={40}
-                    height={40}
-                    unoptimized
-                    // A pure-neutral edge; a tinted one picks up the surface
-                    // beneath it and reads as dirt on the image.
-                    className="h-10 w-10 shrink-0 rounded-none border border-image-edge object-cover"
-                  />
-                ) : null}
-                <div className="flex min-w-0 flex-1 flex-col gap-1">
-                  <span className="truncate text-2xs text-fg md:text-xs" title={item.name}>
-                    {item.name}
-                  </span>
-                  <span
-                    className={cn(
-                      "truncate text-2xs text-muted tabular-nums",
-                      item.status === "failed" && "text-danger",
-                    )}
-                  >
-                    {statusText(item)}
-                  </span>
-                  {showProgress ? (
-                    <div
-                      className="h-0.75 w-full overflow-hidden rounded-full bg-line"
-                      role="progressbar"
-                      aria-label={`Downloading ${item.name}`}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={percent}
-                    >
-                      {/*
-                        scaleX rather than width: this runs against a WebRTC byte
-                        counter, and width forces layout on every chunk.
-                      */}
-                      <div
-                        className="h-full w-full origin-left bg-accent transition-transform duration-150 ease-out"
-                        style={{ transform: `scaleX(${percent / 100})` }}
-                      />
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-
-              <div className="col-start-2 mt-1 flex gap-1 justify-self-start md:mt-0 md:shrink-0">
-                <FileActions item={item} {...handlers} />
-              </div>
-            </li>
-          );
-        })}
+        {groupRows(items).map((row) =>
+          row.kind === "file" ? (
+            <FileRow
+              key={row.item.id}
+              item={row.item}
+              surfaceStyle={surfaceStyle}
+              {...handlers}
+            />
+          ) : (
+            <BatchRow
+              key={`${row.items[0].peerId}:${row.batchId}`}
+              batchId={row.batchId}
+              items={row.items}
+              surfaceStyle={surfaceStyle}
+              {...handlers}
+            />
+          ),
+        )}
       </ul>
     </div>
   );

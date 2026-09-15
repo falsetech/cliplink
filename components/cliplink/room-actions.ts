@@ -48,6 +48,7 @@ export type RoomActionContext = {
   openQr: () => void;
   leave: () => void;
   attach: () => void;
+  attachFolder: () => void;
   pasteFromDevice: () => void;
   clearEditor: () => void;
   undoClear: () => void;
@@ -199,6 +200,15 @@ export function createRoomActions(ctx: RoomActionContext): RoomAction[] {
       keywords: ["upload", "send file", "peer to peer"],
       enabled: ctx.joined && ctx.realtimeReady,
       perform: ctx.attach,
+    },
+    {
+      id: "attach-folder",
+      label: "Attach folder",
+      group: "Files",
+      chord: parseChord("f"),
+      keywords: ["directory", "upload", "send folder", "peer to peer"],
+      enabled: ctx.joined && ctx.realtimeReady,
+      perform: ctx.attachFolder,
     },
 
     {

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.0
+
+- Folders: `offerFiles` accepts `{ file, path }` entries and a `batch` option. Offers carry optional `path` and `batchId` fields, which older receivers drop, so they see loose files.
+- `sanitizeRelativePath` export, and a `maxPathChars` parse limit (1024).
+
 ## 0.4.0
 
 - Capability negotiation on top of protocol v1 through optional `caps` fields, fully compatible with older peers.

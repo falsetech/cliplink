@@ -1,7 +1,7 @@
 {
   "name": "@thebkht/rtc-file-transfer",
-  "version": "0.4.0",
-  "description": "Peer-to-peer file transfer over WebRTC data channels, with chunking, backpressure, stall detection, and offer/revoke. Bring your own signaling.",
+  "version": "0.5.0",
+  "description": "Peer-to-peer file transfer over WebRTC data channels, with chunking, backpressure, integrity checks, resume, streaming to disk, and offer/revoke. Bring your own signaling.",
   "license": "MIT",
   "author": "Bakhtiyor Ganijon",
   "homepage": "https://github.com/thebkht/cliplink/tree/main/packages/rtc-file-transfer#readme",
@@ -22,7 +22,9 @@
     "peer-to-peer",
     "backpressure",
     "bufferedAmount",
-    "chunking"
+    "chunking",
+    "resume",
+    "sha256"
   ],
   "type": "module",
   "sideEffects": false,
@@ -50,6 +52,6 @@
     "prepublishOnly": "pnpm build && pnpm test"
   },
   "devDependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.3"
   }
 }

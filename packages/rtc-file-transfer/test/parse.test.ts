@@ -86,6 +86,25 @@ describe("capabilities", () => {
   });
 });
 
+describe("folders", () => {
+  const offer = { type: "file-offer", offerId: ID, name: "a", size: 10, mime: "" };
+
+  it("keeps a sanitized path and a valid batch id", () => {
+    assert.deepEqual(parseFileSignal({ ...offer, path: "/photos//2024", batchId: ID }), {
+      ...offer,
+      path: "photos/2024",
+      batchId: ID,
+    });
+  });
+
+  it("drops bad paths and batch ids without rejecting the offer", () => {
+    for (const path of ["../up", "", 7, "p".repeat(1025)]) {
+      assert.deepEqual(parseFileSignal({ ...offer, path }), offer);
+    }
+    assert.deepEqual(parseFileSignal({ ...offer, batchId: "not an id" }), offer);
+  });
+});
+
 describe("isValidId", () => {
   it("accepts generated ids and rejects free text", () => {
     assert.equal(isValidId(crypto.randomUUID()), true);
