@@ -13,19 +13,6 @@ export const secondaryButtonClass = cn(
   buttonVariants({ variant: "secondary", size: "lg" }),
 );
 
-export const actionButtonClass = cn(
-  buttonVariants({ variant: "secondary", size: "sm" }),
-  "max-[430px]:flex-1",
-);
-
-export const panelToolClass = cn(
-  buttonVariants({ variant: "ghost", size: "sm" }),
-  "text-muted-foreground hover:text-foreground",
-);
-
-export const panelAccentClass =
-  "bg-primary text-primary-foreground hover:bg-primary-hover hover:text-primary-foreground disabled:hover:bg-primary";
-
 /**
  * A list row. On phones the direction label and the row's action share the
  * first line and the content takes the full width below; from `md` it is one

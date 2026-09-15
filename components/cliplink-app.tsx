@@ -28,10 +28,7 @@ import {
 } from "@/components/cliplink/share-banner";
 import { ShortcutsSheet } from "@/components/cliplink/shortcuts-sheet";
 import { Toasts } from "@/components/cliplink/toasts";
-import {
-  headerSurfaceStyle,
-  panelSurfaceStyle,
-} from "@/components/cliplink/ui";
+import { headerSurfaceStyle } from "@/components/cliplink/ui";
 import { Wordmark } from "@/components/cliplink/wordmark";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1033,7 +1030,6 @@ export default function CliplinkApp({
                 <FileTransfers
                   items={files.items}
                   canTransfer={room.realtimeReady}
-                  surfaceStyle={panelSurfaceStyle}
                   onDownload={files.request}
                   onDownloadAll={files.downloadAll}
                   onDownloadZip={files.downloadZip}

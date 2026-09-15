@@ -1,24 +1,25 @@
 "use client";
 
 import Image from "next/image";
-import { useState, type CSSProperties } from "react";
+import { useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import { MAX_ZIP_BYTES } from "@/lib/cliplink/constants";
 import {
   formatBytes,
   formatDuration,
-  formatHistoryTime,
   formatRate,
 } from "@/lib/cliplink/format";
 import { cn } from "@/lib/utils";
 
+import { DirectionLabel } from "./direction-label";
 import { IconChevron } from "./icons";
+import { rowClass } from "./ui";
 import { sharedFolder, type FileListItem } from "./use-file-transfer";
 
 type FileTransfersProps = {
   items: FileListItem[];
   canTransfer: boolean;
-  surfaceStyle: CSSProperties;
   onDownload: (id: string) => void;
   onDownloadAll: (batchId: string) => void;
   onDownloadZip: (batchId: string, name: string) => void;
@@ -28,8 +29,23 @@ type FileTransfersProps = {
   onDismiss: (id: string) => void;
 };
 
-const actionClass =
-  "inline-flex min-h-11 items-center justify-center rounded-lg border border-transparent px-2 text-2xs text-muted-foreground transition-[color,border-color,scale] duration-150 ease-out hover:border-input hover:text-foreground focus-visible:border-input focus-visible:text-foreground active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-55 disabled:active:scale-100 md:min-h-10";
+/**
+ * Row actions. Quiet by default; the one that moves bytes toward this device
+ * is tinted, so a row with several actions still has an obvious first choice.
+ */
+function RowAction({
+  primary = false,
+  ...props
+}: React.ComponentProps<typeof Button> & { primary?: boolean }) {
+  return (
+    <Button
+      variant={primary ? "tinted" : "ghost"}
+      size="sm"
+      className={primary ? undefined : "text-muted-foreground hover:text-foreground"}
+      {...props}
+    />
+  );
+}
 
 const OFFLINE_HINT = "File transfer needs a live connection.";
 
@@ -73,12 +89,12 @@ function statusText(item: FileListItem) {
 
 function downloadLabel(item: FileListItem) {
   if (item.status !== "failed") {
-    return "download";
+    return "Download";
   }
   if (item.resumableBytes && item.size > 0) {
-    return `resume · ${Math.floor((item.resumableBytes / item.size) * 100)}%`;
+    return `Resume · ${Math.floor((item.resumableBytes / item.size) * 100)}%`;
   }
-  return "retry";
+  return "Retry";
 }
 
 function FileActions({
@@ -89,18 +105,16 @@ function FileActions({
   onSave,
   onRevoke,
   onDismiss,
-}: Omit<FileTransfersProps, "items" | "surfaceStyle" | "onDownloadAll" | "onDownloadZip"> & {
+}: Omit<FileTransfersProps, "items" | "onDownloadAll" | "onDownloadZip"> & {
   item: FileListItem;
 }) {
   if (item.direction === "outgoing") {
     return (
-      <button
-        className={actionClass}
-        type="button"
+      <RowAction
         onClick={() => onRevoke(item.id)}
       >
-        stop sharing
-      </button>
+        Stop Sharing
+      </RowAction>
     );
   }
 
@@ -109,72 +123,61 @@ function FileActions({
     case "failed":
       return (
         <>
-          <button
-            className={cn(actionClass, "text-link")}
-            type="button"
+          <RowAction
+            primary
             disabled={!canTransfer}
             title={canTransfer ? undefined : OFFLINE_HINT}
             onClick={() => onDownload(item.id)}
           >
             {downloadLabel(item)}
-          </button>
+          </RowAction>
           {item.status === "failed" ? (
-            <button
-              className={actionClass}
-              type="button"
+            <RowAction
               onClick={() => onDismiss(item.id)}
             >
-              dismiss
-            </button>
+              Dismiss
+            </RowAction>
           ) : null}
         </>
       );
     case "connecting":
     case "transferring":
       return (
-        <button
-          className={actionClass}
-          type="button"
+        <RowAction
           onClick={() => onCancel(item.id)}
         >
-          cancel
-        </button>
+          Cancel
+        </RowAction>
       );
     case "done":
       if (item.savedToSink) {
         return (
-          <button
-            className={actionClass}
-            type="button"
+          <RowAction
             onClick={() => onDismiss(item.id)}
           >
-            dismiss
-          </button>
+            Dismiss
+          </RowAction>
         );
       }
       return (
-        <button
-          className={actionClass}
-          type="button"
+        <RowAction
           onClick={() => onSave(item.id, item.name)}
         >
-          save again
-        </button>
+          Save Again
+        </RowAction>
       );
     default:
       return (
-        <button
-          className={actionClass}
-          type="button"
+        <RowAction
           onClick={() => onDismiss(item.id)}
         >
-          dismiss
-        </button>
+          Dismiss
+        </RowAction>
       );
   }
 }
 
-type Handlers = Omit<FileTransfersProps, "items" | "surfaceStyle">;
+type Handlers = Omit<FileTransfersProps, "items">;
 
 type Row =
   | { kind: "file"; item: FileListItem }
@@ -208,39 +211,10 @@ function groupRows(items: FileListItem[]): Row[] {
   return rows;
 }
 
-const rowShellClass =
-  "grid grid-cols-[48px_1fr] items-start gap-2.5 rounded-2xl border border-border border-l-2 p-3 shadow-row md:flex md:items-center md:gap-3 md:px-4 md:py-3";
-
-function DirectionLabel({
-  incoming,
-  label,
-  ts,
-}: {
-  incoming: boolean;
-  label: string;
-  ts: number;
-}) {
-  return (
-    <div className="flex min-w-13 flex-col gap-1 md:min-w-16">
-      <span
-        className={cn(
-          "text-2xs uppercase",
-          incoming ? "text-link" : "text-muted-foreground",
-        )}
-      >
-        {incoming ? `↓ ${label}` : `↑ ${label}`}
-      </span>
-      <span className="text-2xs text-muted-foreground uppercase tabular-nums">
-        {formatHistoryTime(ts)}
-      </span>
-    </div>
-  );
-}
-
 function ProgressBar({ percent, label }: { percent: number; label: string }) {
   return (
     <div
-      className="h-0.75 w-full overflow-hidden rounded-full bg-border"
+      className="h-1 w-full overflow-hidden rounded-full bg-secondary"
       role="progressbar"
       aria-label={label}
       aria-valuemin={0}
@@ -252,7 +226,7 @@ function ProgressBar({ percent, label }: { percent: number; label: string }) {
         counter, and width forces layout on every chunk.
       */}
       <div
-        className="h-full w-full origin-left bg-primary transition-transform duration-150 ease-out"
+        className="h-full w-full origin-left rounded-full bg-primary transition-transform duration-150 ease-out"
         style={{ transform: `scaleX(${percent / 100})` }}
       />
     </div>
@@ -265,10 +239,9 @@ function isActive(item: FileListItem) {
 
 function FileRow({
   item,
-  surfaceStyle,
   nested = false,
   ...handlers
-}: Handlers & { item: FileListItem; surfaceStyle: CSSProperties; nested?: boolean }) {
+}: Handlers & { item: FileListItem; nested?: boolean }) {
   const incoming = item.direction === "incoming";
   const showProgress = incoming && isActive(item);
   const percent =
@@ -276,17 +249,10 @@ function FileRow({
   const showThumb = incoming && item.objectUrl && item.mime.startsWith("image/");
 
   return (
-    <li
-      className={cn(
-        rowShellClass,
-        incoming ? "border-l-primary" : "border-l-muted-foreground",
-        nested && "shadow-none",
-      )}
-      style={surfaceStyle}
-    >
-      <DirectionLabel incoming={incoming} label="FILE" ts={item.ts} />
+    <li className={cn(rowClass, nested && "shadow-none")}>
+      <DirectionLabel incoming={incoming} label="File" ts={item.ts} />
 
-      <div className="flex min-w-0 flex-1 items-center gap-3">
+      <div className="col-span-2 flex min-w-0 flex-1 items-center gap-3 md:col-span-1">
         {showThumb ? (
           <Image
             src={item.objectUrl!}
@@ -296,11 +262,11 @@ function FileRow({
             unoptimized
             // A pure-neutral edge; a tinted one picks up the surface
             // beneath it and reads as dirt on the image.
-            className="h-10 w-10 shrink-0 rounded-none border border-image-edge object-cover"
+            className="size-10 shrink-0 rounded-lg border border-image-edge object-cover"
           />
         ) : null}
         <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <span className="truncate text-2xs text-foreground md:text-xs" title={item.name}>
+          <span className="truncate text-sm text-foreground" title={item.name}>
             {nested && item.path ? (
               <span className="text-muted-foreground">{item.path}/</span>
             ) : null}
@@ -308,7 +274,7 @@ function FileRow({
           </span>
           <span
             className={cn(
-              "truncate text-2xs text-muted-foreground tabular-nums",
+              "truncate text-xs text-muted-foreground tabular-nums",
               item.status === "failed" && "text-destructive",
             )}
           >
@@ -320,7 +286,7 @@ function FileRow({
         </div>
       </div>
 
-      <div className="col-start-2 mt-1 flex gap-1 justify-self-start md:mt-0 md:shrink-0">
+      <div className="col-start-2 row-start-1 flex gap-1 justify-self-end md:shrink-0">
         <FileActions item={item} {...handlers} />
       </div>
     </li>
@@ -354,9 +320,8 @@ function batchStatus(items: FileListItem[], incoming: boolean) {
 function BatchRow({
   batchId,
   items,
-  surfaceStyle,
   ...handlers
-}: Handlers & { batchId: string; items: FileListItem[]; surfaceStyle: CSSProperties }) {
+}: Handlers & { batchId: string; items: FileListItem[] }) {
   const [expanded, setExpanded] = useState(false);
   const first = items[0];
   const incoming = first.direction === "incoming";
@@ -378,16 +343,13 @@ function BatchRow({
   const canZip = incoming && zippable && total <= MAX_ZIP_BYTES && !anyActive;
 
   return (
-    <li className="flex flex-col gap-1.5">
-      <div
-        className={cn(rowShellClass, incoming ? "border-l-primary" : "border-l-muted-foreground")}
-        style={surfaceStyle}
-      >
-        <DirectionLabel incoming={incoming} label={folder ? "FOLDER" : "FILES"} ts={first.ts} />
+    <li className="flex flex-col gap-2">
+      <div className={rowClass}>
+        <DirectionLabel incoming={incoming} label={folder ? "Folder" : "Files"} ts={first.ts} />
 
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <div className="col-span-2 flex min-w-0 flex-1 flex-col gap-1 md:col-span-1">
           <button
-            className="group -my-2 -ml-1.5 flex min-h-10 min-w-0 cursor-pointer items-center gap-1.5 rounded-lg border-0 bg-transparent px-1.5 py-2 text-left transition-colors duration-100 ease-out hover:bg-muted focus-visible:bg-muted active:bg-accent"
+            className="group -my-1.5 -ml-2 flex min-h-10 min-w-0 cursor-pointer items-center gap-1.5 rounded-lg border-0 bg-transparent px-2 py-2 text-left transition-colors duration-100 ease-out hover:bg-muted focus-visible:bg-muted active:bg-accent"
             type="button"
             aria-expanded={expanded}
             onClick={() => setExpanded((current) => !current)}
@@ -398,13 +360,13 @@ function BatchRow({
                 expanded && "rotate-90",
               )}
             >
-              <IconChevron size={12} />
+              <IconChevron size={14} />
             </span>
-            <span className="flex min-w-0 flex-col gap-1">
-              <span className="truncate text-2xs text-foreground md:text-xs" title={title}>
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="truncate text-sm text-foreground" title={title}>
                 {title}
               </span>
-              <span className="truncate text-2xs text-muted-foreground tabular-nums">
+              <span className="truncate text-xs text-muted-foreground tabular-nums">
                 {batchStatus(items, incoming)}
               </span>
             </span>
@@ -414,30 +376,25 @@ function BatchRow({
           ) : null}
         </div>
 
-        <div className="col-start-2 mt-1 flex gap-1 justify-self-start md:mt-0 md:shrink-0">
+        <div className="col-start-2 row-start-1 flex flex-wrap justify-end gap-1 md:shrink-0">
           {!incoming ? (
-            <button
-              className={actionClass}
-              type="button"
+            <RowAction
               onClick={() => items.forEach((item) => handlers.onRevoke(item.id))}
             >
-              stop sharing
-            </button>
+              Stop Sharing
+            </RowAction>
           ) : downloadable > 0 ? (
-            <button
-              className={cn(actionClass, "text-link")}
-              type="button"
+            <RowAction
+              primary
               disabled={!handlers.canTransfer}
               title={handlers.canTransfer ? undefined : OFFLINE_HINT}
               onClick={() => handlers.onDownloadAll(batchId)}
             >
-              {downloadable === items.length ? "download all" : `download ${downloadable}`}
-            </button>
+              {downloadable === items.length ? "Download All" : `Download ${downloadable}`}
+            </RowAction>
           ) : null}
           {canZip ? (
-            <button
-              className={actionClass}
-              type="button"
+            <RowAction
               disabled={downloadable > 0 && !handlers.canTransfer}
               title={
                 downloadable > 0 && !handlers.canTransfer
@@ -446,28 +403,25 @@ function BatchRow({
               }
               onClick={() => handlers.onDownloadZip(batchId, folder ?? "cliplink-files")}
             >
-              zip
-            </button>
+              Zip
+            </RowAction>
           ) : null}
           {incoming && finished ? (
-            <button
-              className={actionClass}
-              type="button"
+            <RowAction
               onClick={() => items.forEach((item) => handlers.onDismiss(item.id))}
             >
-              dismiss
-            </button>
+              Dismiss
+            </RowAction>
           ) : null}
         </div>
       </div>
 
       {expanded ? (
-        <ul className="m-0 ml-4 flex list-none flex-col gap-1.5 border-l border-border p-0 pl-3">
+        <ul className="m-0 ml-4 flex list-none flex-col gap-2 border-l border-border p-0 pl-3">
           {items.map((item) => (
             <FileRow
               key={item.id}
               item={item}
-              surfaceStyle={surfaceStyle}
               nested
               {...handlers}
             />
@@ -478,31 +432,25 @@ function BatchRow({
   );
 }
 
-export function FileTransfers({
-  items,
-  surfaceStyle,
-  ...handlers
-}: FileTransfersProps) {
+export function FileTransfers({ items, ...handlers }: FileTransfersProps) {
   if (items.length === 0) {
     return null;
   }
 
   return (
-    <div className="flex flex-col gap-2.5">
-      <div className="flex items-center gap-2 text-2xs text-muted-foreground uppercase">
-        <span>Files</span>
-        <span className="h-px flex-1 bg-border" />
-        <span className="normal-case">
-          peer-to-peer · never stored
+    <section className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between gap-3 px-1">
+        <h2 className="m-0 text-lg font-semibold text-foreground">Files</h2>
+        <span className="text-xs text-muted-foreground">
+          Peer-to-peer · never stored
         </span>
       </div>
-      <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
+      <ul className="m-0 flex list-none flex-col gap-2 p-0">
         {groupRows(items).map((row) =>
           row.kind === "file" ? (
             <FileRow
               key={row.item.id}
               item={row.item}
-              surfaceStyle={surfaceStyle}
               {...handlers}
             />
           ) : (
@@ -510,12 +458,11 @@ export function FileTransfers({
               key={`${row.items[0].peerId}:${row.batchId}`}
               batchId={row.batchId}
               items={row.items}
-              surfaceStyle={surfaceStyle}
               {...handlers}
             />
           ),
         )}
       </ul>
-    </div>
+    </section>
   );
 }
