@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 
-import { BLOCK_BYTES, sanitizeFileName, type FileItem } from "../src/index.ts";
+import {
+  BLOCK_BYTES,
+  sanitizeFileName,
+  sanitizeRelativePath,
+  type FileItem,
+} from "../src/index.ts";
 import { FakeSignaling, randomBytes, waitFor, type TestPeer } from "./fake-rtc.ts";
 
 let bus: FakeSignaling;
@@ -360,6 +365,43 @@ describe("file transfer", () => {
     await waitFor(() => incoming(bob)[0].status === "offered");
   });
 
+  it("offers a folder as one batch, with each file's path", async () => {
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00");
+
+    const result = alice.manager.offerFiles(
+      [
+        { file: new File([randomBytes(10)], "a.jpg"), path: "photos/2024" },
+        { file: new File([randomBytes(10)], "b.jpg"), path: "photos" },
+        new File([randomBytes(10)], "loose.txt"),
+      ],
+      { batch: true },
+    );
+    assert.equal(result.offered, 3);
+    await waitFor(() => incoming(bob).length === 3);
+
+    const batchIds = new Set(incoming(bob).map((item) => item.batchId));
+    assert.equal(batchIds.size, 1);
+    assert.ok([...batchIds][0]);
+    assert.deepEqual(
+      incoming(bob)
+        .map((item) => [item.name, item.path])
+        .sort(),
+      [
+        ["a.jpg", "photos/2024"],
+        ["b.jpg", "photos"],
+        ["loose.txt", undefined],
+      ],
+    );
+
+    // A late joiner hears the same grouping.
+    const carol = bus.addPeer("peer-carol");
+    carol.manager.announce();
+    await waitFor(() => incoming(carol).length === 3);
+    assert.deepEqual(new Set(incoming(carol).map((item) => item.batchId)), batchIds);
+  });
+
   it("answers hello with open offers for late joiners", async () => {
     bus = new FakeSignaling();
     const alice = bus.addPeer("peer-alice");
@@ -548,5 +590,16 @@ describe("sanitizeFileName", () => {
     assert.equal(sanitizeFileName("a\\b c"), "a_b_c_");
     assert.equal(sanitizeFileName("   "), "file");
     assert.equal(sanitizeFileName("résumé 📄.pdf"), "résumé 📄.pdf");
+  });
+});
+
+describe("sanitizeRelativePath", () => {
+  it("normalizes separators and rejects paths that climb out", () => {
+    assert.equal(sanitizeRelativePath("photos/2024"), "photos/2024");
+    assert.equal(sanitizeRelativePath("/photos//./2024/"), "photos/2024");
+    assert.equal(sanitizeRelativePath("win\\dir"), "win/dir");
+    assert.equal(sanitizeRelativePath("a/../../etc"), undefined);
+    assert.equal(sanitizeRelativePath("./"), undefined);
+    assert.equal(sanitizeRelativePath(Array(33).fill("d").join("/")), undefined);
   });
 });

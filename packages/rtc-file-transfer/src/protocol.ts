@@ -25,6 +25,13 @@ export type FileOffer = {
   mime: string;
   /** What the sender supports. Absent from v1 senders. */
   caps?: Capability[];
+  /**
+   * Folder the file sits in, relative and `/`-separated (`photos/2024`).
+   * Absent for a loose file, and dropped by v1 receivers.
+   */
+  path?: string;
+  /** Shared by files offered together, so a receiver can group them. */
+  batchId?: string;
 };
 
 export type RtcDescription = {

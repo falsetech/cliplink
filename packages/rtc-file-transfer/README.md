@@ -87,6 +87,8 @@ When your signaling layer sees a peer disconnect, tell the manager with `files.h
 
 The manager returns `handleSignal`, `announce`, `offerFiles`, `request`, `cancel`, `revoke`, `dismiss` and `dispose`.
 
+`offerFiles(entries, { batch? })` takes `File`s or `{ file, path }` entries, where `path` is the folder a file sits in (`photos/2024`). With `batch: true`, every file in the call shares one `batchId`, so a receiver can show them as a group. Incoming items carry `path` (sanitized, and dropped if it tries to climb out with `..`) and `batchId`.
+
 `offerFiles` returns `{ offered, rejected }`. Each rejection is `{ file, code: "empty" | "too-large", limit }`.
 
 While an incoming item is `transferring`, it also carries `bytesPerSecond` (a smoothed rate) and `etaMs`. Both are cleared when the transfer ends.
@@ -134,6 +136,8 @@ Newer peers negotiate optional features through fields that v1 peers never send 
 - `file-offer.caps` lists what the sender supports, and `file-request.caps` lists what the receiver supports. A feature is used only when both lists include it.
 - With `blocks`, the sender follows every `BLOCK_BYTES` (1 MiB) of data with the string `{"t":"block","i":<index>,"h":"<sha256 hex>"}`. The receiver checks each block before writing it to the sink.
 - With `resume` (which requires `blocks`), `file-request.offset` asks the sender to start at a block boundary.
+
+`file-offer` can also carry `path` and `batchId`. These aren't capabilities: they're display metadata, and an older receiver simply shows loose files.
 
 ## Why not simple-peer or PeerJS?
 

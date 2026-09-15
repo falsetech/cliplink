@@ -1,16 +1,18 @@
 export {
   createFileTransferManager,
-  sanitizeFileName,
   type FailureCode,
   type FileItem,
   type FileItemStatus,
   type FileSink,
   type FileTransferManager,
   type FileTransferOptions,
+  type OfferEntry,
+  type OfferOptions,
   type OfferRejection,
   type RequestOptions,
   type TransferNotice,
 } from "./manager.ts";
+export { sanitizeFileName, sanitizeRelativePath } from "./names.ts";
 export {
   DEFAULT_PARSE_LIMITS,
   isValidId,

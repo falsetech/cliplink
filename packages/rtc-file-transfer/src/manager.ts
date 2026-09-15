@@ -4,6 +4,7 @@ import {
   createRandomId,
   type TransferLimits,
 } from "./defaults.ts";
+import { sanitizeFileName, sanitizeRelativePath } from "./names.ts";
 import {
   BLOCK_BYTES,
   CAPABILITIES,
@@ -97,6 +98,17 @@ export type FileSink = {
   /** Return a Blob to expose it as `item.blob`. */
   close(): void | Blob | Promise<void | Blob>;
   abort(): void | Promise<void>;
+};
+
+export type OfferEntry = {
+  file: File;
+  /** Folder the file sits in, relative and `/`-separated. */
+  path?: string;
+};
+
+export type OfferOptions = {
+  /** Give every file in this call one `batchId`. */
+  batch?: boolean;
 };
 
 export type RequestOptions = {
@@ -308,16 +320,6 @@ function itemKey(peerId: PeerId, offerId: string) {
   return `${peerId}:${offerId}`;
 }
 
-/** Replaces path separators and control characters in peer-supplied names. */
-export function sanitizeFileName(name: string) {
-  const cleaned = Array.from(name, (char) => {
-    const code = char.charCodeAt(0);
-    return char === "/" || char === "\\" || code < 32 || code === 127 ? "_" : char;
-  })
-    .join("")
-    .trim();
-  return cleaned || "file";
-}
 
 /**
  * Peer-to-peer file transfer over WebRTC data channels.
@@ -409,6 +411,8 @@ export function createFileTransferManager(options: FileTransferOptions) {
       size: item.size,
       mime: item.mime,
       ...(selfCaps.length > 0 && { caps: selfCaps }),
+      ...(item.path && { path: item.path }),
+      ...(item.batchId && { batchId: item.batchId }),
     };
   }
 
@@ -1037,6 +1041,8 @@ export function createFileTransferManager(options: FileTransferOptions) {
       size: offer.size,
       mime: offer.mime,
       caps: offer.caps,
+      ...(offer.path !== undefined && { path: sanitizeRelativePath(offer.path) }),
+      ...(offer.batchId !== undefined && { batchId: offer.batchId }),
       direction: "incoming",
       peerId: from,
       ts: Date.now(),
@@ -1199,11 +1205,17 @@ export function createFileTransferManager(options: FileTransferOptions) {
       }
     },
 
-    offerFiles(files: File[]) {
+    /**
+     * Announce files to every peer. Pass `{ file, path }` to say which folder a
+     * file sits in, and `batch: true` to mark the files as one group.
+     */
+    offerFiles(entries: Array<File | OfferEntry>, options: OfferOptions = {}) {
       const rejected: OfferRejection[] = [];
       let offered = 0;
+      const batchId = options.batch ? createId() : undefined;
 
-      for (const file of files) {
+      for (const entry of entries) {
+        const { file, path } = entry instanceof File ? { file: entry, path: undefined } : entry;
         if (file.size === 0) {
           rejected.push({ file, code: "empty", limit: 0 });
           continue;
@@ -1220,6 +1232,8 @@ export function createFileTransferManager(options: FileTransferOptions) {
           name: sanitizeFileName(file.name || "file"),
           size: file.size,
           mime: file.type,
+          ...(path !== undefined && { path: sanitizeRelativePath(path) }),
+          ...(batchId !== undefined && { batchId }),
           direction: "outgoing",
           peerId: selfId,
           ts: Date.now(),
