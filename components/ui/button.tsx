@@ -22,7 +22,9 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          "bg-primary text-primary-foreground hover:bg-primary-hover disabled:hover:bg-primary",
+          // Disabled drops to the grey system fill instead of fading the blue,
+          // which only read as a dimmer, still-available tinted button.
+          "bg-primary text-primary-foreground hover:bg-primary-hover disabled:bg-secondary disabled:text-muted-foreground disabled:opacity-100 disabled:hover:bg-secondary",
         tinted:
           "bg-tint text-link hover:bg-tint-hover aria-expanded:bg-tint-hover",
         secondary:

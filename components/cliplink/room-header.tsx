@@ -40,7 +40,7 @@ export function RoomHeader({
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <Button
           variant="tinted"
-          className="h-11 px-4 font-mono text-xl font-semibold tracking-code tabular-nums pointer-coarse:h-11"
+          className="px-3.5 font-mono text-lg font-semibold tracking-code tabular-nums"
           aria-label={`Copy invite link for room ${roomCode}`}
           aria-keyshortcuts="L"
           onClick={onCopyLink}
@@ -68,14 +68,14 @@ export function RoomHeader({
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <Button className={actionFlex} variant="secondary" size="sm" onClick={onShare}>
+        <Button className={actionFlex} variant="secondary" size="default" onClick={onShare}>
           <IconCopy size={14} />
           Share Link
         </Button>
         <Button
           className={actionFlex}
           variant="secondary"
-          size="sm"
+          size="default"
           aria-haspopup="dialog"
           aria-expanded={qrOpen}
           aria-keyshortcuts="Q"
@@ -90,7 +90,7 @@ export function RoomHeader({
             !confirmingLeave && "hover:bg-destructive/12 hover:text-destructive",
           )}
           variant={confirmingLeave ? "destructive" : "secondary"}
-          size="sm"
+          size="default"
           aria-keyshortcuts="X"
           onClick={onLeave}
         >

@@ -209,9 +209,11 @@ export function ClipEditor({
         </div>
       </div>
 
+      {/* Grows with its content, as a Messages compose field does, rather
+          than offering a resize grip. Capped so Send stays in view. */}
       <textarea
         ref={editorRef}
-        className="min-h-50 w-full resize-y border-0 bg-transparent px-4 py-3 text-base text-foreground outline-none placeholder:text-muted-foreground md:min-h-60 md:px-5 md:py-4"
+        className="field-sizing-content max-h-[60vh] min-h-50 w-full resize-none overflow-y-auto border-0 bg-transparent px-4 py-3 text-base text-foreground outline-none placeholder:text-muted-foreground md:min-h-60 md:px-5 md:py-4"
         value={editor.text}
         placeholder="Type or paste anything…"
         aria-label="Clip text"

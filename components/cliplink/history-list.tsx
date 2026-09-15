@@ -1,12 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import { ClipboardIcon } from "lucide-react";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Empty,
   EmptyDescription,
   EmptyHeader,
+  EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
 import { detectClipKind, truncatePreview } from "@/lib/cliplink/format";
@@ -43,11 +45,16 @@ export function HistoryList({
 
   return (
     <section className="flex flex-col gap-2">
-      <h2 className="m-0 px-1 text-lg font-semibold text-foreground">History</h2>
+      {/* Inset to the rows' own content edge, as grouped-list headers are. */}
+      <h2 className="m-0 px-4 text-lg font-semibold text-foreground">History</h2>
       <div className="flex flex-col gap-2">
         {history.length === 0 ? (
-          <Empty className="rounded-2xl border border-dashed border-input py-10">
+          // No container: an empty state is a message, not a drop target.
+          <Empty className="py-10">
             <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <ClipboardIcon />
+              </EmptyMedia>
               <EmptyTitle>No clips yet</EmptyTitle>
               <EmptyDescription>
                 Anything sent from a device in this room shows up here.

@@ -439,7 +439,7 @@ export function FileTransfers({ items, ...handlers }: FileTransfersProps) {
 
   return (
     <section className="flex flex-col gap-2">
-      <div className="flex items-baseline justify-between gap-3 px-1">
+      <div className="flex items-baseline justify-between gap-3 px-4">
         <h2 className="m-0 text-lg font-semibold text-foreground">Files</h2>
         <span className="text-xs text-muted-foreground">
           Peer-to-peer · never stored
