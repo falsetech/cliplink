@@ -2,12 +2,12 @@
 
 import { useState } from "react";
 
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { ROOM_KEY_CHARS } from "@/lib/cliplink/constants";
 import { normalizeRoomKey } from "@/lib/cliplink/crypto";
 
-import { Sheet, useSheetClose } from "./sheet";
-import { IconX } from "./icons";
-import { panelSurfaceStyle, primaryButtonClass } from "./ui";
+import { Sheet, SheetHeader, useSheetClose } from "./sheet";
 
 type KeyPromptProps = {
   open: boolean;
@@ -37,7 +37,6 @@ export function KeyPrompt({
       onClose={onClose}
       label={`Room ${roomCode} key`}
       className="max-w-125"
-      style={panelSurfaceStyle}
     >
       <KeyPromptBody
         roomCode={roomCode}
@@ -67,33 +66,21 @@ function KeyPromptBody({
 
   return (
     <>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="mb-1.5 text-2xs text-muted-foreground uppercase">
-            Encrypted room
-          </p>
-          <h2 className="m-0 font-display text-2xl tracking-code text-link sm:text-3xl">
-            {roomCode}
-          </h2>
-        </div>
-        <button
-          className="-m-2 inline-flex h-11 w-11 items-center justify-center rounded-lg text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:text-foreground active:scale-[0.96]"
-          type="button"
-          aria-label="Cancel joining room"
-          onClick={() => close()}
-        >
-          <IconX size={16} />
-        </button>
-      </div>
+      <SheetHeader
+        eyebrow="Encrypted room"
+        title={roomCode}
+        titleClassName="font-mono tracking-code text-link"
+        closeLabel="Cancel joining room"
+      />
 
-      <p className="m-0 text-xs text-pretty text-muted-foreground">
+      <p className="m-0 text-sm text-pretty text-muted-foreground">
         Clips in this room are encrypted, and the key never reaches the server.
         Paste the key from the other device — it is on its QR sheet, under{" "}
-        <span className="whitespace-nowrap">Copy key</span>.
+        <span className="whitespace-nowrap">Copy Key</span>.
       </p>
 
-      <textarea
-        className="min-h-24 w-full resize-none rounded-lg border border-input bg-card px-3 py-2.5 font-mono text-sm tracking-code text-foreground uppercase outline-none transition-colors duration-150 placeholder:normal-case placeholder:text-muted-foreground focus:border-primary"
+      <Textarea
+        className="min-h-24 resize-none font-mono tracking-code uppercase placeholder:font-sans placeholder:tracking-normal placeholder:normal-case md:text-sm"
         data-autofocus
         aria-label="Room key"
         aria-invalid={mismatch || undefined}
@@ -115,7 +102,7 @@ function KeyPromptBody({
       />
 
       <p
-        className="m-0 text-2xs text-pretty"
+        className="-mt-2 m-0 text-xs text-pretty"
         role={mismatch ? "alert" : undefined}
       >
         {mismatch ? (
@@ -129,14 +116,9 @@ function KeyPromptBody({
         )}
       </p>
 
-      <button
-        className={primaryButtonClass}
-        type="button"
-        disabled={!complete}
-        onClick={submit}
-      >
+      <Button size="lg" disabled={!complete} onClick={submit}>
         Unlock Room
-      </button>
+      </Button>
     </>
   );
 }

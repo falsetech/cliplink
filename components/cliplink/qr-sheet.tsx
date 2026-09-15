@@ -1,13 +1,9 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
+
 import { QrCode } from "./qr-code";
-import { Sheet, useSheetClose } from "./sheet";
-import { IconX } from "./icons";
-import {
-  panelSurfaceStyle,
-  primaryButtonClass,
-  secondaryButtonClass,
-} from "./ui";
+import { Sheet, SheetHeader } from "./sheet";
 
 type QrSheetProps = {
   open: boolean;
@@ -37,7 +33,6 @@ export function QrSheet({
       open={open}
       onClose={onClose}
       label={`Room ${roomCode} QR code`}
-      style={panelSurfaceStyle}
     >
       <QrSheetBody
         roomCode={roomCode}
@@ -62,69 +57,49 @@ function QrSheetBody({
   QrSheetProps,
   "roomCode" | "shareUrl" | "roomKey" | "onCopyLink" | "onCopyKey" | "onShare"
 >) {
-  const close = useSheetClose();
-
   return (
     <>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="mb-1.5 text-2xs text-muted-foreground uppercase">
-            Scan to join
-          </p>
-          <h2 className="m-0 font-display text-2xl tracking-code text-link sm:text-3xl">
-            {roomCode}
-          </h2>
-        </div>
-        <button
-          className="-m-2 inline-flex h-11 w-11 items-center justify-center rounded-lg text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:text-foreground active:scale-[0.96]"
-          type="button"
-          aria-label="Close QR code"
-          onClick={() => close()}
-        >
-          <IconX size={16} />
-        </button>
-      </div>
+      <SheetHeader
+        eyebrow="Scan to join"
+        title={roomCode}
+        titleClassName="font-mono tracking-code text-link"
+        closeLabel="Close QR code"
+      />
 
-      <div className="flex justify-center rounded-2xl border border-image-edge bg-white p-2">
+      <div className="flex justify-center rounded-2xl border border-image-edge bg-white p-3">
         <QrCode
           value={shareUrl}
           label={`QR code for room ${roomCode}`}
-          size={280}
+          size={264}
         />
       </div>
 
-      <p className="m-0 text-xs text-pretty text-muted-foreground">
+      <p className="m-0 text-sm text-pretty text-muted-foreground">
         Scan this code or copy the link to open the room on another device. The
         code is drawn on this device, so the key it carries never leaves it.
       </p>
 
-      <div className="flex flex-col gap-2 rounded-2xl border border-border bg-card p-3">
-        <p className="m-0 text-2xs text-muted-foreground uppercase">
-          Room key
-        </p>
-        <p className="m-0 font-mono text-2xs leading-relaxed break-all text-muted-foreground select-all">
-          {roomKey}
-        </p>
-        <button
-          className={secondaryButtonClass}
-          type="button"
-          onClick={onCopyKey}
-        >
+      <div className="flex items-center gap-3 rounded-2xl bg-muted p-3 pl-4">
+        <div className="min-w-0 flex-1">
+          <p className="m-0 text-xs font-medium text-muted-foreground">
+            Room key
+          </p>
+          <p className="m-0 font-mono text-xs break-all text-foreground select-all">
+            {roomKey}
+          </p>
+        </div>
+        <Button variant="secondary" size="sm" onClick={onCopyKey}>
           Copy Key
-        </button>
+        </Button>
       </div>
 
-      <div className="flex flex-col gap-2.5 sm:flex-row">
-        <button
-          className={secondaryButtonClass}
-          type="button"
-          onClick={onCopyLink}
-        >
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Button className="sm:flex-1" variant="secondary" size="lg" onClick={onCopyLink}>
           Copy Link
-        </button>
-        <button className={primaryButtonClass} type="button" onClick={onShare}>
+        </Button>
+        <Button className="sm:flex-1" size="lg" onClick={onShare}>
           Share
-        </button>
+        </Button>
       </div>
     </>
   );

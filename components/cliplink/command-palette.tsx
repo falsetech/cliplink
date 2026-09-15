@@ -4,10 +4,11 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 
+import { Input } from "@/components/ui/input";
+
 import { Kbd } from "./kbd";
 import { Sheet, useSheetClose } from "./sheet";
 import type { RoomAction } from "./room-actions";
-import { panelSurfaceStyle } from "./ui";
 
 type CommandPaletteProps = {
   open: boolean;
@@ -21,8 +22,7 @@ export function CommandPalette({ open, actions, onClose }: CommandPaletteProps) 
       open={open}
       onClose={onClose}
       label="Command palette"
-      className="max-w-125 gap-3 p-3! sm:p-3!"
-      style={panelSurfaceStyle}
+      className="max-w-lg gap-2 p-2! sm:p-2!"
     >
       <PaletteBody actions={actions} />
     </Sheet>
@@ -92,8 +92,8 @@ function PaletteBody({ actions }: { actions: RoomAction[] }) {
 
   return (
     <>
-      <input
-        className="min-h-11 w-full rounded-lg border border-input bg-card px-3 text-sm text-foreground outline-none transition-colors duration-150 placeholder:text-muted-foreground focus:border-primary"
+      <Input
+        className="h-11 rounded-xl border-0 bg-transparent px-3 text-base focus-visible:border-0 focus-visible:bg-transparent focus-visible:ring-0 pointer-coarse:h-11 md:text-base"
         type="text"
         data-autofocus
         role="combobox"
@@ -117,10 +117,10 @@ function PaletteBody({ actions }: { actions: RoomAction[] }) {
         id={listId}
         role="listbox"
         aria-label="Actions"
-        className="-mr-1 flex max-h-[45vh] flex-col gap-0.5 overflow-y-auto pr-1"
+        className="flex max-h-[45vh] flex-col gap-0.5 overflow-y-auto border-t border-border pt-2"
       >
         {results.length === 0 ? (
-          <p className="m-0 px-2 py-6 text-center text-xs text-muted-foreground">
+          <p className="m-0 px-2 py-6 text-center text-sm text-muted-foreground">
             Nothing matches “{query.trim()}”.
           </p>
         ) : (
@@ -132,20 +132,37 @@ function PaletteBody({ actions }: { actions: RoomAction[] }) {
               aria-selected={index === highlight}
               data-active={index === highlight}
               className={cn(
-                "flex min-h-10 cursor-pointer items-center justify-between gap-3 rounded-lg px-2.5 text-xs transition-colors duration-100",
+                // The highlight follows the pointer and the arrows alike, so it
+                // is the only hover state: selection in the macOS manner.
+                "group/option flex min-h-10 cursor-pointer items-center justify-between gap-3 rounded-lg px-3 text-sm",
                 index === highlight
-                  ? "bg-primary/10 text-foreground"
-                  : "text-muted-foreground hover:bg-muted",
+                  ? "bg-primary text-primary-foreground"
+                  : "text-foreground",
               )}
               onPointerMove={() => setHighlight(index)}
               onClick={() => run(action)}
             >
               <span className="min-w-0 truncate">{action.label}</span>
               <span className="flex shrink-0 items-center gap-2">
-                <span className="text-2xs text-muted-foreground uppercase">
+                <span
+                  className={cn(
+                    "text-xs",
+                    index === highlight
+                      ? "text-primary-foreground/80"
+                      : "text-muted-foreground",
+                  )}
+                >
                   {action.group}
                 </span>
-                {action.chord ? <Kbd chord={action.chord} /> : null}
+                {action.chord ? (
+                  <Kbd
+                    chord={action.chord}
+                    className={cn(
+                      index === highlight &&
+                        "*:bg-primary-foreground/20 *:text-primary-foreground *:shadow-none",
+                    )}
+                  />
+                ) : null}
               </span>
             </div>
           ))
