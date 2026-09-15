@@ -43,6 +43,14 @@ export const ROOM_CREATE_RATE_LIMIT = {
 // Chunking, buffer, and stall tuning live in @thebkht/rtc-file-transfer.
 export const MAX_FILE_BYTES = 500 * 1024 * 1024;
 export const MAX_FILE_NAME_CHARS = 255;
+/**
+ * Files in one share. Each is its own offer signal, and a late joiner's hello
+ * is answered with all of them, so this keeps a full folder well inside
+ * SIGNAL_RATE_MAX_MESSAGES.
+ */
+export const MAX_FILES_PER_SHARE = 50;
+/** File rows a receiver keeps before evicting idle ones, so two full shares fit. */
+export const MAX_FILE_ITEMS = 100;
 /** Downloads this large stream to a picked file where the browser allows it. */
 export const DISK_SINK_MIN_BYTES = 64 * 1024 * 1024;
 // Sealing inflates a signal by base64's 4/3 plus a nonce and a tag, and an SDP
