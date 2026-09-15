@@ -1,4 +1,5 @@
 import { DEFAULT_LIMITS } from "./defaults.ts";
+import { sanitizeRelativePath } from "./names.ts";
 import { CAPABILITIES, type Capability, type FileSignal } from "./protocol.ts";
 
 export type ParseLimits = {
@@ -7,6 +8,7 @@ export type ParseLimits = {
   maxMimeChars: number;
   maxSdpChars: number;
   maxReasonChars: number;
+  maxPathChars: number;
 };
 
 export const DEFAULT_PARSE_LIMITS: ParseLimits = {
@@ -15,6 +17,7 @@ export const DEFAULT_PARSE_LIMITS: ParseLimits = {
   maxMimeChars: 255,
   maxSdpChars: 24 * 1024,
   maxReasonChars: 200,
+  maxPathChars: 1024,
 };
 
 const MIN_ID_CHARS = 8;
@@ -92,7 +95,18 @@ export function parseFileSignal(
         return null;
       }
       const caps = parseCaps(input.caps);
-      return { type: "file-offer", offerId, name, size, mime, ...(caps && { caps }) };
+      const path =
+        isBoundedString(input.path, max.maxPathChars) && sanitizeRelativePath(input.path);
+      return {
+        type: "file-offer",
+        offerId,
+        name,
+        size,
+        mime,
+        ...(caps && { caps }),
+        ...(path && { path }),
+        ...(isValidId(input.batchId) && { batchId: input.batchId }),
+      };
     }
 
     case "file-revoke":

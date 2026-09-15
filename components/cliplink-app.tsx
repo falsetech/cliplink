@@ -43,7 +43,12 @@ import { useShortcuts } from "@/components/cliplink/use-shortcuts";
 import { useToasts } from "@/components/cliplink/use-toasts";
 
 import { writeClipboard } from "@/lib/cliplink/clipboard";
-import { MAX_CLIP_CHARS } from "@/lib/cliplink/constants";
+import { MAX_CLIP_CHARS, MAX_FILES_PER_SHARE } from "@/lib/cliplink/constants";
+import {
+  entriesFromDataTransfer,
+  entriesFromFileList,
+  type ShareEntry,
+} from "@/lib/cliplink/dropped-files";
 import {
   deriveOpenRoomKey,
   formatRoomKey,
@@ -149,6 +154,7 @@ export default function CliplinkApp({
 
   const senderIdRef = useRef("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const scrollSentinelRef = useRef<HTMLDivElement>(null);
   const confirmResetRef = useRef<number | null>(null);
@@ -551,16 +557,19 @@ export default function CliplinkApp({
     }
   }
 
-  function shareFiles(list: FileList | File[] | null) {
-    const selected = list ? Array.from(list) : [];
-    if (selected.length === 0) {
+  function shareEntries(entries: ShareEntry[]) {
+    if (entries.length === 0) {
       return;
     }
     if (!room.realtimeReady) {
       pushToast("File transfer needs a live connection.", "info");
       return;
     }
-    files.offerFiles(selected);
+    files.offerFiles(entries);
+  }
+
+  function shareFiles(list: FileList | File[] | null) {
+    shareEntries(list ? entriesFromFileList(list) : []);
   }
 
   function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>) {
@@ -597,7 +606,11 @@ export default function CliplinkApp({
     }
     event.preventDefault();
     setDragActive(false);
-    shareFiles(event.dataTransfer.files);
+    // Read before the handler returns: the DataTransfer empties afterwards.
+    entriesFromDataTransfer(event.dataTransfer, MAX_FILES_PER_SHARE).then(
+      shareEntries,
+      () => pushToast("Could not read the dropped files.", "error"),
+    );
   }
 
   const roomCode = room.roomCode;
@@ -633,6 +646,7 @@ export default function CliplinkApp({
     openQr: () => setShowQrSheet(true),
     leave: requestLeave,
     attach: () => fileInputRef.current?.click(),
+    attachFolder: () => folderInputRef.current?.click(),
     pasteFromDevice: () => void editor.pasteFromDevice(),
     clearEditor: editor.clear,
     undoClear: editor.undoClear,
@@ -778,6 +792,7 @@ export default function CliplinkApp({
                   canSend={canSend}
                   arrival={room.arrivalId !== null}
                   fileInputRef={fileInputRef}
+                  folderInputRef={folderInputRef}
                   editorRef={editorRef}
                   onSend={() => void sendClip()}
                   onFilesPicked={shareFiles}
@@ -792,6 +807,8 @@ export default function CliplinkApp({
                   canTransfer={room.realtimeReady}
                   surfaceStyle={panelSurfaceStyle}
                   onDownload={files.request}
+                  onDownloadAll={files.downloadAll}
+                  onDownloadZip={files.downloadZip}
                   onCancel={files.cancel}
                   onSave={files.save}
                   onRevoke={files.revoke}

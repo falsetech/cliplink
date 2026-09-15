@@ -59,6 +59,7 @@ type ClipEditorProps = {
   /** True while the arrival cue is lit for a clip that just landed. */
   arrival: boolean;
   fileInputRef: RefObject<HTMLInputElement | null>;
+  folderInputRef: RefObject<HTMLInputElement | null>;
   editorRef: RefObject<HTMLTextAreaElement | null>;
   onSend: () => void;
   onFilesPicked: (files: FileList | null) => void;
@@ -77,6 +78,7 @@ export function ClipEditor({
   canSend,
   arrival,
   fileInputRef,
+  folderInputRef,
   editorRef,
   onSend,
   onFilesPicked,
@@ -142,6 +144,18 @@ export function ClipEditor({
               type="file"
               multiple
               hidden
+              onChange={(event) => {
+                onFilesPicked(event.target.files);
+                event.target.value = "";
+              }}
+            />
+            {/* Reached from the F shortcut and the palette. Each picked file
+                carries its path within the folder in webkitRelativePath. */}
+            <input
+              ref={folderInputRef}
+              type="file"
+              hidden
+              {...{ webkitdirectory: "" }}
               onChange={(event) => {
                 onFilesPicked(event.target.files);
                 event.target.value = "";
