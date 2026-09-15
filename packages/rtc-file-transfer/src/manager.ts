@@ -4,7 +4,15 @@ import {
   createRandomId,
   type TransferLimits,
 } from "./defaults.ts";
-import type { FileOffer, FileSignal, PeerId, RtcCandidate } from "./protocol.ts";
+import {
+  BLOCK_BYTES,
+  CAPABILITIES,
+  type Capability,
+  type FileOffer,
+  type FileSignal,
+  type PeerId,
+  type RtcCandidate,
+} from "./protocol.ts";
 
 export type FileItemStatus =
   | "offered"
@@ -37,6 +45,8 @@ export type FailureCode =
   | "closed"
   /** The receiver's `FileSink` threw while writing or closing. */
   | "write-error"
+  /** A block failed its SHA-256 check. */
+  | "corrupt"
   /** The other peer canceled; `message` is the reason it sent. */
   | "remote-canceled";
 
@@ -57,6 +67,11 @@ export type FileItem = FileOffer & {
   blob?: Blob;
   /** The download completed into a custom sink that kept the bytes itself. */
   savedToSink?: boolean;
+  /**
+   * Verified bytes a failed download kept (incoming only). `request` picks up
+   * from here instead of starting over, into the same sink.
+   */
+  resumableBytes?: number;
   error?: string;
   errorCode?: FailureCode;
   /** Smoothed receive rate (incoming, while transferring). */
@@ -115,9 +130,36 @@ export type FileTransferOptions = {
   createId?: () => string;
   /** Override for environments without a global `RTCPeerConnection`. */
   createPeerConnection?: (config: RTCConfiguration) => RTCPeerConnection;
+  /**
+   * Protocol features to advertise. Defaults to all of them where
+   * `crypto.subtle` exists (secure contexts), and none otherwise. Pass `[]` to
+   * behave exactly like a v1 peer.
+   */
+  capabilities?: Capability[];
 };
 
 type Timer = ReturnType<typeof setTimeout>;
+
+/**
+ * A download's sink and what has been written to it. It outlives a failed
+ * transfer when the download can resume, so the next transfer appends to the
+ * same sink.
+ */
+type Download = {
+  sink: FileSink;
+  /** Serialized sink work; never rejects, since failures fail the transfer. */
+  writes: Promise<void>;
+  /** Bytes written after passing their block check (blocks mode). */
+  verifiedBytes: number;
+  /** Queued sink work that hasn't finished yet. */
+  pending: number;
+  /** `close` has been called and hasn't resolved yet. */
+  closing: boolean;
+  /** `close` or `abort` has been called. */
+  settled: boolean;
+};
+
+class CorruptBlockError extends Error {}
 
 type Transfer = {
   id: string;
@@ -128,12 +170,18 @@ type Transfer = {
   channel: RTCDataChannel | null;
   pendingCandidates: RTCIceCandidateInit[];
   stallTimer: Timer | null;
-  /** Receive side only. */
-  sink: FileSink | null;
-  /** Serialized sink writes; never rejects, since failures fail the transfer. */
-  writes: Promise<void>;
-  /** The sink's `close` resolved, so it must not be aborted. */
-  sinkSettled: boolean;
+  /** Receive side only: where this transfer's bytes are written. */
+  download: Download | null;
+  /** Both peers negotiated `blocks` for this transfer. */
+  blocks: boolean;
+  /** First byte this transfer carries; non-zero when resuming. */
+  offset: number;
+  /** Receive side, blocks mode: the block being assembled. */
+  blockParts: Uint8Array<ArrayBuffer>[];
+  blockReceived: number;
+  blockStart: number;
+  /** A write failed or a block was corrupt: skip everything queued after it. */
+  discard: boolean;
   /** "done" arrived and the sink is closing. */
   finishing: boolean;
   received: number;
@@ -171,7 +219,63 @@ const MESSAGES: Record<Exclude<FailureCode, "remote-canceled">, string> = {
   "sender-left": "The sender left.",
   closed: "The connection closed before the file finished.",
   "write-error": "Couldn't save the file on this device.",
+  corrupt: "Part of the file arrived damaged. Try again.",
 };
+
+/** Failures worth resuming after: the data so far is good, the link wasn't. */
+const RESUMABLE = new Set<FailureCode>([
+  "stalled",
+  "nat",
+  "negotiation",
+  "closed",
+  "corrupt",
+  "sender-left",
+  "remote-canceled",
+]);
+
+const HASH_PATTERN = /^[0-9a-f]{64}$/;
+
+function hasSubtleCrypto() {
+  return typeof crypto !== "undefined" && typeof crypto.subtle?.digest === "function";
+}
+
+async function sha256Hex(data: Uint8Array<ArrayBuffer>) {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", data));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function joinParts(parts: Uint8Array<ArrayBuffer>[], length: number) {
+  const joined = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts) {
+    joined.set(part, offset);
+    offset += part.byteLength;
+  }
+  return joined;
+}
+
+/** The in-band message that follows each block: `{"t":"block","i":0,"h":"…"}`. */
+function parseBlockMessage(raw: string) {
+  try {
+    const message: unknown = JSON.parse(raw);
+    if (
+      typeof message === "object" &&
+      message !== null &&
+      "t" in message &&
+      message.t === "block" &&
+      "i" in message &&
+      Number.isSafeInteger(message.i) &&
+      "h" in message &&
+      typeof message.h === "string" &&
+      HASH_PATTERN.test(message.h)
+    ) {
+      return { index: message.i as number, hash: message.h };
+    }
+  } catch {
+    // not JSON
+  }
+  return null;
+}
 
 export type FileTransferManager = ReturnType<typeof createFileTransferManager>;
 
@@ -193,7 +297,7 @@ function createMemorySink(mime: string): FileSink {
 }
 
 function abortSink(sink: FileSink) {
-  Promise.resolve()
+  void Promise.resolve()
     .then(() => sink.abort())
     .catch(() => {
       // nothing more to release
@@ -231,10 +335,18 @@ export function createFileTransferManager(options: FileTransferOptions) {
   const createId = options.createId ?? createRandomId;
   const newPeerConnection =
     options.createPeerConnection ?? ((config) => new RTCPeerConnection(config));
+  const advertised = new Set(
+    options.capabilities ?? (hasSubtleCrypto() ? CAPABILITIES : []),
+  );
+  const selfCaps: Capability[] = advertised.has("blocks")
+    ? CAPABILITIES.filter((cap) => advertised.has(cap))
+    : [];
 
   const items = new Map<string, FileItem>();
   const outgoingFiles = new Map<string, File>();
   const transfers = new Map<string, Transfer>();
+  /** Incoming item id → its download, while one is running or can resume. */
+  const downloads = new Map<string, Download>();
   let emitTimer: Timer | null = null;
   let disposed = false;
 
@@ -283,6 +395,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
         }
         if (candidate.direction === "incoming" && !hasActiveTransfer(candidate.id)) {
           items.delete(candidate.id);
+          releaseDownload(candidate.id);
         }
       }
     }
@@ -295,7 +408,37 @@ export function createFileTransferManager(options: FileTransferOptions) {
       name: item.name,
       size: item.size,
       mime: item.mime,
+      ...(selfCaps.length > 0 && { caps: selfCaps }),
     };
+  }
+
+  function hasCap(cap: Capability, remote: Capability[] | undefined) {
+    return selfCaps.includes(cap) && remote?.includes(cap) === true;
+  }
+
+  function createDownload(sink: FileSink): Download {
+    return {
+      sink,
+      writes: Promise.resolve(),
+      verifiedBytes: 0,
+      pending: 0,
+      closing: false,
+      settled: false,
+    };
+  }
+
+  /** Forget a download and abort its sink once queued work has drained. */
+  function releaseDownload(itemId: string) {
+    const download = downloads.get(itemId);
+    if (!download) {
+      return;
+    }
+    downloads.delete(itemId);
+    if (download.settled) {
+      return;
+    }
+    download.settled = true;
+    void download.writes.then(() => abortSink(download.sink));
   }
 
   function outgoingItems() {
@@ -353,10 +496,6 @@ export function createFileTransferManager(options: FileTransferOptions) {
       clearTimeout(transfer.stallTimer);
       transfer.stallTimer = null;
     }
-    if (transfer.sink && !transfer.sinkSettled) {
-      transfer.sinkSettled = true;
-      abortSink(transfer.sink);
-    }
     try {
       transfer.channel?.close();
       transfer.pc.close();
@@ -405,15 +544,48 @@ export function createFileTransferManager(options: FileTransferOptions) {
     }
 
     closeTransfer(transfer);
+    transfer.blockParts = [];
     const item = items.get(transfer.itemId);
-    if (item && item.status !== "done") {
+    const download = transfer.download;
+    if (!item || item.status === "done" || !download) {
+      return;
+    }
+
+    // A sink that is already closing can't take more bytes, so it can't resume.
+    const retain =
+      transfer.blocks &&
+      !download.closing &&
+      hasCap("resume", item.caps) &&
+      RESUMABLE.has(code);
+
+    const settle = () => {
+      if (item.status === "done") {
+        return;
+      }
+      if (retain && downloads.get(item.id) === download && !download.settled) {
+        item.resumableBytes = download.verifiedBytes;
+      } else {
+        releaseDownload(item.id);
+        item.resumableBytes = undefined;
+      }
       item.status = "failed";
       item.error = message;
       item.errorCode = code;
-      item.bytes = 0;
+      item.bytes = item.resumableBytes ?? 0;
       clearRate(item);
       emit();
       onNotice({ type: "failed", item: { ...item }, code, message });
+    };
+
+    if (retain && download.pending > 0) {
+      // Let verified blocks already queued land first, so resumableBytes is
+      // final before anyone can press resume.
+      void download.writes.then(settle);
+    } else if (retain) {
+      settle();
+    } else {
+      releaseDownload(item.id);
+      settle();
     }
   }
 
@@ -471,6 +643,30 @@ export function createFileTransferManager(options: FileTransferOptions) {
     });
   }
 
+  /** Sends one chunk once the channel has room. False if the transfer ended. */
+  async function sendChunk(
+    transfer: Transfer,
+    channel: RTCDataChannel,
+    chunk: ArrayBuffer | string,
+  ) {
+    while (channel.bufferedAmount > limits.bufferHighBytes) {
+      if (transfer.closed || channel.readyState !== "open") {
+        return false;
+      }
+      await waitForDrain(channel);
+    }
+    if (transfer.closed || channel.readyState !== "open") {
+      return false;
+    }
+    if (typeof chunk === "string") {
+      channel.send(chunk);
+    } else {
+      channel.send(chunk);
+    }
+    touch(transfer);
+    return true;
+  }
+
   async function pumpFile(transfer: Transfer, channel: RTCDataChannel, file: File) {
     const maxMessage = transfer.pc.sctp?.maxMessageSize;
     const chunkSize =
@@ -479,24 +675,39 @@ export function createFileTransferManager(options: FileTransferOptions) {
         : limits.chunkBytes;
 
     try {
-      let offset = 0;
-      while (offset < file.size) {
-        if (transfer.closed || channel.readyState !== "open") {
-          return;
+      if (transfer.blocks) {
+        for (let start = transfer.offset; start < file.size; start += BLOCK_BYTES) {
+          const block = new Uint8Array(
+            await file.slice(start, start + BLOCK_BYTES).arrayBuffer(),
+          );
+          const hash = await sha256Hex(block);
+          for (let offset = 0; offset < block.byteLength; offset += chunkSize) {
+            const chunk = block.buffer.slice(offset, offset + chunkSize);
+            if (!(await sendChunk(transfer, channel, chunk))) {
+              return;
+            }
+          }
+          const index = start / BLOCK_BYTES;
+          const message = JSON.stringify({ t: "block", i: index, h: hash });
+          if (!(await sendChunk(transfer, channel, message))) {
+            return;
+          }
         }
-        if (channel.bufferedAmount > limits.bufferHighBytes) {
-          await waitForDrain(channel);
-          continue;
+      } else {
+        for (let offset = 0; offset < file.size; ) {
+          if (transfer.closed || channel.readyState !== "open") {
+            return;
+          }
+          const chunk = await file.slice(offset, offset + chunkSize).arrayBuffer();
+          if (!(await sendChunk(transfer, channel, chunk))) {
+            return;
+          }
+          offset += chunk.byteLength;
         }
-        const chunk = await file.slice(offset, offset + chunkSize).arrayBuffer();
-        if (transfer.closed || channel.readyState !== "open") {
-          return;
-        }
-        channel.send(chunk);
-        offset += chunk.byteLength;
-        touch(transfer);
       }
-      channel.send(DONE_MESSAGE);
+      if (!(await sendChunk(transfer, channel, DONE_MESSAGE))) {
+        return;
+      }
       transfer.doneSent = true;
       // Only the receiver's ack says the file was saved; its commit may take a
       // while, so wait for it instead of treating the quiet as a stall. Reusing
@@ -515,7 +726,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
     role: Transfer["role"],
     remotePeer: PeerId,
     itemId: string,
-    sink: FileSink | null = null,
+    setup: Pick<Transfer, "download" | "blocks" | "offset">,
   ): Transfer {
     const base = {
       id,
@@ -525,11 +736,13 @@ export function createFileTransferManager(options: FileTransferOptions) {
       channel: null,
       pendingCandidates: [],
       stallTimer: null,
-      sink,
-      writes: Promise.resolve(),
-      sinkSettled: false,
+      ...setup,
+      blockParts: [],
+      blockReceived: 0,
+      blockStart: setup.offset,
+      discard: false,
       finishing: false,
-      received: 0,
+      received: setup.offset,
       rateAt: 0,
       rateBytes: 0,
       rate: 0,
@@ -539,7 +752,11 @@ export function createFileTransferManager(options: FileTransferOptions) {
     return { ...base, pc: createPeerConnection(base) };
   }
 
-  async function startSend(from: PeerId, offerId: string, transferId: string) {
+  async function startSend(
+    from: PeerId,
+    request: Extract<FileSignal, { type: "file-request" }>,
+  ) {
+    const { offerId, transferId } = request;
     const id = itemKey(selfId, offerId);
     const file = outgoingFiles.get(offerId);
     const item = items.get(id);
@@ -554,7 +771,21 @@ export function createFileTransferManager(options: FileTransferOptions) {
       return;
     }
 
-    const transfer = newTransfer(transferId, "send", from, id);
+    const blocks = hasCap("blocks", request.caps);
+    const offset = blocks && selfCaps.includes("resume") ? (request.offset ?? 0) : 0;
+    if (offset > file.size || (offset % BLOCK_BYTES !== 0 && offset !== file.size)) {
+      sendSignal(
+        { type: "transfer-cancel", transferId, reason: "Can't resume from there." },
+        from,
+      );
+      return;
+    }
+
+    const transfer = newTransfer(transferId, "send", from, id, {
+      download: null,
+      blocks,
+      offset,
+    });
     transfers.set(transferId, transfer);
     item.activeTransfers += 1;
     emit();
@@ -596,19 +827,68 @@ export function createFileTransferManager(options: FileTransferOptions) {
     }
   }
 
-  function queueWrite(transfer: Transfer, chunk: Uint8Array<ArrayBuffer>) {
-    const sink = transfer.sink;
-    if (!sink) {
+  /**
+   * Queues sink work behind everything before it. A failure fails the
+   * transfer and discards whatever was queued after it.
+   */
+  function queueSinkWork(
+    transfer: Transfer,
+    work: (download: Download) => void | Promise<void>,
+  ) {
+    const download = transfer.download;
+    if (!download) {
       return;
     }
-    transfer.writes = transfer.writes
-      .then(() => (transfer.closed ? undefined : sink.write(chunk)))
-      .catch(() => failTransfer(transfer, "write-error", true));
+    download.pending += 1;
+    download.writes = download.writes
+      .then(() => (transfer.discard || download.settled ? undefined : work(download)))
+      .catch((error: unknown) => {
+        transfer.discard = true;
+        failTransfer(
+          transfer,
+          error instanceof CorruptBlockError ? "corrupt" : "write-error",
+          true,
+        );
+      })
+      .finally(() => {
+        download.pending -= 1;
+      });
+  }
+
+  function receiveBlockMessage(transfer: Transfer, item: FileItem, raw: string) {
+    const message = parseBlockMessage(raw);
+    const expected = Math.min(BLOCK_BYTES, item.size - transfer.blockStart);
+    if (message && transfer.blockReceived < expected) {
+      failTransfer(transfer, "incomplete", true);
+      return;
+    }
+    if (
+      !message ||
+      message.index * BLOCK_BYTES !== transfer.blockStart ||
+      transfer.blockReceived !== expected
+    ) {
+      failTransfer(transfer, "corrupt", true);
+      return;
+    }
+
+    const parts = transfer.blockParts;
+    transfer.blockParts = [];
+    transfer.blockReceived = 0;
+    transfer.blockStart += expected;
+
+    queueSinkWork(transfer, async (download) => {
+      const block = joinParts(parts, expected);
+      if ((await sha256Hex(block)) !== message.hash) {
+        throw new CorruptBlockError();
+      }
+      await download.sink.write(block);
+      download.verifiedBytes += block.byteLength;
+    });
   }
 
   async function finishReceive(transfer: Transfer, channel: RTCDataChannel) {
-    const sink = transfer.sink;
-    if (!sink) {
+    const download = transfer.download;
+    if (!download) {
       return;
     }
     transfer.finishing = true;
@@ -617,22 +897,32 @@ export function createFileTransferManager(options: FileTransferOptions) {
       clearTimeout(transfer.stallTimer);
       transfer.stallTimer = null;
     }
-    await transfer.writes;
-    if (transfer.closed) {
+    await download.writes;
+    const item = items.get(transfer.itemId);
+    if (transfer.closed || download.settled || !item) {
+      return;
+    }
+    if (transfer.blocks && download.verifiedBytes !== item.size) {
+      failTransfer(transfer, "corrupt", true);
       return;
     }
 
     let result: void | Blob;
+    download.closing = true;
     try {
-      result = await sink.close();
+      result = await download.sink.close();
     } catch {
       failTransfer(transfer, "write-error", true);
       return;
     }
-    // Until close resolves, a cancel still aborts the sink.
-    transfer.sinkSettled = true;
-    const item = items.get(transfer.itemId);
-    if (transfer.closed || !item) {
+    // Until close resolves the download stays abortable, so a cancel during
+    // it releases the sink and this finds it settled.
+    if (download.settled) {
+      return;
+    }
+    download.settled = true;
+    downloads.delete(item.id);
+    if (transfer.closed || items.get(item.id) !== item) {
       return;
     }
 
@@ -642,6 +932,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
     item.bytes = item.size;
     item.error = undefined;
     item.errorCode = undefined;
+    item.resumableBytes = undefined;
     clearRate(item);
 
     if (channel.readyState === "open") {
@@ -670,10 +961,14 @@ export function createFileTransferManager(options: FileTransferOptions) {
       }
 
       if (typeof event.data === "string") {
+        if (transfer.blocks && event.data.startsWith("{")) {
+          receiveBlockMessage(transfer, item, event.data);
+          return;
+        }
         if (event.data !== DONE_MESSAGE) {
           return;
         }
-        if (transfer.received !== item.size) {
+        if (transfer.received !== item.size || transfer.blockReceived !== 0) {
           failTransfer(transfer, "incomplete", true);
           return;
         }
@@ -681,12 +976,22 @@ export function createFileTransferManager(options: FileTransferOptions) {
         return;
       }
 
-      transfer.received += event.data.byteLength;
+      const chunk = new Uint8Array(event.data);
+      transfer.received += chunk.byteLength;
       if (transfer.received > item.size) {
         failTransfer(transfer, "overflow", true);
         return;
       }
-      queueWrite(transfer, new Uint8Array(event.data));
+      if (transfer.blocks) {
+        transfer.blockReceived += chunk.byteLength;
+        if (transfer.blockReceived > BLOCK_BYTES) {
+          failTransfer(transfer, "corrupt", true);
+          return;
+        }
+        transfer.blockParts.push(chunk);
+      } else {
+        queueSinkWork(transfer, (download) => download.sink.write(chunk));
+      }
       item.bytes = transfer.received;
       item.status = "transferring";
       sampleRate(transfer, item);
@@ -715,6 +1020,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
     const existing = items.get(id);
     if (existing) {
       // Re-announced after the sender reconnected.
+      existing.caps = offer.caps;
       if (existing.status === "revoked") {
         existing.status = "offered";
         existing.error = undefined;
@@ -730,6 +1036,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       name: sanitizeFileName(offer.name),
       size: offer.size,
       mime: offer.mime,
+      caps: offer.caps,
       direction: "incoming",
       peerId: from,
       ts: Date.now(),
@@ -748,6 +1055,10 @@ export function createFileTransferManager(options: FileTransferOptions) {
       item.status = "revoked";
       item.error = undefined;
       item.errorCode = undefined;
+      // Nothing left to resume from, so don't keep the partial file open.
+      item.resumableBytes = undefined;
+      item.bytes = 0;
+      releaseDownload(item.id);
       return true;
     }
     if (item.status === "connecting" || item.status === "transferring") {
@@ -832,7 +1143,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       }
 
       case "file-request":
-        void startSend(from, payload.offerId, payload.transferId);
+        void startSend(from, payload);
         return;
 
       case "rtc-description": {
@@ -963,30 +1274,57 @@ export function createFileTransferManager(options: FileTransferOptions) {
         return false;
       }
 
+      const retained = downloads.get(id);
+      const resuming =
+        retained !== undefined && hasCap("blocks", item.caps) && hasCap("resume", item.caps);
+      let download: Download;
+      if (resuming) {
+        // The retained sink already holds the verified prefix.
+        if (options.sink) {
+          abortSink(options.sink);
+        }
+        download = retained;
+      } else {
+        releaseDownload(id);
+        download = createDownload(options.sink ?? createMemorySink(item.mime));
+        downloads.set(id, download);
+      }
+      const blocks = hasCap("blocks", item.caps);
+      const offset = resuming ? download.verifiedBytes : 0;
+
       const transferId = createId();
-      const sink = options.sink ?? createMemorySink(item.mime);
-      const transfer = newTransfer(transferId, "receive", item.peerId, id, sink);
+      const transfer = newTransfer(transferId, "receive", item.peerId, id, {
+        download,
+        blocks,
+        offset,
+      });
       transfer.pc.addEventListener("datachannel", (event) => {
         attachReceiveChannel(transfer, event.channel);
       });
 
-      if (
-        !sendSignal(
-          { type: "file-request", offerId: item.offerId, transferId },
-          item.peerId,
-        )
-      ) {
+      const signal: FileSignal = {
+        type: "file-request",
+        offerId: item.offerId,
+        transferId,
+        ...(selfCaps.length > 0 && { caps: selfCaps }),
+        ...(offset > 0 && { offset }),
+      };
+      if (!sendSignal(signal, item.peerId)) {
         closeTransfer(transfer);
+        if (!resuming) {
+          releaseDownload(id);
+        }
         return false;
       }
 
       transfers.set(transferId, transfer);
       item.status = "connecting";
-      item.bytes = 0;
+      item.bytes = offset;
       item.error = undefined;
       item.errorCode = undefined;
       item.blob = undefined;
       item.savedToSink = undefined;
+      item.resumableBytes = undefined;
       clearRate(item);
       touch(transfer);
       emit();
@@ -1007,6 +1345,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       const item = items.get(id);
       if (item?.direction === "incoming" && !hasActiveTransfer(id)) {
         items.delete(id);
+        releaseDownload(id);
         emit();
       }
     },
@@ -1014,6 +1353,9 @@ export function createFileTransferManager(options: FileTransferOptions) {
     dispose() {
       for (const transfer of [...transfers.values()]) {
         closeTransfer(transfer);
+      }
+      for (const id of [...downloads.keys()]) {
+        releaseDownload(id);
       }
       items.clear();
       outgoingFiles.clear();

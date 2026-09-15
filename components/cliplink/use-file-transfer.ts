@@ -175,7 +175,13 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
         };
 
         const item = latestRef.current.find((candidate) => candidate.id === id);
-        if (!item || item.size < DISK_SINK_MIN_BYTES || !canPickDiskSink()) {
+        if (
+          !item ||
+          // A resumable download keeps writing into the sink it already has.
+          item.resumableBytes !== undefined ||
+          item.size < DISK_SINK_MIN_BYTES ||
+          !canPickDiskSink()
+        ) {
           notifyOffline(getManager().request(id));
           return;
         }
