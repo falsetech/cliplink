@@ -2,313 +2,171 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+/* next-themes stamps the resolved theme on <html data-theme>. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 /* ---------------------------------------------------------------------------
-   Palette. Dark is the base; light overrides only what changes.
-   `--text-muted` carries the smallest labels in the UI, so both themes are
-   tuned to clear 4.5:1 against their own surfaces.
+   Palette. Apple system colours on shadcn's token names, light as the base.
+
+   Two blues, on purpose. `--primary` is the filled-button blue and is tuned
+   for white text on top of it (4.7:1). `--link` is the blue used *as* text —
+   tinted buttons, the room code, icons — and is tuned against the surfaces it
+   sits on, which a single blue cannot do in both directions at once.
+
+   `--muted-foreground` carries the smallest labels in the UI, so both themes
+   clear 4.5:1 against background and card alike.
    --------------------------------------------------------------------------- */
 
 :root {
-  --bg: oklch(14.5% 0 0);
-  --bg-secondary: oklch(14.0% 0 0);
-  --surface: oklch(17.8% 0 0);
-  --surface-strong: oklch(20.5% 0 0);
-  --surface-elevated: oklch(100% 0 0 / 2%);
-  --border: oklch(0.922 0 0);
-  --border-active: oklch(32.1% 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-dim: oklch(95.2% 0.203 116.5 / 12%);
-  --text: oklch(95.5% 0 0);
-  --text-muted: oklch(60.0% 0 0);
-  --text-dim: oklch(70.6% 0 0);
-  --danger: oklch(71.2% 0.181 22.8);
-  --success: oklch(87.9% 0.232 148.8);
+  --background: oklch(96.3% 0.007 286.3); /* systemGroupedBackground */
+  --foreground: oklch(23.2% 0.004 286.1);
+  --card: oklch(100% 0 0);
+  --card-foreground: var(--foreground);
+  --popover: oklch(100% 0 0);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(56.3% 0.193 256.2);
+  --primary-hover: oklch(58.3% 0.199 256);
+  --primary-foreground: oklch(100% 0 0);
+  --link: oklch(52.2% 0.177 255.8); /* 5.0:1 on background, 5.6:1 on card */
+  /* The system fills: translucent grey, so they read the same on any surface. */
+  --secondary: oklch(56.9% 0.015 285.9 / 12%);
+  --secondary-foreground: var(--foreground);
+  --muted: oklch(56.9% 0.015 285.9 / 8%);
+  --muted-foreground: oklch(54% 0.008 286.1);
+  --accent: oklch(56.9% 0.015 285.9 / 12%);
+  --accent-foreground: var(--foreground);
+  --destructive: oklch(55.3% 0.225 27.3);
+  --success: oklch(51.1% 0.134 147.4);
+  --warning: oklch(55.2% 0.192 35.3);
+  --border: oklch(86.2% 0.007 286.3);
+  --input: oklch(83.1% 0.007 286.2);
+  --ring: var(--primary);
+  --radius: 0.75rem;
 
-  /* Elevation scale — surface size should read as depth. */
-  --elevation-row: 0 1px 2px oklch(0% 0 0 / 24%);
-  --elevation-toast: 0 8px 24px oklch(0% 0 0 / 32%);
-  --elevation-modal: 0 24px 80px oklch(0% 0 0 / 45%);
+  --elevation-row: 0 1px 2px oklch(0% 0 0 / 4%);
+  --elevation-toast: 0 8px 32px oklch(0% 0 0 / 12%), 0 1px 3px oklch(0% 0 0 / 6%);
+  --elevation-modal: 0 24px 64px oklch(0% 0 0 / 18%);
 
   /* Image edges: pure neutral so they never pick up the surface tint. */
-  --image-edge: oklch(1 0 0 / 0.12);
+  --image-edge: oklch(0% 0 0 / 10%);
 
-  /* The page gradient, named so chrome can be mixed from what is actually
-     behind it rather than from --bg, which is a different colour. */
-  --page-top: var(--surface-strong);
-  --page-bottom: var(--bg-secondary);
+  /* Materials — overridden under reduced transparency. */
+  --chrome-bg: color-mix(in oklch, var(--background) 72%, transparent);
+  --chrome-blur: 20px;
+  --scrim-bg: oklch(0% 0 0 / 32%);
+  --scrim-blur: 4px;
+  --toast-bg: color-mix(in oklch, var(--popover) 80%, transparent);
+  --toast-blur: 24px;
 
-  /* Chrome materials — overridden under reduced transparency. */
-  --chrome-bg: color-mix(in srgb, var(--page-top) 82%, transparent);
-  --chrome-blur: 14px;
-  --scrim-bg: oklch(0% 0 0 / 60%);
-  --scrim-blur: 10px;
-  --toast-bg: color-mix(in srgb, var(--surface) 88%, transparent);
-  --toast-blur: 12px;
-
+  --stack-sans:
+    system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
   --stack-mono:
-    var(--font-jetbrains-mono), "SFMono-Regular", "SF Mono", "IBM Plex Mono",
-    "Menlo", "Consolas", monospace;
-  --stack-display:
-    var(--font-syne), "Avenir Next Condensed", "Arial Narrow", "Trebuchet MS",
-    sans-serif;
-
-  --logo-accent: var(--accent);
-  --hero-highlight: var(--accent);
-  --room-badge: var(--accent);
-  --incoming-border: var(--accent);
-  --incoming-text: var(--accent);
-  --panel-fill: color-mix(in srgb, var(--surface) 94%, transparent);
-  --primary-bg: var(--accent);
-  --primary-border: var(--accent);
-  --primary-text: oklch(0% 0 0);
-  --primary-hover-bg: oklch(100% 0 0);
-  --accent-button-bg: var(--accent);
-  --accent-button-border: var(--accent);
-  --accent-button-text: oklch(0% 0 0);
-  --accent-button-hover-bg: oklch(100% 0 0);
-  --accent-button-hover-border: oklch(100% 0 0);
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono",
+    monospace;
 }
 
-:root[data-theme="light"] {
-  --bg: oklch(94.4% 0.018 86.1);
-  --bg-secondary: oklch(90.0% 0.028 83.5);
-  --surface: oklch(97.7% 0.011 84.6);
-  --surface-strong: oklch(92.5% 0.026 82.4);
-  --surface-elevated: oklch(29.5% 0.043 86.6 / 4%);
-  --border: oklch(81.9% 0.040 83.8);
-  /* Was L 68.4%, which measured 2.66:1 on the cream surfaces and left input
-     and button boundaries under the 3:1 floor for UI components. Now 3.5:1. */
-  --border-active: oklch(61.3% 0.058 81.4);
-  /* Darker than the dark theme's accent on purpose. On a light ground the
-     accent is read as text, as a status dot and as a border, and the old
-     L 67.4% measured 2.68:1 on --surface — under even the 3:1 non-text floor.
-     At L 49.4% it is 5.6:1. The vivid olive still carries the brand in
-     --primary-bg and --logo-accent, which sit *under* dark text rather than
-     on top of cream. */
-  --accent: oklch(49.4% 0.110 118);
-  --accent-dim: oklch(49.4% 0.110 118 / 12%);
-  --text: oklch(19.3% 0.011 80.5);
-  --text-muted: oklch(51.5% 0.033 73.9);
-  --text-dim: oklch(44.3% 0.025 78.9);
-  --danger: oklch(52.0% 0.159 31.7);
-  --success: oklch(57.8% 0.130 151.6);
+:root[data-theme="dark"] {
+  --background: oklch(0% 0 0);
+  --foreground: oklch(97.1% 0.003 286.4);
+  --card: oklch(22.7% 0.004 286.1); /* secondarySystemGroupedBackground */
+  --popover: oklch(22.7% 0.004 286.1);
+  --primary-hover: oklch(60.5% 0.2 255.5);
+  --link: oklch(66.9% 0.181 251.8); /* 5.6:1 on card */
+  --secondary: oklch(56.9% 0.015 285.9 / 24%);
+  --muted: oklch(56.9% 0.015 285.9 / 16%);
+  --muted-foreground: oklch(68.1% 0.007 286.2);
+  --accent: oklch(56.9% 0.015 285.9 / 24%);
+  --destructive: oklch(70.7% 0.185 25.9);
+  --success: oklch(75.6% 0.208 147);
+  --warning: oklch(78.2% 0.171 67.2);
+  --border: oklch(34.1% 0.003 286.2);
+  --input: oklch(40% 0.004 286.2);
 
-  --elevation-row: 0 1px 2px oklch(36.7% 0.063 85.1 / 8%);
-  --elevation-toast: 0 8px 24px oklch(36.7% 0.063 85.1 / 12%);
-  --elevation-modal: 0 24px 80px oklch(36.7% 0.063 85.1 / 18%);
+  --elevation-row: 0 1px 2px oklch(0% 0 0 / 40%);
+  --elevation-toast: 0 8px 32px oklch(0% 0 0 / 50%);
+  --elevation-modal: 0 24px 64px oklch(0% 0 0 / 60%);
 
-  --image-edge: oklch(0 0 0 / 0.12);
-
-  --page-top: oklch(95.7% 0.017 84.6);
-  --page-bottom: oklch(90.3% 0.030 85.6);
-  --scrim-bg: oklch(24.8% 0.033 86.1 / 42%);
-  --toast-bg: color-mix(in srgb, var(--surface) 88%, transparent);
-
-  /* One olive hue at four lightnesses. The values were spread over 116.7-119.9
-     for no reason anyone could name; in OKLCH the family is legible as a
-     family, and lightness alone predicts the contrast. */
-  --logo-accent: oklch(61.5% 0.136 118);
-  --hero-highlight: oklch(26.4% 0.021 82.5);
-  --room-badge: oklch(43.6% 0.093 118);
-  --incoming-border: oklch(61.5% 0.136 118);
-  --incoming-text: oklch(43.6% 0.093 118);
-  --panel-fill: color-mix(in srgb, oklch(99.1% 0.010 87.5) 94%, transparent);
-  --primary-bg: oklch(79.5% 0.170 118);
-  --primary-border: oklch(79.5% 0.170 118);
-  --primary-text: oklch(18.8% 0.013 84.5);
-  --primary-hover-bg: oklch(84.3% 0.175 118);
-  --accent-button-bg: oklch(79.5% 0.170 118);
-  --accent-button-border: oklch(79.5% 0.170 118);
-  --accent-button-text: oklch(18.8% 0.013 84.5);
-  --accent-button-hover-bg: oklch(84.3% 0.175 118);
-  --accent-button-hover-border: oklch(84.3% 0.175 118);
+  --image-edge: oklch(100% 0 0 / 12%);
+  --scrim-bg: oklch(0% 0 0 / 56%);
 }
 
 /* ---------------------------------------------------------------------------
    Tailwind theme. Sizes carry their own leading and tracking so hierarchy is
-   built from the set rather than from size alone.
+   built from the set: small text tracks open, large text tracks tight.
    --------------------------------------------------------------------------- */
 
 @theme inline {
-  --color-canvas: var(--bg);
-  --color-surface: var(--surface);
-  --color-raised: var(--surface-elevated);
-  --color-line: var(--border);
-  --color-line-strong: var(--border-active);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-link: var(--link);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
-  --color-accent-dim: var(--accent-dim);
-  --color-fg: var(--text);
-  --color-muted: var(--text-muted);
-  --color-dim: var(--text-dim);
-  --color-danger: var(--danger);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
   --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
   --color-image-edge: var(--image-edge);
-  --color-page-top: var(--page-top);
-  --color-hero: var(--hero-highlight);
-  --color-logo: var(--logo-accent);
-  --color-room: var(--room-badge);
-  --color-incoming: var(--incoming-text);
-  --color-incoming-line: var(--incoming-border);
 
+  --font-sans: var(--stack-sans);
+  --font-heading: var(--stack-sans);
   --font-mono: var(--stack-mono);
-  --font-display: var(--stack-display);
 
-  /* 11px floor. Small text gets positive tracking, large text negative. */
+  /* 11px floor. */
   --text-2xs: 0.6875rem;
-  --text-2xs--line-height: 1.45;
-  --text-2xs--letter-spacing: 0.02em;
+  --text-2xs--line-height: 1.35;
+  --text-2xs--letter-spacing: 0.01em;
   --text-xs: 0.75rem;
-  --text-xs--line-height: 1.55;
-  --text-xs--letter-spacing: 0.015em;
-  --text-sm: 0.8125rem;
-  --text-sm--line-height: 1.7;
-  --text-sm--letter-spacing: 0.01em;
-  --text-base: 0.875rem;
-  --text-base--line-height: 1.75;
-  --text-base--letter-spacing: 0em;
-  --text-lg: 1rem;
-  --text-lg--line-height: 1.5;
-  --text-lg--letter-spacing: -0.005em;
-  --text-xl: 1.125rem;
-  --text-xl--line-height: 1.4;
-  --text-xl--letter-spacing: -0.01em;
-  --text-2xl: 1.25rem;
-  --text-2xl--line-height: 1.3;
-  --text-2xl--letter-spacing: -0.015em;
-  --text-3xl: 1.5rem;
-  --text-3xl--line-height: 1.2;
-  --text-3xl--letter-spacing: -0.02em;
+  --text-xs--line-height: 1.35;
+  --text-xs--letter-spacing: 0.005em;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.45;
+  --text-sm--letter-spacing: -0.006em;
+  --text-base: 1rem;
+  --text-base--line-height: 1.5;
+  --text-base--letter-spacing: -0.011em;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.4;
+  --text-lg--letter-spacing: -0.014em;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.3;
+  --text-xl--letter-spacing: -0.017em;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 1.2;
+  --text-2xl--letter-spacing: -0.019em;
+  --text-3xl: 1.875rem;
+  --text-3xl--line-height: 1.15;
+  --text-3xl--letter-spacing: -0.021em;
 
-  /* Three tracking roles replace the eleven ad-hoc values. */
-  --tracking-label: 0.08em;
-  --tracking-label-wide: 0.12em;
-  --tracking-code: 0.18em;
-  --tracking-display: -0.055em;
+  --tracking-code: 0.12em;
+  --tracking-display: -0.035em;
 
-  /* One control radius, one surface radius. */
-  --radius-control: 3px;
-  --radius-surface: 4px;
-  --radius-sheet: 18px;
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 
   --shadow-row: var(--elevation-row);
   --shadow-toast: var(--elevation-toast);
   --shadow-modal: var(--elevation-modal);
 
   --ease-out-quint: cubic-bezier(0.2, 0, 0, 1);
-
-  --font-heading: var(--font-sans);
-
-  --font-sans: var(--font-sans);
-
-  --color-sidebar-ring: var(--sidebar-ring);
-
-  --color-sidebar-border: var(--sidebar-border);
-
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-
-  --color-sidebar-accent: var(--sidebar-accent);
-
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-
-  --color-sidebar-primary: var(--sidebar-primary);
-
-  --color-sidebar-foreground: var(--sidebar-foreground);
-
-  --color-sidebar: var(--sidebar);
-
-  --color-chart-5: var(--chart-5);
-
-  --color-chart-4: var(--chart-4);
-
-  --color-chart-3: var(--chart-3);
-
-  --color-chart-2: var(--chart-2);
-
-  --color-chart-1: var(--chart-1);
-
-  --color-ring: var(--ring);
-
-  --color-input: var(--input);
-
-  --color-border: var(--border);
-
-  --color-destructive: var(--destructive);
-
-  --color-accent-foreground: var(--accent-foreground);
-
-  --color-muted-foreground: var(--muted-foreground);
-
-  --color-secondary-foreground: var(--secondary-foreground);
-
-  --color-secondary: var(--secondary);
-
-  --color-primary-foreground: var(--primary-foreground);
-
-  --color-primary: var(--primary);
-
-  --color-popover-foreground: var(--popover-foreground);
-
-  --color-popover: var(--popover);
-
-  --color-card-foreground: var(--card-foreground);
-
-  --color-card: var(--card);
-
-  --color-foreground: var(--foreground);
-
-  --color-background: var(--background);
-
-  --radius-sm: calc(var(--radius) * 0.6);
-
-  --radius-md: calc(var(--radius) * 0.8);
-
-  --radius-lg: var(--radius);
-
-  --radius-xl: calc(var(--radius) * 1.4);
-
-  --radius-2xl: calc(var(--radius) * 1.8);
-
-  --radius-3xl: calc(var(--radius) * 2.2);
-
-  --radius-4xl: calc(var(--radius) * 2.6);
-}
-
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
 }
 
 /* The browser default is a blue that belongs to no theme here.
@@ -318,116 +176,73 @@
  * `outline-none` — and being full-bleed inside an `overflow-hidden` panel, the
  * ring lost its left and right sides and drew as two rules across the panel. */
 @layer base {
-  :where(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
   * {
     @apply border-border outline-ring/50;
   }
-  body {
-    @apply bg-background text-foreground;
+
+  :where(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
+
   html {
+    min-height: 100%;
+    background: var(--background);
     @apply font-sans;
   }
-}
 
-html,
-body {
-  min-height: 100%;
-}
+  body {
+    min-height: 100%;
+    margin: 0;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-optical-sizing: auto;
+    @apply bg-background text-foreground;
+  }
 
-html {
-  background: var(--bg);
-}
-
-body {
-  margin: 0;
-  overflow-x: hidden;
-  background:
-    radial-gradient(circle at top, oklch(100% 0 0 / 3%), transparent 35%),
-    linear-gradient(180deg, var(--page-top) 0%, var(--page-bottom) 100%);
-  color: var(--text);
-  font-family: var(--stack-mono);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-/* Grain sits above content but below chrome, sheets and toasts. */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  pointer-events: none;
-  opacity: 0.4;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
-}
-
-:root[data-theme="light"] body {
-  background:
-    radial-gradient(circle at top, oklch(100% 0 0 / 55%), transparent 38%),
-    linear-gradient(180deg, var(--page-top) 0%, var(--page-bottom) 100%);
-}
-
-:root[data-theme="light"] body::before {
-  opacity: 0.07;
-}
-
-a {
-  color: inherit;
+  a {
+    color: inherit;
+  }
 }
 
 /* ---------------------------------------------------------------------------
-   Theme crossfade. The custom properties themselves are registered so they
-   interpolate, instead of the body easing while every border hard-cuts.
+   Theme crossfade. The colour tokens are registered so the custom properties
+   themselves interpolate, and every border, panel and label eases together on
+   a theme change instead of the body easing while everything else hard-cuts.
    --------------------------------------------------------------------------- */
 
-/* Registering the colour tokens lets the custom properties themselves
-   interpolate, so every border, panel and label crossfades together on a theme
-   change instead of the body easing while everything else hard-cuts. */
-@property --bg { syntax: "<color>"; inherits: true; initial-value: oklch(14.5% 0 0); }
-@property --surface { syntax: "<color>"; inherits: true; initial-value: oklch(17.8% 0 0); }
-@property --surface-strong { syntax: "<color>"; inherits: true; initial-value: oklch(20.5% 0 0); }
-@property --page-top { syntax: "<color>"; inherits: true; initial-value: oklch(20.5% 0 0); }
-@property --page-bottom { syntax: "<color>"; inherits: true; initial-value: oklch(14.0% 0 0); }
-@property --bg-secondary { syntax: "<color>"; inherits: true; initial-value: oklch(14.0% 0 0); }
-@property --border { syntax: "<color>"; inherits: true; initial-value: oklch(23.5% 0 0); }
-@property --border-active { syntax: "<color>"; inherits: true; initial-value: oklch(32.1% 0 0); }
-@property --accent { syntax: "<color>"; inherits: true; initial-value: oklch(95.2% 0.203 116.5); }
-@property --text { syntax: "<color>"; inherits: true; initial-value: oklch(95.5% 0 0); }
-@property --text-muted { syntax: "<color>"; inherits: true; initial-value: oklch(60.0% 0 0); }
-@property --text-dim { syntax: "<color>"; inherits: true; initial-value: oklch(70.6% 0 0); }
-@property --danger { syntax: "<color>"; inherits: true; initial-value: oklch(71.2% 0.181 22.8); }
-@property --success { syntax: "<color>"; inherits: true; initial-value: oklch(87.9% 0.232 148.8); }
-@property --hero-highlight { syntax: "<color>"; inherits: true; initial-value: oklch(95.2% 0.203 116.5); }
-@property --logo-accent { syntax: "<color>"; inherits: true; initial-value: oklch(95.2% 0.203 116.5); }
-@property --room-badge { syntax: "<color>"; inherits: true; initial-value: oklch(95.2% 0.203 116.5); }
-@property --incoming-text { syntax: "<color>"; inherits: true; initial-value: oklch(95.2% 0.203 116.5); }
-@property --incoming-border { syntax: "<color>"; inherits: true; initial-value: oklch(95.2% 0.203 116.5); }
+@property --background { syntax: "<color>"; inherits: true; initial-value: oklch(96.3% 0.007 286.3); }
+@property --foreground { syntax: "<color>"; inherits: true; initial-value: oklch(23.2% 0.004 286.1); }
+@property --card { syntax: "<color>"; inherits: true; initial-value: oklch(100% 0 0); }
+@property --popover { syntax: "<color>"; inherits: true; initial-value: oklch(100% 0 0); }
+@property --link { syntax: "<color>"; inherits: true; initial-value: oklch(52.2% 0.177 255.8); }
+@property --secondary { syntax: "<color>"; inherits: true; initial-value: oklch(56.9% 0.015 285.9 / 12%); }
+@property --muted { syntax: "<color>"; inherits: true; initial-value: oklch(56.9% 0.015 285.9 / 8%); }
+@property --muted-foreground { syntax: "<color>"; inherits: true; initial-value: oklch(54% 0.008 286.1); }
+@property --accent { syntax: "<color>"; inherits: true; initial-value: oklch(56.9% 0.015 285.9 / 12%); }
+@property --destructive { syntax: "<color>"; inherits: true; initial-value: oklch(55.3% 0.225 27.3); }
+@property --success { syntax: "<color>"; inherits: true; initial-value: oklch(51.1% 0.134 147.4); }
+@property --warning { syntax: "<color>"; inherits: true; initial-value: oklch(55.2% 0.192 35.3); }
+@property --border { syntax: "<color>"; inherits: true; initial-value: oklch(86.2% 0.007 286.3); }
+@property --input { syntax: "<color>"; inherits: true; initial-value: oklch(83.1% 0.007 286.2); }
 
 :root {
   transition:
-    --bg 220ms var(--ease-out-quint),
-    --bg-secondary 220ms var(--ease-out-quint),
-    --surface 220ms var(--ease-out-quint),
-    --surface-strong 220ms var(--ease-out-quint),
-    --page-top 220ms var(--ease-out-quint),
-    --page-bottom 220ms var(--ease-out-quint),
-    --border 220ms var(--ease-out-quint),
-    --border-active 220ms var(--ease-out-quint),
-    --accent 220ms var(--ease-out-quint),
-    --text 220ms var(--ease-out-quint),
-    --text-muted 220ms var(--ease-out-quint),
-    --text-dim 220ms var(--ease-out-quint),
-    --danger 220ms var(--ease-out-quint),
-    --success 220ms var(--ease-out-quint),
-    --hero-highlight 220ms var(--ease-out-quint),
-    --logo-accent 220ms var(--ease-out-quint),
-    --room-badge 220ms var(--ease-out-quint),
-    --incoming-text 220ms var(--ease-out-quint),
-    --incoming-border 220ms var(--ease-out-quint);
+    --background 240ms var(--ease-out-quint),
+    --foreground 240ms var(--ease-out-quint),
+    --card 240ms var(--ease-out-quint),
+    --popover 240ms var(--ease-out-quint),
+    --link 240ms var(--ease-out-quint),
+    --secondary 240ms var(--ease-out-quint),
+    --muted 240ms var(--ease-out-quint),
+    --muted-foreground 240ms var(--ease-out-quint),
+    --accent 240ms var(--ease-out-quint),
+    --destructive 240ms var(--ease-out-quint),
+    --success 240ms var(--ease-out-quint),
+    --warning 240ms var(--ease-out-quint),
+    --border 240ms var(--ease-out-quint),
+    --input 240ms var(--ease-out-quint);
 }
 
 /* ---------------------------------------------------------------------------
@@ -458,12 +273,12 @@ a {
 @keyframes toast-in-soft {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(12px) scale(0.98);
   }
 
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -471,12 +286,12 @@ a {
 @keyframes toast-in-arrival {
   from {
     opacity: 0;
-    transform: translateY(20px);
+    transform: translateY(20px) scale(0.96);
   }
 
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -484,12 +299,12 @@ a {
 @keyframes toast-out {
   from {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 
   to {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(12px) scale(0.98);
   }
 }
 
@@ -559,9 +374,9 @@ a {
   z-index: 20;
   pointer-events: none;
   border-radius: inherit;
-  background: var(--accent-dim);
-  box-shadow: inset 0 0 0 1px var(--accent);
-  animation: arrival-fade 420ms var(--ease-out-quint) forwards;
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--primary);
+  animation: arrival-fade 480ms var(--ease-out-quint) forwards;
 }
 
 /* ---------------------------------------------------------------------------
@@ -591,71 +406,29 @@ a {
 
 @media (prefers-reduced-transparency: reduce) {
   :root {
-    --chrome-bg: var(--bg);
+    --chrome-bg: var(--background);
     --chrome-blur: 0px;
-    --scrim-bg: oklch(0% 0 0 / 88%);
+    --scrim-bg: oklch(0% 0 0 / 72%);
     --scrim-blur: 0px;
-    --toast-bg: var(--surface);
+    --toast-bg: var(--popover);
     --toast-blur: 0px;
-    --panel-fill: var(--surface);
-  }
-
-  :root[data-theme="light"] {
-    --scrim-bg: oklch(24.8% 0.033 86.1 / 80%);
-    --panel-fill: var(--surface);
   }
 }
 
 @media (prefers-contrast: more) {
   :root {
-    --border: oklch(40.9% 0 0);
-    --border-active: oklch(53.8% 0 0);
-    --text-muted: oklch(82.0% 0 0);
-    --text-dim: oklch(89.4% 0 0);
-    --chrome-bg: var(--bg);
+    --border: oklch(62% 0.007 286.2);
+    --input: oklch(55% 0.007 286.2);
+    --muted-foreground: oklch(40% 0.008 286.1);
+    --link: oklch(44% 0.16 256);
+    --chrome-bg: var(--background);
     --chrome-blur: 0px;
-    --panel-fill: var(--surface);
   }
 
-  :root[data-theme="light"] {
-    --border: oklch(58.7% 0.045 81.5);
-    --border-active: oklch(43.8% 0.030 74.8);
-    --text-muted: oklch(33.7% 0.021 79.1);
-    --text-dim: oklch(26.4% 0.018 77.8);
-    --panel-fill: var(--surface);
+  :root[data-theme="dark"] {
+    --border: oklch(58% 0.004 286.2);
+    --input: oklch(64% 0.004 286.2);
+    --muted-foreground: oklch(82% 0.006 286.2);
+    --link: oklch(76% 0.14 251.8);
   }
-}
-
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
 }

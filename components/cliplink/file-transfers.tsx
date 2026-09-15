@@ -29,7 +29,7 @@ type FileTransfersProps = {
 };
 
 const actionClass =
-  "inline-flex min-h-11 items-center justify-center rounded-control border border-transparent px-2 text-2xs text-muted transition-[color,border-color,scale] duration-150 ease-out hover:border-line-strong hover:text-fg focus-visible:border-line-strong focus-visible:text-fg active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-55 disabled:active:scale-100 md:min-h-10";
+  "inline-flex min-h-11 items-center justify-center rounded-lg border border-transparent px-2 text-2xs text-muted-foreground transition-[color,border-color,scale] duration-150 ease-out hover:border-input hover:text-foreground focus-visible:border-input focus-visible:text-foreground active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-55 disabled:active:scale-100 md:min-h-10";
 
 const OFFLINE_HINT = "File transfer needs a live connection.";
 
@@ -110,7 +110,7 @@ function FileActions({
       return (
         <>
           <button
-            className={cn(actionClass, "text-incoming")}
+            className={cn(actionClass, "text-link")}
             type="button"
             disabled={!canTransfer}
             title={canTransfer ? undefined : OFFLINE_HINT}
@@ -209,7 +209,7 @@ function groupRows(items: FileListItem[]): Row[] {
 }
 
 const rowShellClass =
-  "grid grid-cols-[48px_1fr] items-start gap-2.5 rounded-surface border border-line border-l-2 p-3 shadow-row md:flex md:items-center md:gap-3 md:px-4 md:py-3";
+  "grid grid-cols-[48px_1fr] items-start gap-2.5 rounded-2xl border border-border border-l-2 p-3 shadow-row md:flex md:items-center md:gap-3 md:px-4 md:py-3";
 
 function DirectionLabel({
   incoming,
@@ -224,13 +224,13 @@ function DirectionLabel({
     <div className="flex min-w-13 flex-col gap-1 md:min-w-16">
       <span
         className={cn(
-          "text-2xs tracking-label uppercase",
-          incoming ? "text-incoming" : "text-muted",
+          "text-2xs uppercase",
+          incoming ? "text-link" : "text-muted-foreground",
         )}
       >
         {incoming ? `↓ ${label}` : `↑ ${label}`}
       </span>
-      <span className="text-2xs tracking-label text-muted uppercase tabular-nums">
+      <span className="text-2xs text-muted-foreground uppercase tabular-nums">
         {formatHistoryTime(ts)}
       </span>
     </div>
@@ -240,7 +240,7 @@ function DirectionLabel({
 function ProgressBar({ percent, label }: { percent: number; label: string }) {
   return (
     <div
-      className="h-0.75 w-full overflow-hidden rounded-full bg-line"
+      className="h-0.75 w-full overflow-hidden rounded-full bg-border"
       role="progressbar"
       aria-label={label}
       aria-valuemin={0}
@@ -252,7 +252,7 @@ function ProgressBar({ percent, label }: { percent: number; label: string }) {
         counter, and width forces layout on every chunk.
       */}
       <div
-        className="h-full w-full origin-left bg-accent transition-transform duration-150 ease-out"
+        className="h-full w-full origin-left bg-primary transition-transform duration-150 ease-out"
         style={{ transform: `scaleX(${percent / 100})` }}
       />
     </div>
@@ -279,7 +279,7 @@ function FileRow({
     <li
       className={cn(
         rowShellClass,
-        incoming ? "border-l-incoming-line" : "border-l-muted",
+        incoming ? "border-l-primary" : "border-l-muted-foreground",
         nested && "shadow-none",
       )}
       style={surfaceStyle}
@@ -300,16 +300,16 @@ function FileRow({
           />
         ) : null}
         <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <span className="truncate text-2xs text-fg md:text-xs" title={item.name}>
+          <span className="truncate text-2xs text-foreground md:text-xs" title={item.name}>
             {nested && item.path ? (
-              <span className="text-muted">{item.path}/</span>
+              <span className="text-muted-foreground">{item.path}/</span>
             ) : null}
             {item.name}
           </span>
           <span
             className={cn(
-              "truncate text-2xs text-muted tabular-nums",
-              item.status === "failed" && "text-danger",
+              "truncate text-2xs text-muted-foreground tabular-nums",
+              item.status === "failed" && "text-destructive",
             )}
           >
             {statusText(item)}
@@ -380,31 +380,31 @@ function BatchRow({
   return (
     <li className="flex flex-col gap-1.5">
       <div
-        className={cn(rowShellClass, incoming ? "border-l-incoming-line" : "border-l-muted")}
+        className={cn(rowShellClass, incoming ? "border-l-primary" : "border-l-muted-foreground")}
         style={surfaceStyle}
       >
         <DirectionLabel incoming={incoming} label={folder ? "FOLDER" : "FILES"} ts={first.ts} />
 
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <button
-            className="group -my-2 -ml-1.5 flex min-h-10 min-w-0 cursor-pointer items-center gap-1.5 rounded-control border-0 bg-transparent px-1.5 py-2 text-left transition-colors duration-100 ease-out hover:bg-white/2 focus-visible:bg-white/2 active:bg-white/4"
+            className="group -my-2 -ml-1.5 flex min-h-10 min-w-0 cursor-pointer items-center gap-1.5 rounded-lg border-0 bg-transparent px-1.5 py-2 text-left transition-colors duration-100 ease-out hover:bg-muted focus-visible:bg-muted active:bg-accent"
             type="button"
             aria-expanded={expanded}
             onClick={() => setExpanded((current) => !current)}
           >
             <span
               className={cn(
-                "shrink-0 text-muted transition-[rotate,color] duration-200 ease-out group-hover:text-dim",
+                "shrink-0 text-muted-foreground transition-[rotate,color] duration-200 ease-out group-hover:text-foreground",
                 expanded && "rotate-90",
               )}
             >
               <IconChevron size={12} />
             </span>
             <span className="flex min-w-0 flex-col gap-1">
-              <span className="truncate text-2xs text-fg md:text-xs" title={title}>
+              <span className="truncate text-2xs text-foreground md:text-xs" title={title}>
                 {title}
               </span>
-              <span className="truncate text-2xs text-muted tabular-nums">
+              <span className="truncate text-2xs text-muted-foreground tabular-nums">
                 {batchStatus(items, incoming)}
               </span>
             </span>
@@ -425,7 +425,7 @@ function BatchRow({
             </button>
           ) : downloadable > 0 ? (
             <button
-              className={cn(actionClass, "text-incoming")}
+              className={cn(actionClass, "text-link")}
               type="button"
               disabled={!handlers.canTransfer}
               title={handlers.canTransfer ? undefined : OFFLINE_HINT}
@@ -462,7 +462,7 @@ function BatchRow({
       </div>
 
       {expanded ? (
-        <ul className="m-0 ml-4 flex list-none flex-col gap-1.5 border-l border-line p-0 pl-3">
+        <ul className="m-0 ml-4 flex list-none flex-col gap-1.5 border-l border-border p-0 pl-3">
           {items.map((item) => (
             <FileRow
               key={item.id}
@@ -489,10 +489,10 @@ export function FileTransfers({
 
   return (
     <div className="flex flex-col gap-2.5">
-      <div className="flex items-center gap-2 text-2xs tracking-label-wide text-muted uppercase">
+      <div className="flex items-center gap-2 text-2xs text-muted-foreground uppercase">
         <span>Files</span>
-        <span className="h-px flex-1 bg-line" />
-        <span className="tracking-label normal-case">
+        <span className="h-px flex-1 bg-border" />
+        <span className="normal-case">
           peer-to-peer · never stored
         </span>
       </div>

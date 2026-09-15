@@ -69,15 +69,15 @@ function KeyPromptBody({
     <>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="mb-1.5 text-2xs tracking-label-wide text-muted uppercase">
+          <p className="mb-1.5 text-2xs text-muted-foreground uppercase">
             Encrypted room
           </p>
-          <h2 className="m-0 font-display text-2xl tracking-code text-room sm:text-3xl">
+          <h2 className="m-0 font-display text-2xl tracking-code text-link sm:text-3xl">
             {roomCode}
           </h2>
         </div>
         <button
-          className="-m-2 inline-flex h-11 w-11 items-center justify-center rounded-control text-dim transition-colors duration-150 hover:text-fg focus-visible:text-fg active:scale-[0.96]"
+          className="-m-2 inline-flex h-11 w-11 items-center justify-center rounded-lg text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:text-foreground active:scale-[0.96]"
           type="button"
           aria-label="Cancel joining room"
           onClick={() => close()}
@@ -86,14 +86,14 @@ function KeyPromptBody({
         </button>
       </div>
 
-      <p className="m-0 text-xs text-pretty text-dim">
+      <p className="m-0 text-xs text-pretty text-muted-foreground">
         Clips in this room are encrypted, and the key never reaches the server.
         Paste the key from the other device — it is on its QR sheet, under{" "}
         <span className="whitespace-nowrap">Copy key</span>.
       </p>
 
       <textarea
-        className="min-h-24 w-full resize-none rounded-control border border-line-strong bg-surface px-3 py-2.5 font-mono text-sm tracking-code text-fg uppercase outline-none transition-colors duration-150 placeholder:normal-case placeholder:tracking-label placeholder:text-muted focus:border-accent"
+        className="min-h-24 w-full resize-none rounded-lg border border-input bg-card px-3 py-2.5 font-mono text-sm tracking-code text-foreground uppercase outline-none transition-colors duration-150 placeholder:normal-case placeholder:text-muted-foreground focus:border-primary"
         data-autofocus
         aria-label="Room key"
         aria-invalid={mismatch || undefined}
@@ -119,11 +119,11 @@ function KeyPromptBody({
         role={mismatch ? "alert" : undefined}
       >
         {mismatch ? (
-          <span className="text-danger">
+          <span className="text-destructive">
             That key does not open this room. Check you copied all of it.
           </span>
         ) : (
-          <span className="text-muted">
+          <span className="text-muted-foreground">
             {normalized.length}/{ROOM_KEY_CHARS} characters
           </span>
         )}

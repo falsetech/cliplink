@@ -14,7 +14,7 @@ import { IconChevron } from "./icons";
 import { panelSurfaceStyle, rowClass } from "./ui";
 
 const rowActionClass =
-  "inline-flex min-h-11 items-center rounded-control border border-transparent px-2 text-2xs text-muted transition-[color,border-color,background-color,scale] duration-150 ease-out hover:border-line-strong hover:text-fg focus-visible:border-line-strong focus-visible:text-fg active:scale-[0.96] active:bg-white/4 md:min-h-10 md:shrink-0";
+  "inline-flex min-h-11 items-center rounded-lg border border-transparent px-2 text-2xs text-muted-foreground transition-[color,border-color,background-color,scale] duration-150 ease-out hover:border-input hover:text-foreground focus-visible:border-input focus-visible:text-foreground active:scale-[0.96] active:bg-accent md:min-h-10 md:shrink-0";
 
 /**
  * A clip only earns a disclosure control if there is something behind it.
@@ -42,13 +42,13 @@ export function HistoryList({
 
   return (
     <div className="flex flex-col gap-2.5">
-      <div className="flex items-center gap-2 text-2xs tracking-label-wide text-muted uppercase">
+      <div className="flex items-center gap-2 text-2xs text-muted-foreground uppercase">
         <span>History</span>
-        <span className="h-px flex-1 bg-line" />
+        <span className="h-px flex-1 bg-border" />
       </div>
       <div className="flex flex-col gap-1.5">
         {history.length === 0 ? (
-          <div className="rounded-surface border border-dashed border-line-strong px-8 py-8 text-center text-xs tracking-label text-muted">
+          <div className="rounded-2xl border border-dashed border-input px-8 py-8 text-center text-xs text-muted-foreground">
             No clips yet. Send something.
           </div>
         ) : (
@@ -106,7 +106,7 @@ function HistoryRow({
     <div
       className={cn(
         rowClass,
-        incoming ? "border-l-2 border-l-incoming-line" : "border-l-2 border-l-muted",
+        incoming ? "border-l-2 border-l-primary" : "border-l-2 border-l-muted-foreground",
         arriving && "arrival-cue",
       )}
       style={panelSurfaceStyle}
@@ -114,13 +114,13 @@ function HistoryRow({
       <div className="flex min-w-13 flex-col gap-1 md:min-w-16">
         <span
           className={cn(
-            "text-2xs tracking-label uppercase",
-            incoming ? "text-incoming" : "text-muted",
+            "text-2xs uppercase",
+            incoming ? "text-link" : "text-muted-foreground",
           )}
         >
           {incoming ? "↓ IN" : "↑ OUT"}
         </span>
-        <span className="text-2xs tracking-label text-muted uppercase tabular-nums">
+        <span className="text-2xs text-muted-foreground uppercase tabular-nums">
           {formatHistoryTime(clip.ts)}
         </span>
       </div>
@@ -131,14 +131,14 @@ function HistoryRow({
           // negative inset lets a 40px-tall hit area sit inside a tighter row
           // without pushing the row open.
           <button
-            className="group -my-2 -ml-1.5 flex min-h-10 min-w-0 cursor-pointer items-start gap-1.5 rounded-control border-0 bg-transparent px-1.5 py-2 text-left transition-colors duration-100 ease-out hover:bg-white/2 focus-visible:bg-white/2 active:bg-white/4"
+            className="group -my-2 -ml-1.5 flex min-h-10 min-w-0 cursor-pointer items-start gap-1.5 rounded-lg border-0 bg-transparent px-1.5 py-2 text-left transition-colors duration-100 ease-out hover:bg-muted focus-visible:bg-muted active:bg-accent"
             type="button"
             aria-expanded={expanded}
             onClick={onToggle}
           >
             <span
               className={cn(
-                "mt-px shrink-0 text-muted transition-[rotate,color] duration-200 ease-out group-hover:text-dim",
+                "mt-px shrink-0 text-muted-foreground transition-[rotate,color] duration-200 ease-out group-hover:text-foreground",
                 // Hints the direction the content will open (down), rather
                 // than only reporting the state after the fact.
                 expanded && "rotate-90",
@@ -148,7 +148,7 @@ function HistoryRow({
             </span>
             <span
               className={cn(
-                "min-w-0 text-2xs text-dim md:text-xs",
+                "min-w-0 text-2xs text-muted-foreground md:text-xs",
                 open ? "break-words whitespace-pre-wrap" : "truncate",
               )}
             >
@@ -158,7 +158,7 @@ function HistoryRow({
         ) : (
           // No affordance where there is nothing to reveal. The 12px chevron
           // gutter is still reserved so every row's text starts on one line.
-          <span className="min-w-0 truncate pl-[18px] text-2xs text-dim md:text-xs">
+          <span className="min-w-0 truncate pl-[18px] text-2xs text-muted-foreground md:text-xs">
             {clip.text}
           </span>
         )}

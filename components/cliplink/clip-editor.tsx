@@ -35,8 +35,8 @@ function CharCount({ length }: { length: number }) {
     <span
       className={cn(
         "tabular-nums",
-        over && "text-danger",
-        near && !over && "text-accent",
+        over && "text-destructive",
+        near && !over && "text-link",
       )}
       aria-live={near ? "polite" : "off"}
     >
@@ -90,12 +90,12 @@ export function ClipEditor({
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-surface border border-line shadow-row",
+        "relative overflow-hidden rounded-2xl border border-border shadow-row",
         // The compose box has no bounds of its own — it is the panel's content
         // area, edge to edge. So the panel carries the focus, which is also the
         // thing the user believes they are typing into.
         "transition-[border-color,box-shadow] duration-150 ease-out",
-        "has-[textarea:focus]:border-accent has-[textarea:focus]:ring-2 has-[textarea:focus]:ring-accent/25",
+        "has-[textarea:focus]:border-primary has-[textarea:focus]:ring-2 has-[textarea:focus]:ring-primary/25",
         arrival && "arrival-cue",
       )}
       style={panelSurfaceStyle}
@@ -105,7 +105,7 @@ export function ClipEditor({
     >
       <div
         className={cn(
-          "pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-surface border-2 border-dashed border-accent bg-accent-dim px-4 text-center text-xs tracking-label-wide text-accent uppercase backdrop-blur-[2px]",
+          "pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-primary/10 px-4 text-center text-xs text-link uppercase backdrop-blur-[2px]",
           "transition-opacity duration-150 ease-out",
           dragActive ? "opacity-100" : "opacity-0",
         )}
@@ -116,8 +116,8 @@ export function ClipEditor({
           : "File transfer needs a live connection"}
       </div>
 
-      <div className="flex flex-col items-stretch justify-between gap-4 border-b border-line bg-raised px-4 py-2.5 md:flex-row md:items-center">
-        <span className="hidden text-2xs tracking-label-wide text-muted uppercase md:inline">
+      <div className="flex flex-col items-stretch justify-between gap-4 border-b border-border bg-muted px-4 py-2.5 md:flex-row md:items-center">
+        <span className="hidden text-2xs text-muted-foreground uppercase md:inline">
           Clipboard
         </span>
         {/* Two groups, not four peers: what puts text in the box, then what
@@ -173,7 +173,7 @@ export function ClipEditor({
           <div className="flex items-center gap-1.5">
             {editor.clearedText ? (
               <button
-                className={cn(panelToolClass, "text-accent")}
+                className={cn(panelToolClass, "text-link")}
                 type="button"
                 onClick={editor.undoClear}
               >
@@ -210,7 +210,7 @@ export function ClipEditor({
 
       <textarea
         ref={editorRef}
-        className="min-h-50 w-full resize-y border-0 bg-transparent px-4 py-4 text-sm text-fg outline-none placeholder:text-muted md:min-h-60 md:px-5 md:py-5 md:text-base"
+        className="min-h-50 w-full resize-y border-0 bg-transparent px-4 py-4 text-sm text-foreground outline-none placeholder:text-muted-foreground md:min-h-60 md:px-5 md:py-5 md:text-base"
         value={editor.text}
         placeholder="Type or paste anything…"
         aria-label="Clip text"
@@ -219,7 +219,7 @@ export function ClipEditor({
         onPaste={onPaste}
       />
 
-      <div className="flex flex-col gap-1 border-t border-line px-4 py-2 text-2xs tracking-label text-muted md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-col gap-1 border-t border-border px-4 py-2 text-2xs text-muted-foreground md:flex-row md:items-center md:justify-between">
         {/* Keys within a chord bind tighter than the words around them, or
             "Shift Enter" reads as two unrelated keys. */}
         <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
@@ -237,12 +237,12 @@ export function ClipEditor({
           {locked ? (
             <>
               <span aria-hidden="true">·</span>
-              <span className="text-accent">enter the room key to send</span>
+              <span className="text-link">enter the room key to send</span>
             </>
           ) : !realtimeReady ? (
             <>
               <span aria-hidden="true">·</span>
-              <span className="text-accent">files need a live connection</span>
+              <span className="text-link">files need a live connection</span>
             </>
           ) : null}
         </span>

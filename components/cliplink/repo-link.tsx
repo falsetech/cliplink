@@ -15,7 +15,7 @@ type RepoLinkProps = {
 export function RepoLink({ stars }: RepoLinkProps) {
   return (
     <a
-      className="inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-full border border-line-strong bg-white/2 px-3 text-2xs text-dim tabular-nums transition-[color,border-color,scale] duration-150 ease-out hover:border-accent hover:text-fg focus-visible:border-accent focus-visible:text-fg active:scale-[0.96] md:min-h-10 md:min-w-10"
+      className="inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-full border border-input bg-muted px-3 text-2xs text-muted-foreground tabular-nums transition-[color,border-color,scale] duration-150 ease-out hover:border-primary hover:text-foreground focus-visible:border-primary focus-visible:text-foreground active:scale-[0.96] md:min-h-10 md:min-w-10"
       href={REPO_URL}
       target="_blank"
       rel="noopener noreferrer"

@@ -24,7 +24,7 @@ export function useApplePlatform() {
 }
 
 const keyClass =
-  "inline-flex min-w-5 items-center justify-center rounded-[4px] border border-line-strong px-1 py-px font-mono text-2xs text-dim";
+  "inline-flex min-w-5 items-center justify-center rounded-[4px] border border-input px-1 py-px font-mono text-2xs text-muted-foreground";
 
 export function Kbd({ chord, className }: { chord: Chord; className?: string }) {
   const apple = useApplePlatform();

@@ -127,9 +127,9 @@ const DOT_TONE: Record<StatusTone, string> = {
   idle: "",
   good: "bg-success text-success after:opacity-100",
   // Steady, not pulsing: polling is a settled state, not work in progress.
-  warn: "bg-accent text-accent after:opacity-100",
-  busy: "animate-[pulse_1s_ease-in-out_infinite] bg-accent text-accent after:opacity-100",
-  bad: "bg-danger text-danger after:opacity-100",
+  warn: "bg-primary text-link after:opacity-100",
+  busy: "animate-[pulse_1s_ease-in-out_infinite] bg-primary text-link after:opacity-100",
+  bad: "bg-destructive text-destructive after:opacity-100",
 };
 
 type CliplinkAppProps = {
@@ -922,7 +922,7 @@ export default function CliplinkApp({
         >
           <div className="font-display text-xl font-extrabold tracking-display md:text-2xl">
             CLIP
-            <span className="text-logo">LINK</span>
+            <span className="text-link">LINK</span>
           </div>
           <div className="flex items-center gap-1.5 sm:gap-2 md:gap-3">
             {/* There is nothing to be connected to before a room exists, and
@@ -930,12 +930,12 @@ export default function CliplinkApp({
                 happened. */}
             {joined ? (
               <div
-                className="inline-flex items-center gap-1.5 text-2xs tracking-label text-muted uppercase md:gap-2"
+                className="inline-flex items-center gap-1.5 text-2xs text-muted-foreground uppercase md:gap-2"
                 aria-live="polite"
               >
                 <span
                   className={cn(
-                    "relative h-1.75 w-1.75 rounded-full bg-muted transition-colors duration-200",
+                    "relative h-1.75 w-1.75 rounded-full bg-muted-foreground transition-colors duration-200",
                     // The glow is an opacity-animated pseudo-element rather than a
                     // transitioned box-shadow, which the compositor cannot handle.
                     "after:absolute after:inset-0 after:rounded-full after:opacity-0 after:shadow-[0_0_10px_currentColor] after:transition-opacity after:duration-200 after:content-['']",

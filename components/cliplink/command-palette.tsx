@@ -93,7 +93,7 @@ function PaletteBody({ actions }: { actions: RoomAction[] }) {
   return (
     <>
       <input
-        className="min-h-11 w-full rounded-control border border-line-strong bg-surface px-3 text-sm text-fg outline-none transition-colors duration-150 placeholder:text-muted focus:border-accent"
+        className="min-h-11 w-full rounded-lg border border-input bg-card px-3 text-sm text-foreground outline-none transition-colors duration-150 placeholder:text-muted-foreground focus:border-primary"
         type="text"
         data-autofocus
         role="combobox"
@@ -120,7 +120,7 @@ function PaletteBody({ actions }: { actions: RoomAction[] }) {
         className="-mr-1 flex max-h-[45vh] flex-col gap-0.5 overflow-y-auto pr-1"
       >
         {results.length === 0 ? (
-          <p className="m-0 px-2 py-6 text-center text-xs text-muted">
+          <p className="m-0 px-2 py-6 text-center text-xs text-muted-foreground">
             Nothing matches “{query.trim()}”.
           </p>
         ) : (
@@ -132,17 +132,17 @@ function PaletteBody({ actions }: { actions: RoomAction[] }) {
               aria-selected={index === highlight}
               data-active={index === highlight}
               className={cn(
-                "flex min-h-10 cursor-pointer items-center justify-between gap-3 rounded-control px-2.5 text-xs transition-colors duration-100",
+                "flex min-h-10 cursor-pointer items-center justify-between gap-3 rounded-lg px-2.5 text-xs transition-colors duration-100",
                 index === highlight
-                  ? "bg-accent-dim text-fg"
-                  : "text-dim hover:bg-raised",
+                  ? "bg-primary/10 text-foreground"
+                  : "text-muted-foreground hover:bg-muted",
               )}
               onPointerMove={() => setHighlight(index)}
               onClick={() => run(action)}
             >
               <span className="min-w-0 truncate">{action.label}</span>
               <span className="flex shrink-0 items-center gap-2">
-                <span className="text-2xs tracking-label text-muted uppercase">
+                <span className="text-2xs text-muted-foreground uppercase">
                   {action.group}
                 </span>
                 {action.chord ? <Kbd chord={action.chord} /> : null}

@@ -37,7 +37,7 @@ export function QrCode({ value, size = 280, label }: QrCodeProps) {
 
   if (!symbol) {
     return (
-      <p className="m-0 px-4 py-8 text-center text-xs text-pretty text-muted">
+      <p className="m-0 px-4 py-8 text-center text-xs text-pretty text-muted-foreground">
         This room link is too long to render as a QR code. Copy the link
         instead.
       </p>

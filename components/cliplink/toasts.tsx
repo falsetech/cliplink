@@ -6,8 +6,8 @@ import type { ToastItem } from "./use-toasts";
 
 const TONE_CLASS = {
   success: "border-success text-success",
-  info: "border-accent text-accent",
-  error: "border-danger text-danger",
+  info: "border-primary text-link",
+  error: "border-destructive text-destructive",
 } as const;
 
 export function Toasts({
@@ -31,7 +31,7 @@ export function Toasts({
           data-motion="transform"
           onClick={() => onDismiss(toast.id)}
           className={cn(
-            "pointer-events-auto min-w-[min(92vw,320px)] rounded-control border px-4 py-3 text-left text-xs shadow-toast backdrop-blur-(--toast-blur)",
+            "pointer-events-auto min-w-[min(92vw,320px)] rounded-lg border px-4 py-3 text-left text-xs shadow-toast backdrop-blur-(--toast-blur)",
             "bg-(--toast-bg) transition-opacity duration-150 hover:opacity-80",
             "data-[state=entering]:animate-[toast-in-soft_240ms_var(--ease-out-quint)_both]",
             "data-[state=entering]:data-[arrival=true]:animate-[toast-in-arrival_280ms_cubic-bezier(0.34,1.56,0.64,1)_both]",
@@ -41,7 +41,7 @@ export function Toasts({
         >
           {toast.message}
           {toast.tone === "error" ? (
-            <span className="mt-1 block text-2xs tracking-label text-text-muted uppercase">
+            <span className="mt-1 block text-2xs text-muted-foreground uppercase">
               Tap to dismiss
             </span>
           ) : null}

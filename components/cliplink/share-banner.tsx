@@ -31,14 +31,14 @@ export function ShareBanner({ state, rooms, onSendToRoom }: ShareBannerProps) {
 
   return (
     <section
-      className="mx-auto mb-5 flex w-full max-w-170 flex-col gap-3 rounded-surface border border-line p-4 md:mb-9"
+      className="mx-auto mb-5 flex w-full max-w-170 flex-col gap-3 rounded-2xl border border-border p-4 md:mb-9"
       style={panelSurfaceStyle}
       aria-live="polite"
     >
-      <p className="m-0 text-2xs tracking-label-wide text-muted uppercase">
+      <p className="m-0 text-2xs text-muted-foreground uppercase">
         Shared to CLIPLINK
       </p>
-      <p className="m-0 text-sm text-pretty wrap-break-word text-fg">
+      <p className="m-0 text-sm text-pretty wrap-break-word text-foreground">
         {bannerText(state)}
       </p>
 
@@ -57,7 +57,7 @@ export function ShareBanner({ state, rooms, onSendToRoom }: ShareBannerProps) {
             ))}
           </div>
         ) : (
-          <p className="m-0 text-2xs text-pretty text-muted">
+          <p className="m-0 text-2xs text-pretty text-muted-foreground">
             Create a room or join one below, and this comes along.
           </p>
         )

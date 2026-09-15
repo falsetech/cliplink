@@ -34,11 +34,11 @@ export function RoomHeader({
   return (
     <div className="flex flex-col items-stretch justify-between gap-4 md:flex-row md:items-start">
       <div className="flex flex-col items-start gap-2 md:flex-row md:flex-wrap md:items-center md:gap-3">
-        <span className="text-2xs tracking-label-wide text-muted uppercase">
+        <span className="text-2xs text-muted-foreground uppercase">
           Room
         </span>
         <button
-          className="inline-flex min-h-11 cursor-pointer items-center rounded-control border border-accent/30 bg-transparent px-2.5 text-lg font-bold tracking-code text-room tabular-nums transition-[background-color,scale] duration-150 ease-out hover:bg-accent-dim focus-visible:bg-accent-dim active:scale-[0.96] md:min-h-10 md:px-3 md:text-xl"
+          className="inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-primary/30 bg-transparent px-2.5 text-lg font-bold tracking-code text-link tabular-nums transition-[background-color,scale] duration-150 ease-out hover:bg-primary/10 focus-visible:bg-primary/10 active:scale-[0.96] md:min-h-10 md:px-3 md:text-xl"
           type="button"
           aria-label={`Copy invite link for room ${roomCode}`}
           aria-keyshortcuts="L"
@@ -50,7 +50,7 @@ export function RoomHeader({
         {/* Status, not a section label, so it does not wear the uppercase
             tracking the labels use — and "5h 57m" uppercased to "5H 57M" read
             as initials rather than units. */}
-        <div className="flex items-center gap-2 text-2xs text-muted">
+        <div className="flex items-center gap-2 text-2xs text-muted-foreground">
           {deviceCount > 1 ? <span>{deviceCount} devices</span> : null}
           {deviceCount > 1 && expiresIn !== null ? (
             <span aria-hidden="true">·</span>
@@ -87,8 +87,8 @@ export function RoomHeader({
           className={cn(
             actionButtonClass,
             confirmingLeave
-              ? "border-danger text-danger"
-              : "hover:border-danger hover:text-danger focus-visible:border-danger focus-visible:text-danger",
+              ? "border-destructive text-destructive"
+              : "hover:border-destructive hover:text-destructive focus-visible:border-destructive focus-visible:text-destructive",
           )}
           type="button"
           aria-keyshortcuts="X"

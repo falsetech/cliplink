@@ -327,8 +327,8 @@ export function Sheet({
         data-state={state}
         data-motion="transform"
         className={cn(
-          "relative flex w-full max-w-105 flex-col gap-4.5 rounded-t-sheet rounded-b-surface border border-line-strong p-4.5 shadow-modal",
-          "sm:rounded-sheet sm:p-5",
+          "relative flex w-full max-w-105 flex-col gap-4.5 rounded-t-3xl rounded-b-2xl border border-input p-4.5 shadow-modal",
+          "sm:rounded-3xl sm:p-5",
           "origin-bottom sm:origin-center",
           "data-[state=entering]:animate-[sheet-in_280ms_var(--ease-out-quint)_both]",
           "data-[state=exiting]:animate-[sheet-out_220ms_var(--ease-out-quint)_both]",
@@ -354,7 +354,7 @@ export function Sheet({
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
         >
-          <span className="h-1 w-9 rounded-full bg-line-strong" />
+          <span className="h-1 w-9 rounded-full bg-input" />
         </div>
 
         <SheetCloseContext value={beginExit}>{children}</SheetCloseContext>
