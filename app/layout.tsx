@@ -1,9 +1,13 @@
 import type { Metadata } from "next";
-import { JetBrains_Mono, Syne } from "next/font/google";
+import { JetBrains_Mono, Syne, Geist } from "next/font/google";
 import { ServiceWorker } from "@/components/cliplink/service-worker";
 
 import { AppThemeProvider } from "./theme-provider";
 import "./globals.css";
+import { cn } from "@/lib/utils";
+
+const geist = Geist({subsets:['latin'],variable:'--font-sans'});
+
 
 // Self-hosted and preloaded. Loading these through an `@import` in globals.css
 // serialised the request behind the stylesheet and cost a round trip to two
@@ -53,7 +57,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${jetbrainsMono.variable} ${syne.variable}`}
+      className={cn(jetbrainsMono.variable, syne.variable, "font-sans", geist.variable)}
       suppressHydrationWarning
     >
       <body className="antialiased">
