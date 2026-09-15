@@ -43,7 +43,7 @@ next-env.d.ts
 
 # local planning docs (not part of the public repo)
 PRD.md
-docs/superpowers/
+docs/
 
 # workspace package builds
 packages/*/dist/
