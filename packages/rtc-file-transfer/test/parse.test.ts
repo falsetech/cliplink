@@ -62,6 +62,30 @@ describe("parseFileSignal", () => {
   });
 });
 
+describe("capabilities", () => {
+  it("keeps known caps, drops unknown ones, and never rejects the signal over them", () => {
+    const offer = { type: "file-offer", offerId: ID, name: "a", size: 10, mime: "" };
+    assert.deepEqual(parseFileSignal({ ...offer, caps: ["resume", "future", "blocks"] }), {
+      ...offer,
+      caps: ["blocks", "resume"],
+    });
+    assert.deepEqual(parseFileSignal({ ...offer, caps: ["future"] }), offer);
+    assert.deepEqual(parseFileSignal({ ...offer, caps: "blocks" }), offer);
+    assert.deepEqual(parseFileSignal({ ...offer, caps: Array(9).fill("blocks") }), offer);
+  });
+
+  it("accepts a positive integer resume offset only", () => {
+    const request = { type: "file-request", offerId: ID, transferId: ID };
+    assert.deepEqual(parseFileSignal({ ...request, offset: 1048576 }), {
+      ...request,
+      offset: 1048576,
+    });
+    for (const offset of [0, -1, 1.5, "8", 2 ** 60]) {
+      assert.deepEqual(parseFileSignal({ ...request, offset }), request);
+    }
+  });
+});
+
 describe("isValidId", () => {
   it("accepts generated ids and rejects free text", () => {
     assert.equal(isValidId(crypto.randomUUID()), true);

@@ -77,6 +77,7 @@ When your signaling layer sees a peer disconnect, tell the manager with `files.h
 | `iceServers` | Defaults to public Google and Cloudflare STUN servers. Add a TURN server for restrictive networks. |
 | `limits` | Any of `maxFileBytes` (500 MB), `chunkBytes` (64 KB), `bufferHighBytes` (4 MB), `bufferLowBytes` (1 MB), `stallMs` (20 s), `maxItems` (20). |
 | `createId` | Id generator for offers and transfers. |
+| `capabilities` | Protocol features to advertise: `blocks` and `resume`. Defaults to both where `crypto.subtle` exists. Pass `[]` to behave exactly like a v1 peer. |
 | `createPeerConnection` | For environments without a global `RTCPeerConnection`, such as Node with a WebRTC polyfill. |
 
 ### Where received bytes go
@@ -103,9 +104,13 @@ While an incoming item is `transferring`, it also carries `bytesPerSecond` (a sm
 
 `offerFiles` returns `{ offered, rejected }`. Each rejection is `{ file, code: "empty" | "too-large", limit }`.
 
+### Resuming
+
+When both peers support `resume`, a download that fails part way (`stalled`, `nat`, `negotiation`, `closed`, `corrupt`, `sender-left`, or `remote-canceled`) keeps what it has verified. The item shows `resumableBytes`, and calling `request(id)` again picks up from there, writing into the same sink. A new sink passed then is aborted. The kept sink is released when the item is dismissed, or when the sender revokes the offer or leaves.
+
 ### Failure codes
 
-`stalled` · `nat` · `read-error` · `negotiation` · `incomplete` · `overflow` · `canceled` · `revoked` · `sender-left` · `closed` · `write-error` · `remote-canceled`
+`stalled` · `nat` · `read-error` · `negotiation` · `incomplete` · `overflow` · `canceled` · `revoked` · `sender-left` · `closed` · `write-error` · `corrupt` · `remote-canceled`
 
 Each failure notice also carries an English `message`. Use the `code` to show your own wording.
 
@@ -116,6 +121,14 @@ Returns a signal rebuilt from known fields only, or `null` if the input isn't va
 ## Protocol
 
 Protocol v1 is a set of small JSON messages (`hello`, `file-offer`, `file-revoke`, `file-request`, `rtc-description`, `rtc-candidate` and `transfer-cancel`), plus a per-transfer ordered data channel. On that channel, binary chunks are followed by the string `"done"`, and the receiver answers with `"ack"`. Each download gets its own `RTCPeerConnection`, so one slow receiver never holds up another.
+
+### Capabilities
+
+Newer peers negotiate optional features through fields that v1 peers never send and drop on receipt, so any pair of versions interoperates:
+
+- `file-offer.caps` lists what the sender supports, and `file-request.caps` lists what the receiver supports. A feature is used only when both lists include it.
+- With `blocks`, the sender follows every `BLOCK_BYTES` (1 MiB) of data with the string `{"t":"block","i":<index>,"h":"<sha256 hex>"}`. The receiver checks each block before writing it to the sink.
+- With `resume` (which requires `blocks`), `file-request.offset` asks the sender to start at a block boundary.
 
 ## Why not simple-peer or PeerJS?
 

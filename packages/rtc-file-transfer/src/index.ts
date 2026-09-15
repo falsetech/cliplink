@@ -23,7 +23,9 @@ export {
   createRandomId,
   type TransferLimits,
 } from "./defaults.ts";
+export { BLOCK_BYTES, CAPABILITIES } from "./protocol.ts";
 export type {
+  Capability,
   FileOffer,
   FileSignal,
   PeerId,
