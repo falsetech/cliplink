@@ -22,6 +22,10 @@ import { LandingView } from "@/components/cliplink/landing-view";
 import { QrSheet } from "@/components/cliplink/qr-sheet";
 import { createRoomActions } from "@/components/cliplink/room-actions";
 import { RoomHeader } from "@/components/cliplink/room-header";
+import {
+  ShareBanner,
+  type ShareState,
+} from "@/components/cliplink/share-banner";
 import { ShortcutsSheet } from "@/components/cliplink/shortcuts-sheet";
 import { Toasts } from "@/components/cliplink/toasts";
 import {
@@ -59,12 +63,22 @@ import {
 import { RoomKeyMismatchError } from "@/lib/cliplink/encrypted-transport";
 import { connectRoom, createRoomRequest } from "@/lib/cliplink/http";
 import {
+  describeShare,
+  holdShare,
+  isShareMessage,
+  SHARE_CHANNEL,
+  claimCachedShare,
+  takeHeldShare,
+  type PendingShare,
+  type ShareMessage,
+} from "@/lib/cliplink/pending-share";
+import {
   buildRoomUrl,
   normalizeRoomCode,
   parseRoomKeyFromHash,
   roomKeyFragment,
 } from "@/lib/cliplink/room-code";
-import { getSessionSenderId } from "@/lib/cliplink/session";
+import { createRandomId, getSessionSenderId } from "@/lib/cliplink/session";
 import type { RoomCode, RoomStatus } from "@/lib/cliplink/types";
 import { validateRoomCode } from "@/lib/cliplink/validation";
 import { cn } from "@/lib/utils";
@@ -74,6 +88,15 @@ const subscribeToNothing = () => () => {};
 
 /** A destructive confirmation that never times out is a trap of its own. */
 const CONFIRM_WINDOW_MS = 4000;
+
+/** How long a room tab gets to confirm it took a share before it's dropped. */
+const SHARE_DELIVERY_TIMEOUT_MS = 3000;
+
+const SHARE_ERRORS: Record<string, string> = {
+  unavailable:
+    "CLIPLINK was still setting up and couldn't receive that share. Share it again.",
+  unreadable: "That share couldn't be read. Try sharing again.",
+};
 
 type StatusTone = "idle" | "good" | "busy" | "warn" | "bad";
 
@@ -114,11 +137,14 @@ type CliplinkAppProps = {
   initialRoomCode?: string;
   /** Rendered by the server page, so the star count is fetched and cached there. */
   repoLink?: React.ReactNode;
+  /** Present when rendered at /share, where the OS share sheet lands. */
+  share?: { error?: string };
 };
 
 export default function CliplinkApp({
   initialRoomCode,
   repoLink,
+  share,
 }: CliplinkAppProps) {
   const router = useRouter();
 
@@ -140,6 +166,17 @@ export default function CliplinkApp({
   // ref because it is rendered — and it is already in the address bar, so this
   // is no wider an exposure than the fragment it came from.
   const [roomKeyEncoded, setRoomKeyEncoded] = useState<string | null>(null);
+  const [shareState, setShareState] = useState<ShareState>(() =>
+    share?.error
+      ? {
+          phase: "error",
+          message: SHARE_ERRORS[share.error] ?? SHARE_ERRORS.unreadable,
+        }
+      : { phase: "loading" },
+  );
+  const [shareRooms, setShareRooms] = useState<
+    { code: RoomCode; tabId: string }[]
+  >([]);
 
   // Hydration guard for theme-dependent rendering: false on the server and on
   // the first client render, true thereafter.
@@ -158,6 +195,15 @@ export default function CliplinkApp({
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const scrollSentinelRef = useRef<HTMLDivElement>(null);
   const confirmResetRef = useRef<number | null>(null);
+  const shareChannelRef = useRef<BroadcastChannel | null>(null);
+  // Shared files wait here until the room can actually offer them.
+  const queuedShareFilesRef = useRef<File[]>([]);
+  const shareTabIdRef = useRef("");
+  const shareDeliveryRef = useRef<{
+    tabId: string;
+    code: RoomCode;
+    timer: number;
+  } | null>(null);
 
   const files = useFileTransfer({
     peerId,
@@ -240,6 +286,181 @@ export default function CliplinkApp({
       document.removeEventListener("drop", preventFileNavigation);
     };
   }, []);
+
+  // ---------------------------------------------------------------------------
+  // OS share sheet. /share reads what the service worker parked and offers the
+  // rooms open in other tabs; a room tab answers and takes the share. Without
+  // BroadcastChannel only the create/join path is left, which still works.
+
+  const inRoom = Boolean(room.roomCode) && !room.locked;
+
+  const handleShareMessage = useEffectEvent((message: ShareMessage) => {
+    const channel = shareChannelRef.current;
+    const tabId = shareTabIdRef.current;
+    switch (message.type) {
+      case "probe":
+        // Only a room page takes shares; the share page itself is not one.
+        if (initialRoomCode && inRoom && room.roomCode) {
+          channel?.postMessage({ type: "here", tabId, code: room.roomCode });
+        }
+        return;
+      case "here":
+        // One button per room: several tabs in the same room would all take it.
+        if (share) {
+          setShareRooms((current) =>
+            current.some((room) => room.code === message.code)
+              ? current
+              : [...current, { code: message.code, tabId: message.tabId }],
+          );
+        }
+        return;
+      case "deliver":
+        if (message.tabId === tabId && initialRoomCode && inRoom) {
+          applyShare(message.share);
+          channel?.postMessage({ type: "delivered", tabId });
+        }
+        return;
+      case "delivered": {
+        const pending = shareDeliveryRef.current;
+        if (pending && pending.tabId === message.tabId) {
+          window.clearTimeout(pending.timer);
+          shareDeliveryRef.current = null;
+          holdShare(null);
+          setShareState({ phase: "delivered", code: pending.code });
+        }
+        return;
+      }
+    }
+  });
+
+  const probeForRooms = useEffectEvent(() => {
+    if (share) {
+      shareChannelRef.current?.postMessage({ type: "probe" });
+    }
+  });
+
+  useEffect(() => {
+    shareTabIdRef.current = createRandomId();
+    if (typeof BroadcastChannel === "undefined") {
+      return;
+    }
+    const channel = new BroadcastChannel(SHARE_CHANNEL);
+    shareChannelRef.current = channel;
+    channel.onmessage = (event: MessageEvent<unknown>) => {
+      if (isShareMessage(event.data)) {
+        handleShareMessage(event.data);
+      }
+    };
+    // A room opened in another tab after this page loaded answers the next probe.
+    window.addEventListener("focus", probeForRooms);
+    return () => {
+      window.removeEventListener("focus", probeForRooms);
+      channel.close();
+      shareChannelRef.current = null;
+      const pending = shareDeliveryRef.current;
+      if (pending) {
+        window.clearTimeout(pending.timer);
+        shareDeliveryRef.current = null;
+      }
+    };
+  }, []);
+
+  const receiveCachedShare = useEffectEvent((pending: PendingShare | null) => {
+    holdShare(pending);
+    setShareState(
+      pending ? { phase: "ready", summary: describeShare(pending) } : { phase: "empty" },
+    );
+    probeForRooms();
+  });
+
+  const onSharePage = Boolean(share) && !share?.error;
+
+  useEffect(() => {
+    if (!onSharePage) {
+      return;
+    }
+    let active = true;
+    void claimCachedShare().then((pending) => {
+      if (active) {
+        receiveCachedShare(pending);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [onSharePage]);
+
+  function sendShareToRoom(code: RoomCode) {
+    const channel = shareChannelRef.current;
+    const target = shareRooms.find((room) => room.code === code);
+    // Taken and put straight back: the share stays held until a tab confirms,
+    // so creating or joining a room still carries it if this one never does.
+    const pending = takeHeldShare();
+    holdShare(pending);
+    if (!channel || !target || !pending || shareDeliveryRef.current) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      shareDeliveryRef.current = null;
+      setShareRooms((current) => current.filter((room) => room.tabId !== target.tabId));
+      pushToast(`Room ${code} didn't answer. Is that tab still open?`, "error");
+    }, SHARE_DELIVERY_TIMEOUT_MS);
+    shareDeliveryRef.current = { tabId: target.tabId, code, timer };
+    channel.postMessage({ type: "deliver", tabId: target.tabId, share: pending });
+  }
+
+  function applyShare(pending: PendingShare) {
+    if (pending.text) {
+      editor.change(editor.text ? `${editor.text}\n${pending.text}` : pending.text);
+      pushToast("Shared text is in the editor. Send it when you're ready.", "info");
+    }
+    if (pending.files.length > 0) {
+      queuedShareFilesRef.current.push(...pending.files);
+      if (room.realtimeReady) {
+        offerQueuedShareFiles();
+      }
+    }
+  }
+
+  // A share carried here from /share by creating or joining a room. Only room
+  // pages take it: the /share page's own brief room view is about to be
+  // replaced by one.
+  const claimHeldShare = useEffectEvent(() => {
+    const pending = takeHeldShare();
+    if (pending) {
+      applyShare(pending);
+    }
+  });
+
+  useEffect(() => {
+    if (initialRoomCode && inRoom) {
+      claimHeldShare();
+    }
+  }, [initialRoomCode, inRoom]);
+
+  function offerQueuedShareFiles() {
+    const queued = queuedShareFilesRef.current;
+    queuedShareFilesRef.current = [];
+    shareFiles(queued.slice(0, MAX_FILES_PER_SHARE));
+    if (queued.length > MAX_FILES_PER_SHARE) {
+      pushToast(
+        `Only the first ${MAX_FILES_PER_SHARE} shared files were offered.`,
+        "info",
+      );
+    }
+  }
+
+  const offerQueuedOnceLive = useEffectEvent(() => {
+    if (queuedShareFilesRef.current.length > 0) {
+      offerQueuedShareFiles();
+    }
+  });
+
+  useEffect(() => {
+    if (inRoom && room.realtimeReady) {
+      offerQueuedOnceLive();
+    }
+  }, [inRoom, room.realtimeReady]);
 
   function updateUrl(code: RoomCode | null, encodedKey: string | null) {
     // The fragment has to be restated on every replace, or the router drops it
@@ -761,6 +982,13 @@ export default function CliplinkApp({
 
         <main className="flex flex-1 justify-center px-3 py-5.5 pb-12 sm:px-4 sm:py-7 sm:pb-14 md:px-6 md:py-14 md:pb-18">
           <div className="w-full max-w-190">
+            {!joined && share ? (
+              <ShareBanner
+                state={shareState}
+                rooms={shareRooms.map((room) => room.code)}
+                onSendToRoom={sendShareToRoom}
+              />
+            ) : null}
             {!joined ? (
               <LandingView
                 joinCode={joinCode}
