@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
 - Capability negotiation on top of protocol v1 through optional `caps` fields, fully compatible with older peers.
 - `blocks`: every 1 MiB is verified against a SHA-256 digest sent in-band. A mismatch fails with the new code `corrupt`.
