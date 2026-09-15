@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { JetBrains_Mono, Syne } from "next/font/google";
+import { ServiceWorker } from "@/components/cliplink/service-worker";
+
 import { AppThemeProvider } from "./theme-provider";
 import "./globals.css";
 
@@ -56,6 +58,7 @@ export default function RootLayout({
     >
       <body className="antialiased">
         <AppThemeProvider>{children}</AppThemeProvider>
+        <ServiceWorker />
       </body>
     </html>
   );
