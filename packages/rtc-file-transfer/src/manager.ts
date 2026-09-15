@@ -1055,6 +1055,10 @@ export function createFileTransferManager(options: FileTransferOptions) {
       item.status = "revoked";
       item.error = undefined;
       item.errorCode = undefined;
+      // Nothing left to resume from, so don't keep the partial file open.
+      item.resumableBytes = undefined;
+      item.bytes = 0;
+      releaseDownload(item.id);
       return true;
     }
     if (item.status === "connecting" || item.status === "transferring") {

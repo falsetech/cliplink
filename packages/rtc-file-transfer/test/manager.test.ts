@@ -493,6 +493,34 @@ describe("verified blocks and resume", () => {
     assert.equal(incoming(bob)[0].savedToSink, true);
   });
 
+  for (const how of ["revoke", "peer-left"] as const) {
+    it(`releases a resumable download when the offer ends by ${how}`, async () => {
+      bus = new FakeSignaling();
+      bus.addPeer("peer-alice", { limits: { stallMs: 100 } });
+      bus.addPeer("peer-bob00", { limits: { stallMs: 100 } });
+      bus.net.pauseAfterBytes = MB + 1;
+      let aborted = false;
+
+      const [alice, bob] = [bus.peers.get("peer-alice")!, bus.peers.get("peer-bob00")!];
+      alice.manager.offerFiles([new File([randomBytes(2 * MB)], "a.bin")]);
+      await waitFor(() => incoming(bob).length === 1);
+      bob.manager.request(incoming(bob)[0].id, {
+        sink: { write() {}, close() {}, abort: () => void (aborted = true) },
+      });
+      await waitFor(() => failure(bob) !== undefined);
+      assert.equal(incoming(bob)[0].resumableBytes, MB);
+
+      if (how === "revoke") {
+        alice.manager.revoke(outgoing(alice).id);
+      } else {
+        bob.manager.handleSignal("peer-alice", { type: "peer-left" });
+      }
+      await waitFor(() => incoming(bob)[0]?.status === "revoked");
+      await waitFor(() => aborted);
+      assert.equal(incoming(bob)[0].resumableBytes, undefined);
+    });
+  }
+
   it("releases a resumable download when it is dismissed", async () => {
     bus = new FakeSignaling();
     bus.addPeer("peer-alice", { limits: { stallMs: 100 } });
