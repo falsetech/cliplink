@@ -11,9 +11,13 @@ import { cn } from "@/lib/utils"
  * why they are disabled.
  *
  * Touch targets grow to 44px on coarse pointers and tighten under a mouse.
+ *
+ * No `bg-clip-padding`: with a transparent border it paints the fill 1px in
+ * on every side, so a button drew 2px shorter than a field of the same height
+ * beside it.
  */
 const buttonVariants = cva(
-  "group/button inline-flex shrink-0 cursor-pointer items-center justify-center rounded-full border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap outline-none select-none transition-[color,background-color,border-color,box-shadow,scale] duration-150 ease-out focus-visible:ring-3 focus-visible:ring-ring/40 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100 aria-invalid:ring-3 aria-invalid:ring-destructive/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "group/button inline-flex shrink-0 cursor-pointer items-center justify-center rounded-full border border-transparent text-sm font-medium whitespace-nowrap outline-none select-none transition-[color,background-color,border-color,box-shadow,scale] duration-150 ease-out focus-visible:ring-3 focus-visible:ring-ring/40 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100 aria-invalid:ring-3 aria-invalid:ring-destructive/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {

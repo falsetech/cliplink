@@ -8,6 +8,7 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { ROOM_TTL_SECONDS } from "@/lib/cliplink/constants";
 import { normalizeRoomCode } from "@/lib/cliplink/room-code";
+import { validateRoomCode } from "@/lib/cliplink/validation";
 
 import { IconPlus } from "./icons";
 
@@ -30,6 +31,9 @@ export function LandingView({
   // taken by someone who does not read the options.
   const [privateRoom, setPrivateRoom] = useState(true);
   const encryptId = useId();
+  // Validated inline: Join stays quiet until there is a whole code to join,
+  // then takes the filled style, as Send does once there is text to send.
+  const codeComplete = validateRoomCode(joinCode);
 
   return (
     <section className="mx-auto flex max-w-lg flex-col items-center gap-8 md:gap-10">
@@ -107,7 +111,13 @@ export function LandingView({
               }
             }}
           />
-          <Button variant="tinted" size="lg" onClick={onJoin} disabled={isBusy}>
+          <Button
+            variant={codeComplete ? "default" : "secondary"}
+            size="lg"
+            className="min-w-24"
+            onClick={onJoin}
+            disabled={isBusy || !codeComplete}
+          >
             Join
           </Button>
         </div>

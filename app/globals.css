@@ -28,8 +28,7 @@
   --primary-hover: oklch(58.3% 0.199 256);
   --primary-foreground: oklch(100% 0 0);
   --link: oklch(52.2% 0.177 255.8); /* 5.0:1 on background, 5.6:1 on card */
-  /* Tinted fills: blue over a grey base rather than over nothing, so on a
-     black page they stay a lit blue instead of sinking to navy. */
+  /* Tinted fills: a quiet blue behind link-blue text. */
   --tint: color-mix(in oklch, var(--primary) 12%, transparent);
   --tint-hover: color-mix(in oklch, var(--primary) 18%, transparent);
   /* The system fills: translucent grey, so they read the same on any surface. */
@@ -77,8 +76,10 @@
   --popover: oklch(22.7% 0.004 286.1);
   --primary-hover: oklch(60.5% 0.2 255.5);
   --link: oklch(66.9% 0.181 251.8); /* 5.6:1 on card */
-  --tint: color-mix(in oklch, var(--primary) 26%, oklch(29.4% 0.004 286.2));
-  --tint-hover: color-mix(in oklch, var(--primary) 34%, oklch(29.4% 0.004 286.2));
+  /* A deep blue of its own rather than blue mixed into grey, which read as
+     slate. Link text holds 4.7:1 on it; hover lifts lightness only. */
+  --tint: oklch(29% 0.08 256);
+  --tint-hover: oklch(32% 0.088 256);
   --secondary: oklch(56.9% 0.015 285.9 / 24%);
   --muted: oklch(56.9% 0.015 285.9 / 16%);
   --muted-foreground: oklch(68.1% 0.007 286.2);
