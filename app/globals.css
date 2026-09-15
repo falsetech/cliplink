@@ -28,6 +28,10 @@
   --primary-hover: oklch(58.3% 0.199 256);
   --primary-foreground: oklch(100% 0 0);
   --link: oklch(52.2% 0.177 255.8); /* 5.0:1 on background, 5.6:1 on card */
+  /* Tinted fills: blue over a grey base rather than over nothing, so on a
+     black page they stay a lit blue instead of sinking to navy. */
+  --tint: color-mix(in oklch, var(--primary) 12%, transparent);
+  --tint-hover: color-mix(in oklch, var(--primary) 18%, transparent);
   /* The system fills: translucent grey, so they read the same on any surface. */
   --secondary: oklch(56.9% 0.015 285.9 / 12%);
   --secondary-foreground: var(--foreground);
@@ -73,6 +77,8 @@
   --popover: oklch(22.7% 0.004 286.1);
   --primary-hover: oklch(60.5% 0.2 255.5);
   --link: oklch(66.9% 0.181 251.8); /* 5.6:1 on card */
+  --tint: color-mix(in oklch, var(--primary) 26%, oklch(29.4% 0.004 286.2));
+  --tint-hover: color-mix(in oklch, var(--primary) 34%, oklch(29.4% 0.004 286.2));
   --secondary: oklch(56.9% 0.015 285.9 / 24%);
   --muted: oklch(56.9% 0.015 285.9 / 16%);
   --muted-foreground: oklch(68.1% 0.007 286.2);
@@ -93,7 +99,10 @@
 
 /* ---------------------------------------------------------------------------
    Tailwind theme. Sizes carry their own leading and tracking so hierarchy is
-   built from the set: small text tracks open, large text tracks tight.
+   built from the set. Tracking follows the SF tables: open only at 11px, zero
+   at 12px, tightest around body sizes, and easing back toward zero from 20px,
+   where the browser switches to the Display optical size, which is already
+   drawn tight.
    --------------------------------------------------------------------------- */
 
 @theme inline {
@@ -107,6 +116,8 @@
   --color-primary-hover: var(--primary-hover);
   --color-primary-foreground: var(--primary-foreground);
   --color-link: var(--link);
+  --color-tint: var(--tint);
+  --color-tint-hover: var(--tint-hover);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
@@ -128,31 +139,31 @@
   /* 11px floor. */
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1.35;
-  --text-2xs--letter-spacing: 0.01em;
+  --text-2xs--letter-spacing: 0.005em;
   --text-xs: 0.75rem;
   --text-xs--line-height: 1.35;
-  --text-xs--letter-spacing: 0.005em;
+  --text-xs--letter-spacing: 0em;
   --text-sm: 0.875rem;
   --text-sm--line-height: 1.45;
-  --text-sm--letter-spacing: -0.006em;
+  --text-sm--letter-spacing: -0.011em;
   --text-base: 1rem;
   --text-base--line-height: 1.5;
-  --text-base--letter-spacing: -0.011em;
+  --text-base--letter-spacing: -0.019em;
   --text-lg: 1.125rem;
   --text-lg--line-height: 1.4;
-  --text-lg--letter-spacing: -0.014em;
+  --text-lg--letter-spacing: -0.024em;
   --text-xl: 1.25rem;
   --text-xl--line-height: 1.3;
-  --text-xl--letter-spacing: -0.017em;
+  --text-xl--letter-spacing: -0.022em;
   --text-2xl: 1.5rem;
   --text-2xl--line-height: 1.2;
-  --text-2xl--letter-spacing: -0.019em;
+  --text-2xl--letter-spacing: -0.012em;
   --text-3xl: 1.875rem;
   --text-3xl--line-height: 1.15;
-  --text-3xl--letter-spacing: -0.021em;
+  --text-3xl--letter-spacing: -0.006em;
 
   --tracking-code: 0.12em;
-  --tracking-display: -0.035em;
+  --tracking-display: -0.022em;
 
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);

@@ -38,16 +38,17 @@ export function LandingView({
           Copy here.
           <span className="block text-link">Paste anywhere.</span>
         </h1>
-        <p className="m-0 text-base text-pretty text-muted-foreground md:text-lg">
+        <p className="m-0 text-base text-balance text-muted-foreground md:text-lg">
           Create a room. Share the code. Your clipboard, synced across devices.
         </p>
       </div>
 
       <div className="flex w-full flex-col gap-4">
         {/* A grouped list, as in Settings: the choice sits with the action it
-            changes, so the toggle reads as part of creating the room. */}
-        <div className="overflow-hidden rounded-2xl bg-card shadow-row">
-          <div className="flex items-center gap-4 px-4 py-3.5">
+            changes, so the toggle reads as part of creating the room. The
+            radius is near-concentric with the pill inside it: 24px + 8px padding. */}
+        <div className="overflow-hidden rounded-4xl bg-card shadow-row">
+          <div className="flex items-center gap-4 px-5 pt-4 pb-3.5">
             <label htmlFor={encryptId} className="min-w-0 flex-1 cursor-pointer">
               <span className="block text-sm font-medium text-foreground">
                 End-to-end encrypt
@@ -64,7 +65,7 @@ export function LandingView({
               onCheckedChange={setPrivateRoom}
             />
           </div>
-          <Separator className="ml-4 w-auto" />
+          <Separator className="ml-5 w-auto" />
           <div className="p-2">
             <Button
               className="w-full"

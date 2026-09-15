@@ -24,7 +24,7 @@ export function DirectionLabel({
         className={cn(
           "flex size-8 shrink-0 items-center justify-center rounded-full",
           incoming
-            ? "bg-primary/12 text-link dark:bg-primary/24"
+            ? "bg-tint text-link"
             : "bg-secondary text-muted-foreground",
         )}
       >

@@ -20,7 +20,7 @@ const buttonVariants = cva(
         default:
           "bg-primary text-primary-foreground hover:bg-primary-hover disabled:hover:bg-primary",
         tinted:
-          "bg-primary/12 text-link hover:bg-primary/18 dark:bg-primary/24 dark:hover:bg-primary/30",
+          "bg-tint text-link hover:bg-tint-hover aria-expanded:bg-tint-hover",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-foreground/12 aria-expanded:bg-foreground/12",
         outline:
