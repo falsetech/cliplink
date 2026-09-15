@@ -32,7 +32,8 @@ app/                      App Router: pages + API routes
   rooms/[code]/socket/    GET — WebSocket upgrade (clips + WebRTC signaling)
 components/
   cliplink-app.tsx        The room experience (client component)
-  cliplink/               File transfer UI and hooks
+  cliplink/               Room UI, sheets and hooks
+  ui/                     shadcn components (Base UI), restyled to Apple conventions
 lib/cliplink/             All domain logic
 lib/utils.ts              cn() — clsx + tailwind-merge
 packages/
@@ -68,7 +69,7 @@ There is **no** `src/`, `hooks/`, `store/`, or `server/` directory.
 
 ### Stack
 
-Next.js 16 App Router · React 19 · TypeScript · Tailwind CSS v4 · Upstash Redis (`@upstash/redis`, `@upstash/ratelimit`) · `ioredis` for pub/sub · `ws` · `next-themes` · WebRTC data channels.
+Next.js 16 App Router · React 19 · TypeScript · Tailwind CSS v4 · Upstash Redis (`@upstash/redis`, `@upstash/ratelimit`) · `ioredis` for pub/sub · `ws` · `next-themes` · shadcn/ui on Base UI (`@base-ui/react`), Sonner for toasts, `lucide-react` · WebRTC data channels.
 
 There is **no** Prisma, NextAuth, Vercel AI SDK, or Zod in this project. Do not add a dependency for something the codebase already does by hand.
 
@@ -76,6 +77,8 @@ There is **no** Prisma, NextAuth, Vercel AI SDK, or Zod in this project. Do not 
 
 - TypeScript throughout; no new `any`.
 - Tailwind utility classes, canonical names, no arbitrary values where a token exists.
+- Colours are OKLCH tokens in `app/globals.css` on shadcn's names (`primary`, `muted-foreground`, …) plus `link`, `success` and `warning`. `--primary` is the filled-button blue; use `text-link` for blue text. The system font stack is deliberate — no web fonts.
+- `shadcn` rewrites `lib/utils.ts` and imports `cn` from a package called `cn` on init/add; point imports back at `@/lib/utils`.
 - Shared logic in `lib/cliplink/`, UI in `components/`, routes in `app/`.
 - Commit messages: imperative subject, no `Co-Authored-By` trailers.
 - Run `pnpm lint && pnpm type-check && pnpm build` before declaring work done.

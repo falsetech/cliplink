@@ -36,7 +36,7 @@ export function KeyPrompt({
       open={open}
       onClose={onClose}
       label={`Room ${roomCode} key`}
-      className="max-w-125"
+      className="max-w-lg"
     >
       <KeyPromptBody
         roomCode={roomCode}

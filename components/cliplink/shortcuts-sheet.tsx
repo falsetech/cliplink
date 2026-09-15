@@ -21,7 +21,7 @@ export function ShortcutsSheet({ open, actions, onClose }: ShortcutsSheetProps) 
       open={open}
       onClose={onClose}
       label="Keyboard shortcuts"
-      className="max-w-125"
+      className="max-w-lg"
     >
       <ShortcutsBody actions={actions} />
     </Sheet>
