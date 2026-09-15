@@ -11,6 +11,10 @@ Send files peer-to-peer over WebRTC data channels, with the parts that are easy 
 - **Backpressure.** Stops sending at a high-water mark on `bufferedAmount` and resumes on `bufferedamountlow`, so large files don't fill the send queue and kill the channel.
 - **Chunking.** Chunks are capped at the SCTP `maxMessageSize` the connection actually negotiated.
 - **Stall detection.** A transfer that makes no progress fails with a code instead of hanging forever.
+- **Integrity checks.** Every 1 MiB is verified against a SHA-256 digest before it's kept.
+- **Resume.** A download that drops part way picks up from its last verified block instead of starting over.
+- **Stream to disk.** Downloads can write into any sink, such as a file from `showSaveFilePicker`, so large files never have to fit in memory.
+- **Progress.** Incoming items report bytes, a smoothed transfer rate, and time left.
 - **Offer / request / revoke.** Senders announce metadata and hold only a `File` reference. Receivers pull the file when they choose, and senders can withdraw an offer mid-download.
 - **Untrusted peers.** Signals are validated field by field, file names are sanitized, and a sender that sends more or fewer bytes than it announced is rejected.
 
@@ -42,7 +46,8 @@ const files = createFileTransferManager({
   },
   onItemsChange: (items) => render(items),
   onNotice: (notice) => {
-    if (notice.type === "received") saveBlob(notice.item.blob!, notice.item.name);
+    // `blob` is set unless the download went into a sink of your own.
+    if (notice.type === "received" && notice.item.blob) saveBlob(notice.item.blob, notice.item.name);
     if (notice.type === "failed") console.warn(notice.code, notice.message);
   },
 });
@@ -80,6 +85,12 @@ When your signaling layer sees a peer disconnect, tell the manager with `files.h
 | `capabilities` | Protocol features to advertise: `blocks` and `resume`. Defaults to both where `crypto.subtle` exists. Pass `[]` to behave exactly like a v1 peer. |
 | `createPeerConnection` | For environments without a global `RTCPeerConnection`, such as Node with a WebRTC polyfill. |
 
+The manager returns `handleSignal`, `announce`, `offerFiles`, `request`, `cancel`, `revoke`, `dismiss` and `dispose`.
+
+`offerFiles` returns `{ offered, rejected }`. Each rejection is `{ file, code: "empty" | "too-large", limit }`.
+
+While an incoming item is `transferring`, it also carries `bytesPerSecond` (a smoothed rate) and `etaMs`. Both are cleared when the transfer ends.
+
 ### Where received bytes go
 
 `request(id, { sink })` streams a download into a `FileSink` instead of memory. For example, a file the user picked with `showSaveFilePicker`:
@@ -96,13 +107,7 @@ files.request(item.id, {
 });
 ```
 
-Writes are serialized. `close` runs once every byte has arrived; return a `Blob` from it to expose one as `item.blob`, or return nothing and the item gets `savedToSink: true`. `abort` runs if the download fails or never starts, and a sink that throws fails the transfer with `write-error`. The receiver can't slow the sender down, so bytes that arrive faster than the sink writes them queue in memory. Without a sink, the download is assembled in memory as a `Blob`, as before.
-
-The manager returns `handleSignal`, `announce`, `offerFiles`, `request`, `cancel`, `revoke`, `dismiss` and `dispose`.
-
-While an incoming item is `transferring`, it also carries `bytesPerSecond` (a smoothed rate) and `etaMs`. Both are cleared when the transfer ends.
-
-`offerFiles` returns `{ offered, rejected }`. Each rejection is `{ file, code: "empty" | "too-large", limit }`.
+Writes are serialized. `close` runs once every byte has arrived; return a `Blob` from it to expose one as `item.blob`, or return nothing and the item gets `savedToSink: true`. `abort` runs if the download fails or never starts, and a sink that throws fails the transfer with `write-error`. The receiver can't slow the sender down, so bytes that arrive faster than the sink writes them queue in memory. Without a sink, the download is assembled in memory as a `Blob`.
 
 ### Resuming
 
@@ -132,7 +137,7 @@ Newer peers negotiate optional features through fields that v1 peers never send 
 
 ## Why not simple-peer or PeerJS?
 
-Both give you a connection and a channel. Neither gives you file semantics: you still have to write chunking, flow control against `bufferedAmount`, completion and integrity checks, stall handling, and offer/withdraw state. This package covers only that layer, and you can use it next to either library.
+Both give you a connection and a channel. Neither gives you file semantics: you still have to write chunking, flow control against `bufferedAmount`, completion and integrity checks, resume, stall handling, and offer/withdraw state. This package covers only that layer, and you can use it next to either library.
 
 ## Contributing
 

@@ -81,7 +81,6 @@ jobs:
           fi
           {
             echo "📦 https://www.npmjs.com/package/@thebkht/rtc-file-transfer"
-            echo
             printf '%s\n' "${section}"
           } > release-notes.md
           gh release create "${GITHUB_REF_NAME}" \
