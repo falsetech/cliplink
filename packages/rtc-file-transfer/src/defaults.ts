@@ -1,6 +1,11 @@
 export type TransferLimits = {
   /** Largest file that may be offered or accepted. */
   maxFileBytes: number;
+  /**
+   * Largest download `request` assembles in memory. Anything bigger needs a
+   * `sink`, such as one from `@thebkht/rtc-file-transfer/sinks`.
+   */
+  maxMemoryBytes: number;
   /** Upper bound on a chunk; lowered further to the channel's max message size. */
   chunkBytes: number;
   /** Stop sending while the channel has this much queued. */
@@ -14,7 +19,8 @@ export type TransferLimits = {
 };
 
 export const DEFAULT_LIMITS: TransferLimits = {
-  maxFileBytes: 500 * 1024 * 1024,
+  maxFileBytes: 64 * 1024 * 1024 * 1024,
+  maxMemoryBytes: 500 * 1024 * 1024,
   chunkBytes: 64 * 1024,
   bufferHighBytes: 4 * 1024 * 1024,
   bufferLowBytes: 1024 * 1024,

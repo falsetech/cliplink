@@ -1,124 +1,86 @@
 import type { FileSink } from "@thebkht/rtc-file-transfer";
+import {
+  canPickFile,
+  clearOpfs,
+  directorySink,
+  hasOpfs,
+  opfsSink,
+  pickFileSink,
+} from "@thebkht/rtc-file-transfer/sinks";
 
-type SaveFilePicker = (options?: {
-  suggestedName?: string;
-}) => Promise<FileSystemFileHandle>;
+import { createRandomId } from "./session";
 
-function getSaveFilePicker(): SaveFilePicker | null {
-  if (typeof window === "undefined") {
-    return null;
+export { canPickDirectory, pickDirectory } from "@thebkht/rtc-file-transfer/sinks";
+
+/** Writes one file of a batch to `path/name` under the picked folder. */
+export const createDirectorySink = directorySink;
+
+/**
+ * Each tab keeps its OPFS downloads in a folder of its own, held under a Web
+ * Lock for the tab's lifetime. A tab can't clean up when it is closed, so the
+ * next tab to start removes every folder whose lock nobody holds any more.
+ */
+const OPFS_PREFIX = "cliplink-";
+const opfsDirectory = `${OPFS_PREFIX}${createRandomId()}`;
+let opfsClaimed = false;
+
+function claimOpfsDirectory() {
+  if (opfsClaimed || typeof navigator === "undefined" || !navigator.locks) {
+    return;
   }
-  const picker = (window as Window & { showSaveFilePicker?: SaveFilePicker })
-    .showSaveFilePicker;
-  return typeof picker === "function" ? picker.bind(window) : null;
+  opfsClaimed = true;
+  void navigator.locks
+    .request(opfsDirectory, () => new Promise<never>(() => {}))
+    .catch(() => {});
+  void removeAbandonedOpfsDirectories();
 }
 
-/** File System Access is Chromium-only; everywhere else downloads stay in memory. */
+async function removeAbandonedOpfsDirectories() {
+  try {
+    const held = new Set(
+      ((await navigator.locks.query()).held ?? []).map((lock) => lock.name),
+    );
+    const root = await navigator.storage.getDirectory();
+    const names = (root as unknown as { keys(): AsyncIterable<string> }).keys();
+    for await (const name of names) {
+      if (name.startsWith(OPFS_PREFIX) && name !== opfsDirectory && !held.has(name)) {
+        await root.removeEntry(name, { recursive: true }).catch(() => {});
+      }
+    }
+  } catch {
+    // leftovers wait for the next tab
+  }
+}
+
+/** Large downloads can stream to disk: a picked file, or the private file system. */
 export function canPickDiskSink() {
-  return getSaveFilePicker() !== null;
+  return canPickFile() || hasOpfs();
 }
 
 /**
- * Asks where to save a download and streams it straight there, so a large file
- * never has to fit in memory.
+ * Streams a large download to disk so it never has to fit in memory: into a
+ * file the user picks where the browser allows it (Chromium), otherwise into
+ * the origin's private file system (Firefox, Safari), which then saves like a
+ * normal download.
  *
  * Must be called from the click that started the download: the picker needs
  * user activation. Throws the picker's AbortError when the user dismisses it,
- * so the caller can drop the download; any other failure returns null and the
- * caller falls back to the in-memory sink.
+ * so the caller can drop the download; null means fall back to memory.
  */
 export async function pickDiskSink(name: string): Promise<FileSink | null> {
-  const picker = getSaveFilePicker();
-  if (!picker) {
+  if (canPickFile()) {
+    return pickFileSink(name);
+  }
+  if (!hasOpfs()) {
     return null;
   }
-
-  let writable: FileSystemWritableFileStream;
-  try {
-    const handle = await picker({ suggestedName: name });
-    writable = await handle.createWritable();
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw error;
-    }
-    return null;
-  }
-
-  return {
-    write: (chunk) => writable.write(chunk),
-    close: () => writable.close(),
-    abort: () => writable.abort(),
-  };
+  claimOpfsDirectory();
+  return opfsSink(name, { directory: opfsDirectory });
 }
 
-type DirectoryPicker = (options?: {
-  mode?: "read" | "readwrite";
-}) => Promise<FileSystemDirectoryHandle>;
-
-function getDirectoryPicker(): DirectoryPicker | null {
-  if (typeof window === "undefined") {
-    return null;
+/** Deletes this tab's OPFS downloads, e.g. on leaving the room. */
+export function releaseDiskFiles() {
+  if (opfsClaimed) {
+    void clearOpfs({ directory: opfsDirectory });
   }
-  const picker = (window as Window & { showDirectoryPicker?: DirectoryPicker })
-    .showDirectoryPicker;
-  return typeof picker === "function" ? picker.bind(window) : null;
-}
-
-export function canPickDirectory() {
-  return getDirectoryPicker() !== null;
-}
-
-/**
- * Asks for a folder to save a batch of downloads into. Same contract as
- * `pickDiskSink`: call it from the click, AbortError means the user dismissed
- * it, and null means fall back to saving files one by one.
- */
-export async function pickDirectory(): Promise<FileSystemDirectoryHandle | null> {
-  const picker = getDirectoryPicker();
-  if (!picker) {
-    return null;
-  }
-  try {
-    return await picker({ mode: "readwrite" });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw error;
-    }
-    return null;
-  }
-}
-
-/**
- * Writes one file of a batch to `path/name` under the picked folder. The file
- * is only created when its first byte arrives, so a queued download that never
- * starts leaves nothing behind.
- */
-export function createDirectorySink(
-  root: FileSystemDirectoryHandle,
-  path: string | undefined,
-  name: string,
-): FileSink {
-  let opening: Promise<FileSystemWritableFileStream> | null = null;
-
-  const open = () => {
-    opening ??= (async () => {
-      let directory = root;
-      for (const segment of path ? path.split("/") : []) {
-        directory = await directory.getDirectoryHandle(segment, { create: true });
-      }
-      const handle = await directory.getFileHandle(name, { create: true });
-      return handle.createWritable();
-    })();
-    return opening;
-  };
-
-  return {
-    write: async (chunk) => (await open()).write(chunk),
-    close: async () => (await open()).close(),
-    abort: async () => {
-      if (opening) {
-        await (await opening).abort();
-      }
-    },
-  };
 }

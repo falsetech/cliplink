@@ -57,7 +57,10 @@ export const MAX_FILE_ITEMS = 100;
  * below ZIP's own 4 GiB limit.
  */
 export const MAX_ZIP_BYTES = 1024 * 1024 * 1024;
-/** Downloads this large stream to a picked file where the browser allows it. */
+/**
+ * Downloads this large stream to disk: a picked file in Chromium, the private
+ * file system elsewhere.
+ */
 export const DISK_SINK_MIN_BYTES = 64 * 1024 * 1024;
 // Sealing inflates a signal by base64's 4/3 plus a nonce and a tag, and an SDP
 // offer already approached the old 16 KB ceiling. Left there, the socket's

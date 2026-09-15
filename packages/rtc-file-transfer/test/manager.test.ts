@@ -270,6 +270,30 @@ describe("file transfer", () => {
     );
   });
 
+  it("refuses to download a file over maxMemoryBytes into memory, but takes a sink", async () => {
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00", { limits: { maxMemoryBytes: 1024 } });
+    const source = randomBytes(4096);
+    alice.manager.offerFiles([new File([source], "large.bin")]);
+    await waitFor(() => incoming(bob).length === 1);
+    const id = incoming(bob)[0].id;
+
+    assert.equal(bob.manager.request(id), false);
+    assert.equal(failure(bob)?.code, "needs-sink");
+    assert.equal(incoming(bob)[0].status, "offered");
+
+    const written: Uint8Array<ArrayBuffer>[] = [];
+    const sink = {
+      write: (chunk: Uint8Array<ArrayBuffer>) => void written.push(chunk.slice()),
+      close: () => {},
+      abort: () => {},
+    };
+    assert.equal(bob.manager.request(id, { sink }), true);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"));
+    assert.deepEqual(new Uint8Array(await new Blob(written).arrayBuffer()), source);
+  });
+
   it("fails a stalled transfer", async () => {
     bus = new FakeSignaling();
     bus.addPeer("peer-alice", { limits: { stallMs: 50 } });
