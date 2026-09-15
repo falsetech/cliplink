@@ -1,10 +1,14 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import { formatCountdown } from "@/lib/cliplink/format";
 import { cn } from "@/lib/utils";
 
 import { IconCopy, IconQr } from "./icons";
-import { actionButtonClass } from "./ui";
+
+/** On narrow phones the three actions share the row evenly. */
+const actionFlex = "max-[430px]:flex-1";
+
 
 type RoomHeaderProps = {
   roomCode: string;
@@ -32,25 +36,21 @@ export function RoomHeader({
   deviceCount,
 }: RoomHeaderProps) {
   return (
-    <div className="flex flex-col items-stretch justify-between gap-4 md:flex-row md:items-start">
-      <div className="flex flex-col items-start gap-2 md:flex-row md:flex-wrap md:items-center md:gap-3">
-        <span className="text-2xs text-muted-foreground uppercase">
-          Room
-        </span>
-        <button
-          className="inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-primary/30 bg-transparent px-2.5 text-lg font-bold tracking-code text-link tabular-nums transition-[background-color,scale] duration-150 ease-out hover:bg-primary/10 focus-visible:bg-primary/10 active:scale-[0.96] md:min-h-10 md:px-3 md:text-xl"
-          type="button"
+    <div className="flex flex-col items-stretch justify-between gap-4 md:flex-row md:items-center">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Button
+          variant="tinted"
+          className="h-11 px-4 font-mono text-xl font-semibold tracking-code tabular-nums pointer-coarse:h-11"
           aria-label={`Copy invite link for room ${roomCode}`}
           aria-keyshortcuts="L"
           onClick={onCopyLink}
         >
           {roomCode}
-        </button>
+        </Button>
 
-        {/* Status, not a section label, so it does not wear the uppercase
-            tracking the labels use — and "5h 57m" uppercased to "5H 57M" read
-            as initials rather than units. */}
-        <div className="flex items-center gap-2 text-2xs text-muted-foreground">
+        {/* Status, not a label: "5h 57m" stays lowercase so it reads as
+            units rather than initials. */}
+        <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
           {deviceCount > 1 ? <span>{deviceCount} devices</span> : null}
           {deviceCount > 1 && expiresIn !== null ? (
             <span aria-hidden="true">·</span>
@@ -60,42 +60,42 @@ export function RoomHeader({
             // every tick is hostile to a screen reader.
             <span aria-live="off" className="tabular-nums">
               {expiresIn === 0
-                ? "expired"
-                : `expires in ${formatCountdown(expiresIn)}`}
+                ? "Expired"
+                : `Expires in ${formatCountdown(expiresIn)}`}
             </span>
           ) : null}
         </div>
       </div>
 
-      <div className="flex flex-wrap justify-start gap-2 md:justify-end">
-        <button className={actionButtonClass} type="button" onClick={onShare}>
-          <IconCopy size={12} />
+      <div className="flex flex-wrap gap-2">
+        <Button className={actionFlex} variant="secondary" size="sm" onClick={onShare}>
+          <IconCopy size={14} />
           Share Link
-        </button>
-        <button
-          className={actionButtonClass}
-          type="button"
+        </Button>
+        <Button
+          className={actionFlex}
+          variant="secondary"
+          size="sm"
           aria-haspopup="dialog"
           aria-expanded={qrOpen}
           aria-keyshortcuts="Q"
           onClick={onOpenQr}
         >
-          <IconQr size={12} />
-          QR
-        </button>
-        <button
+          <IconQr size={14} />
+          QR Code
+        </Button>
+        <Button
           className={cn(
-            actionButtonClass,
-            confirmingLeave
-              ? "border-destructive text-destructive"
-              : "hover:border-destructive hover:text-destructive focus-visible:border-destructive focus-visible:text-destructive",
+            actionFlex,
+            !confirmingLeave && "hover:bg-destructive/12 hover:text-destructive",
           )}
-          type="button"
+          variant={confirmingLeave ? "destructive" : "secondary"}
+          size="sm"
           aria-keyshortcuts="X"
           onClick={onLeave}
         >
-          {confirmingLeave ? "Confirm leave" : "Leave"}
-        </button>
+          {confirmingLeave ? "Confirm Leave" : "Leave"}
+        </Button>
       </div>
     </div>
   );

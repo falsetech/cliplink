@@ -26,8 +26,13 @@ export const panelToolClass = cn(
 export const panelAccentClass =
   "bg-primary text-primary-foreground hover:bg-primary-hover hover:text-primary-foreground disabled:hover:bg-primary";
 
+/**
+ * A list row. On phones the direction label and the row's action share the
+ * first line and the content takes the full width below; from `md` it is one
+ * line.
+ */
 export const rowClass =
-  "relative grid grid-cols-[48px_1fr] items-start gap-2.5 rounded-2xl bg-card p-3 shadow-row md:flex md:items-start md:gap-3 md:px-4 md:py-3";
+  "relative grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-2 rounded-2xl bg-card p-3 shadow-row md:flex md:gap-4 md:px-4";
 
 /** Solid card surface for sheets and panels. */
 export const panelSurfaceStyle = { background: "var(--card)" };
