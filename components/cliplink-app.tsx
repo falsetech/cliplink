@@ -29,10 +29,12 @@ import {
 import { ShortcutsSheet } from "@/components/cliplink/shortcuts-sheet";
 import { Toasts } from "@/components/cliplink/toasts";
 import {
-  chromeButtonClass,
   headerSurfaceStyle,
   panelSurfaceStyle,
 } from "@/components/cliplink/ui";
+import { Wordmark } from "@/components/cliplink/wordmark";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { useClipEditor } from "@/components/cliplink/use-clip-editor";
 import { useRoomExpiry } from "@/components/cliplink/use-room-expiry";
 import { useFileTransfer } from "@/components/cliplink/use-file-transfer";
@@ -102,7 +104,7 @@ type StatusTone = "idle" | "good" | "busy" | "warn" | "bad";
 
 /**
  * One source for the word and the colour, so they cannot disagree. Polling had
- * been reading as LIVE-green while the label said the connection was degraded
+ * been reading as Live-green while the label said the connection was degraded
  * — the dot said everything was fine and the word said it was not.
  */
 function statusFor(
@@ -112,24 +114,24 @@ function statusFor(
   switch (status) {
     case "live":
       return realtimeReady
-        ? { label: "LIVE", tone: "good" }
-        : { label: "POLLING", tone: "warn" };
+        ? { label: "Live", tone: "good" }
+        : { label: "Polling", tone: "warn" };
     case "syncing":
-      return { label: "SYNCING", tone: "busy" };
+      return { label: "Syncing", tone: "busy" };
     case "error":
-      return { label: "ERROR", tone: "bad" };
+      return { label: "Error", tone: "bad" };
     default:
-      return { label: "OFFLINE", tone: "idle" };
+      return { label: "Offline", tone: "idle" };
   }
 }
 
 const DOT_TONE: Record<StatusTone, string> = {
-  idle: "",
-  good: "bg-success text-success after:opacity-100",
+  idle: "bg-muted-foreground",
+  good: "bg-success",
   // Steady, not pulsing: polling is a settled state, not work in progress.
-  warn: "bg-primary text-link after:opacity-100",
-  busy: "animate-[pulse_1s_ease-in-out_infinite] bg-primary text-link after:opacity-100",
-  bad: "bg-destructive text-destructive after:opacity-100",
+  warn: "bg-warning",
+  busy: "animate-[pulse_1s_ease-in-out_infinite] bg-link",
+  bad: "bg-destructive",
 };
 
 type CliplinkAppProps = {
@@ -842,7 +844,7 @@ export default function CliplinkApp({
   const sheetOpen = showQrSheet || showShortcuts || showPalette;
   const expiresIn = useRoomExpiry(room.expiresAt);
   const status = room.locked
-    ? { label: "LOCKED", tone: "warn" as const }
+    ? { label: "Locked", tone: "warn" as const }
     : statusFor(room.status, room.realtimeReady);
   const trimmedLength = editor.text.trim().length;
   const canSend =
@@ -917,51 +919,49 @@ export default function CliplinkApp({
       <div className="flex min-h-screen flex-col">
         <header
           data-scrolled={scrolled}
-          className="sticky top-0 z-30 flex items-center justify-between px-3.5 py-3 backdrop-blur-(--chrome-blur) after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-4 after:bg-linear-to-b after:from-page-top after:to-transparent after:opacity-0 after:transition-opacity after:duration-200 after:content-[''] data-[scrolled=true]:after:opacity-70 sm:px-5 sm:py-3.5 md:px-8 md:py-4.5"
+          // A translucent material with content scrolling beneath it. The
+          // hairline appears only once there is something under the bar to
+          // separate from; at rest the bar is part of the page.
+          className="sticky top-0 z-30 flex items-center justify-between px-4 py-3 shadow-[0_1px_0_transparent] backdrop-blur-(--chrome-blur) backdrop-saturate-180 transition-shadow duration-200 data-[scrolled=true]:shadow-[0_1px_0_var(--border)] sm:px-5 md:px-8 md:py-4"
           style={headerSurfaceStyle}
         >
-          <div className="font-display text-xl font-extrabold tracking-display md:text-2xl">
-            CLIP
-            <span className="text-link">LINK</span>
-          </div>
-          <div className="flex items-center gap-1.5 sm:gap-2 md:gap-3">
+          <Wordmark />
+          <div className="flex items-center gap-2 md:gap-3">
             {/* There is nothing to be connected to before a room exists, and
-                "OFFLINE" on the landing screen reads as a fault when none has
+                "Offline" on the landing screen reads as a fault when none has
                 happened. */}
             {joined ? (
-              <div
-                className="inline-flex items-center gap-1.5 text-2xs text-muted-foreground uppercase md:gap-2"
+              <Badge
+                variant="secondary"
+                className="h-7 gap-1.5 px-2.5 text-muted-foreground"
                 aria-live="polite"
               >
                 <span
                   className={cn(
-                    "relative h-1.75 w-1.75 rounded-full bg-muted-foreground transition-colors duration-200",
-                    // The glow is an opacity-animated pseudo-element rather than a
-                    // transitioned box-shadow, which the compositor cannot handle.
-                    "after:absolute after:inset-0 after:rounded-full after:opacity-0 after:shadow-[0_0_10px_currentColor] after:transition-opacity after:duration-200 after:content-['']",
+                    "size-1.5 rounded-full transition-colors duration-200",
                     DOT_TONE[status.tone],
                   )}
                 />
-                <span>{status.label}</span>
-              </div>
+                {status.label}
+              </Badge>
             ) : null}
             {joined ? (
-              <button
-                className={chromeButtonClass}
-                type="button"
+              <Button
+                variant="secondary"
+                size="icon"
                 aria-label="Keyboard shortcuts"
                 aria-keyshortcuts="?"
                 onClick={() => setShowShortcuts(true)}
               >
-                <span aria-hidden="true" className="font-mono text-sm">
+                <span aria-hidden="true" className="text-sm font-semibold">
                   ?
                 </span>
-              </button>
+              </Button>
             ) : null}
             {repoLink}
-            <button
-              className={chromeButtonClass}
-              type="button"
+            <Button
+              variant="secondary"
+              size="icon"
               aria-label={
                 mounted && resolvedTheme === "light"
                   ? "Switch to dark theme"
@@ -974,14 +974,14 @@ export default function CliplinkApp({
                 size={16}
                 theme={mounted && resolvedTheme === "light" ? "light" : "dark"}
               />
-            </button>
+            </Button>
           </div>
         </header>
 
         <div ref={scrollSentinelRef} aria-hidden="true" className="h-px" />
 
-        <main className="flex flex-1 justify-center px-3 py-5.5 pb-12 sm:px-4 sm:py-7 sm:pb-14 md:px-6 md:py-14 md:pb-18">
-          <div className="w-full max-w-190">
+        <main className="flex flex-1 justify-center px-4 py-8 pb-12 md:px-6 md:py-16 md:pb-18">
+          <div className="w-full max-w-3xl">
             {!joined && share ? (
               <ShareBanner
                 state={shareState}
@@ -998,7 +998,7 @@ export default function CliplinkApp({
                 onJoin={() => void joinExistingRoom(joinCode)}
               />
             ) : (
-              <section className="flex w-full flex-col gap-4.5 md:gap-6">
+              <section className="flex w-full flex-col gap-5 md:gap-6">
                 <RoomHeader
                   roomCode={roomCode!}
                   qrOpen={showQrSheet}

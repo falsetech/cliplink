@@ -1,6 +1,8 @@
 import { REPO_URL } from "@/lib/cliplink/github";
+import { cn } from "@/lib/utils";
 
 import { IconGitHub, IconStar } from "./icons";
+import { chromeButtonClass } from "./ui";
 
 const compact = new Intl.NumberFormat("en", {
   notation: "compact",
@@ -15,7 +17,10 @@ type RepoLinkProps = {
 export function RepoLink({ stars }: RepoLinkProps) {
   return (
     <a
-      className="inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-full border border-input bg-muted px-3 text-2xs text-muted-foreground tabular-nums transition-[color,border-color,scale] duration-150 ease-out hover:border-primary hover:text-foreground focus-visible:border-primary focus-visible:text-foreground active:scale-[0.96] md:min-h-10 md:min-w-10"
+      className={cn(
+        chromeButtonClass,
+        stars !== null && "w-auto gap-1.5 px-3 text-xs tabular-nums text-muted-foreground hover:text-foreground pointer-coarse:w-auto",
+      )}
       href={REPO_URL}
       target="_blank"
       rel="noopener noreferrer"
