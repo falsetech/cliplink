@@ -270,44 +270,6 @@
   }
 }
 
-@keyframes toast-in-soft {
-  from {
-    opacity: 0;
-    transform: translateY(12px) scale(0.98);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-/* Overshoot is reserved for arrivals the user did not initiate. */
-@keyframes toast-in-arrival {
-  from {
-    opacity: 0;
-    transform: translateY(20px) scale(0.96);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-/* Exits mirror the path in, and are softer than the enter. */
-@keyframes toast-out {
-  from {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-
-  to {
-    opacity: 0;
-    transform: translateY(12px) scale(0.98);
-  }
-}
-
 @keyframes sheet-in {
   from {
     opacity: 0;

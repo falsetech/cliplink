@@ -27,11 +27,11 @@ import {
   type ShareState,
 } from "@/components/cliplink/share-banner";
 import { ShortcutsSheet } from "@/components/cliplink/shortcuts-sheet";
-import { Toasts } from "@/components/cliplink/toasts";
 import { headerSurfaceStyle } from "@/components/cliplink/ui";
 import { Wordmark } from "@/components/cliplink/wordmark";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Toaster } from "@/components/ui/sonner";
 import { useClipEditor } from "@/components/cliplink/use-clip-editor";
 import { useRoomExpiry } from "@/components/cliplink/use-room-expiry";
 import { useFileTransfer } from "@/components/cliplink/use-file-transfer";
@@ -186,7 +186,7 @@ export default function CliplinkApp({
   );
 
   const { resolvedTheme, setTheme } = useTheme();
-  const { toasts, push: pushToast, dismiss: dismissToast } = useToasts();
+  const { push: pushToast } = useToasts();
 
   const senderIdRef = useRef("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1086,7 +1086,9 @@ export default function CliplinkApp({
         />
       ) : null}
 
-      <Toasts toasts={toasts} onDismiss={dismissToast} />
+      {/* Above the sheets, as the old toast column was: a toast raised
+          from inside a sheet must not be hidden behind its scrim. */}
+      <Toaster position="bottom-center" visibleToasts={3} className="z-90!" />
     </>
   );
 }
