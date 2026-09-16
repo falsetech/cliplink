@@ -18,7 +18,7 @@ Send files peer-to-peer over WebRTC data channels, with the parts that are easy 
 - **Offer / request / revoke.** Senders announce metadata and hold only a `File` reference. Receivers pull the file when they choose, and senders can withdraw an offer mid-download.
 - **Untrusted peers.** Signals are validated field by field, file names are sanitized, and a sender that sends more or fewer bytes than it announced is rejected.
 
-It has zero dependencies, is framework-agnostic ESM, and works with your own signaling: WebSocket, Socket.IO, Supabase Realtime, `BroadcastChannel`, or anything else that moves JSON between peers. File bytes never pass through your server.
+It has zero dependencies, is framework-agnostic ESM, and works with your own signaling: WebSocket, Socket.IO, Supabase Realtime, `BroadcastChannel`, or anything else that moves JSON between peers — with [adapters](#signaling-adapters) ready for most of them. File bytes never pass through your server.
 
 Extracted from [CLIPLINK](https://cliplink.thebkht.com) ([source](https://github.com/thebkht/cliplink)), where it runs in production. Try a transfer there between two devices to see it working.
 
@@ -68,6 +68,33 @@ files.request(item.id);
 ```
 
 When your signaling layer sees a peer disconnect, tell the manager with `files.handleSignal(peerId, { type: "peer-left" })`. `parseFileSignal` always rejects `peer-left` coming from a peer, so a peer can't claim that someone else left.
+
+## Signaling adapters
+
+`@thebkht/rtc-file-transfer/adapters` wires the manager to a transport you already have, so the snippet above becomes:
+
+```ts
+import { webSocketSignaling } from "@thebkht/rtc-file-transfer/adapters";
+
+const signaling = webSocketSignaling(socket, myId);
+const files = createFileTransferManager({ peerId: myId, sendSignal: signaling.sendSignal, ... });
+const detach = signaling.connect(files);
+```
+
+`connect` validates every inbound signal with `parseFileSignal`, ignores signals addressed to another peer, calls `announce()` once the transport is ready, and returns a function that stops it all.
+
+| Adapter | Notes |
+| --- | --- |
+| `webSocketSignaling(socket, peerId)` | Messages are `{"rtc-file-transfer":{from,to,payload}}`, so they can share a socket with your own traffic. Your server knows about disconnects; this doesn't, so send `peer-left` yourself. |
+| `broadcastChannelSignaling(channel, peerId)` | Tabs of one origin. A tab says goodbye when it detaches or the page goes away. |
+| `supabaseSignaling(channel, peerId)` | Broadcast events on a subscribed Realtime channel. |
+| `trysteroSignaling(room, peerId)` | Its own Trystero action, using Trystero's own routing, joins and leaves. |
+| `peerJsSignaling(peer)` | Tracks data connections; `connectTo(id)` opens one. The sender is the connection it arrived on, never the envelope. |
+| `simplePeerSignaling(peer, remoteId)` | One connection, alongside your own messages on it. |
+
+They work next to simple-peer and PeerJS rather than replacing them: those give you a connection, this gives you file semantics on top.
+
+Anything else still works the way the example above does — an adapter is a convenience, not a requirement.
 
 ## API
 

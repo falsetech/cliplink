@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { ServiceWorker } from "@/components/cliplink/service-worker";
+import { Analytics } from "@vercel/analytics/next";
 
 import { AppThemeProvider } from "./theme-provider";
 import "./globals.css";
@@ -44,13 +45,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      suppressHydrationWarning
-    >
+    <html lang="en" suppressHydrationWarning>
       <body className="antialiased">
         <AppThemeProvider>{children}</AppThemeProvider>
         <ServiceWorker />
+        <Analytics />
       </body>
     </html>
   );
