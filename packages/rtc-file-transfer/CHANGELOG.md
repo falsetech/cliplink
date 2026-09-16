@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.0
+
+- `@thebkht/rtc-file-transfer/adapters`: signaling adapters for transports you already have — `webSocketSignaling`, `broadcastChannelSignaling`, `supabaseSignaling`, `trysteroSignaling`, `peerJsSignaling` and `simplePeerSignaling`. Each validates inbound signals with `parseFileSignal`, drops signals meant for another peer, reports departures where the transport knows about them, and announces once it is ready. The library types are structural, so there are still no dependencies.
+
 ## 0.6.0
 
 - `@thebkht/rtc-file-transfer/sinks`: ready-made sinks for a file the user picks (`pickFileSink`), a folder (`pickDirectory`, `directorySink`), the Origin Private File System (`opfsSink`, `clearOpfs`), and any writable stream (`writableSink`), plus `bestSink` and the `canPickFile`, `canPickDirectory` and `hasOpfs` checks. OPFS brings streaming to disk to Firefox and Safari.
