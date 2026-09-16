@@ -12,7 +12,7 @@ Send files peer-to-peer over WebRTC data channels, with the parts that are easy 
 - **Chunking.** Chunks are capped at the SCTP `maxMessageSize` the connection actually negotiated.
 - **Stall detection.** A transfer that makes no progress fails with a code instead of hanging forever.
 - **Integrity checks.** Every 1 MiB is verified against a SHA-256 digest before it's kept, and an offer can carry a digest of the whole file that the receiver checks at the end.
-- **Resume and pause.** A download that drops part way — or that the user paused — picks up from its last verified block instead of starting over.
+- **Resume and pause.** A download that drops part way — or that the user paused — picks up from its last verified block instead of starting over, and with a resume store it survives a reload or a crash too.
 - **Stream to disk.** Downloads can write into any sink, so large files never have to fit in memory. Ready-made sinks cover a file the user picks, a folder, and the Origin Private File System, which works in every current browser.
 - **Progress.** Incoming items report bytes, a smoothed transfer rate, and time left.
 - **Offer / request / revoke.** Senders announce metadata and hold only a `File` reference. Receivers pull the file when they choose, and senders can withdraw an offer mid-download.
@@ -111,6 +111,7 @@ Anything else still works the way the example above does — an adapter is a con
 | `createId` | Id generator for offers and transfers. |
 | `capabilities` | Protocol features to advertise: `blocks`, `resume` and `flow`. Defaults to all of them where `crypto.subtle` exists. Pass `[]` to behave exactly like a v1 peer. |
 | `createPeerConnection` | For environments without a global `RTCPeerConnection`, such as Node with a WebRTC polyfill. |
+| `resume` | A `ResumeProvider` that keeps partial downloads across page loads. `opfsResume()` from `/sinks` is one. |
 
 The manager returns `handleSignal`, `announce`, `offerFiles`, `request`, `pause`, `resume`, `cancel`, `revoke`, `dismiss` and `dispose`.
 
@@ -158,6 +159,24 @@ files.offerFiles([...input.files!], { digest: true });
 ```
 
 It needs `blocks` on both sides. Only trust it as far as you trust your signaling: a sender that controls both paths can still make them agree. The first digest an offer arrives with is the one that is kept, so a later re-announce can't swap it.
+
+### Surviving a reload
+
+A dropped connection is one thing; a closed tab is another. Pass a `ResumeProvider` and a partial download outlives the page:
+
+```ts
+import { opfsResume } from "@thebkht/rtc-file-transfer/sinks";
+
+const files = createFileTransferManager({ ..., resume: opfsResume() });
+// The sender has to hash, so the offer carries an identity to resume against.
+files.offerFiles([...input.files!], { digest: true });
+```
+
+On the next load the offer comes back, the manager asks the store what it has, and the item shows `resumableBytes` before anything is requested. `request` then continues into the same file. The store also supplies the sink for a fresh download, so nothing else is needed for a file with a digest.
+
+`opfsResume()` writes fixed-size part files, closing each as it fills, because that is when bytes actually reach disk — so a reload replays at most one segment (64 MB by default; `segmentBytes` changes it). `close` returns the finished file as a Blob made of those parts, still backed by disk. A completed, revoked or dismissed file is deleted.
+
+Write your own by implementing `load`, `open`, `checkpoint` and `forget`. The one rule: `checkpoint` must report only what is durably written, because that is exactly what the next load resumes from.
 
 ### Pausing and resuming
 

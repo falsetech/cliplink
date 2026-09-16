@@ -1,5 +1,11 @@
 import { createRandomId } from "./defaults.ts";
-import type { FileSink } from "./manager.ts";
+import { BLOCK_BYTES } from "./protocol.ts";
+import type {
+  FileSink,
+  ResumeKey,
+  ResumeProvider,
+  ResumeState,
+} from "./manager.ts";
 
 /**
  * Ready-made `FileSink`s, so a download can stream to disk instead of memory.
@@ -31,7 +37,9 @@ export type WritableTarget =
     }
   | WritableStream<Uint8Array<ArrayBuffer>>;
 
-function pickerFrom<T>(name: "showSaveFilePicker" | "showDirectoryPicker"): T | null {
+function pickerFrom<T>(
+  name: "showSaveFilePicker" | "showDirectoryPicker",
+): T | null {
   if (typeof window === "undefined") {
     return null;
   }
@@ -120,7 +128,9 @@ function lazySink(
  * it, so the download can be dropped. Resolves null when the picker isn't
  * available or fails in any other way.
  */
-export async function pickFileSink(suggestedName: string): Promise<FileSink | null> {
+export async function pickFileSink(
+  suggestedName: string,
+): Promise<FileSink | null> {
   const picker = pickerFrom<SaveFilePicker>("showSaveFilePicker");
   if (!picker) {
     return null;
@@ -186,7 +196,9 @@ export type OpfsSinkOptions = {
 
 async function opfsDirectory(options: OpfsSinkOptions) {
   const root = options.root ?? (await navigator.storage.getDirectory());
-  return root.getDirectoryHandle(options.directory ?? OPFS_DIRECTORY, { create: true });
+  return root.getDirectoryHandle(options.directory ?? OPFS_DIRECTORY, {
+    create: true,
+  });
 }
 
 /**
@@ -197,19 +209,26 @@ async function opfsDirectory(options: OpfsSinkOptions) {
  * The file stays until `clearOpfs` removes it. The Blob stops being readable
  * once it is removed, so clear only after the user has saved or dismissed it.
  */
-export function opfsSink(name: string, options: OpfsSinkOptions = {}): FileSink {
+export function opfsSink(
+  name: string,
+  options: OpfsSinkOptions = {},
+): FileSink {
   // Unique on disk, so two downloads with the same name can't collide.
   const fileName = `${createRandomId()}-${name}`;
   let handle: FileSystemFileHandle | null = null;
   return lazySink(
     async () => {
-      handle = await (await opfsDirectory(options)).getFileHandle(fileName, { create: true });
+      handle = await (
+        await opfsDirectory(options)
+      ).getFileHandle(fileName, { create: true });
       return handle.createWritable();
     },
     async () => handle!.getFile(),
     async () => {
       if (handle) {
-        await (await opfsDirectory(options)).removeEntry(fileName).catch(() => {});
+        await (await opfsDirectory(options))
+          .removeEntry(fileName)
+          .catch(() => {});
       }
     },
   );
@@ -244,4 +263,226 @@ export async function bestSink(
     }
   }
   return hasOpfs() ? opfsSink(item.name, options) : undefined;
+}
+
+// -----------------------------------------------------------------------------
+// Resuming after a reload
+
+/**
+ * How much is written before a part file is closed. `createWritable` only
+ * commits on `close`, so this is also how much a reload can lose: at most one
+ * segment is fetched again. A multiple of the manager's 1 MiB block.
+ */
+const DEFAULT_SEGMENT_BYTES = 64 * 1024 * 1024;
+
+export type ResumeOptions = OpfsSinkOptions & {
+  /** Bytes per part file. Smaller means less to refetch, and more files. */
+  segmentBytes?: number;
+};
+
+const STATE_FILE = "state.json";
+const PART_PREFIX = "part-";
+
+function partName(index: number) {
+  return `${PART_PREFIX}${String(index).padStart(5, "0")}`;
+}
+
+type StoredState = ResumeState & { size: number; segmentBytes: number };
+
+function isStoredState(value: unknown): value is StoredState {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const state = value as Record<string, unknown>;
+  return (
+    typeof state.verifiedBytes === "number" &&
+    typeof state.size === "number" &&
+    typeof state.segmentBytes === "number" &&
+    Array.isArray(state.blockHashes) &&
+    state.blockHashes.every((hash) => typeof hash === "string")
+  );
+}
+
+/**
+ * Keeps partial downloads in the Origin Private File System, so they survive a
+ * reload or a crash and not just a dropped connection.
+ *
+ * ```ts
+ * const files = createFileTransferManager({ ..., resume: opfsResume() });
+ * ```
+ *
+ * Each file gets a folder named after its digest, holding fixed-size part
+ * files. A part is closed as soon as it fills, because that is when the bytes
+ * actually reach disk, so a reload replays at most one segment. `close`
+ * returns the whole file as a Blob made of those parts, which stays backed by
+ * disk rather than memory.
+ *
+ * It needs offers that carry a `digest` (`offerFiles(entries, { digest: true })`),
+ * since that is what identifies a file across page loads.
+ */
+export function opfsResume(options: ResumeOptions = {}): ResumeProvider {
+  const SEGMENT_BYTES = options.segmentBytes ?? DEFAULT_SEGMENT_BYTES;
+  async function folderFor(key: ResumeKey, create: boolean) {
+    const root = await opfsDirectory(options);
+    return root.getDirectoryHandle(key.digest, { create });
+  }
+
+  async function readState(key: ResumeKey): Promise<StoredState | null> {
+    try {
+      const folder = await folderFor(key, false);
+      const handle = await folder.getFileHandle(STATE_FILE);
+      const parsed: unknown = JSON.parse(await (await handle.getFile()).text());
+      return isStoredState(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function writeState(key: ResumeKey, state: StoredState) {
+    const folder = await folderFor(key, true);
+    const handle = await folder.getFileHandle(STATE_FILE, { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(new TextEncoder().encode(JSON.stringify(state)));
+    await writable.close();
+  }
+
+  /** Bytes committed for each download, so a checkpoint never claims more. */
+  const committed = new Map<string, number>();
+  const pending = new Map<string, Promise<void>>();
+
+  return {
+    async load(key) {
+      const state = await readState(key);
+      if (!state || state.size !== key.size || state.verifiedBytes <= 0) {
+        return null;
+      }
+      return {
+        verifiedBytes: state.verifiedBytes,
+        blockHashes: state.blockHashes,
+      };
+    },
+
+    async open(key, state) {
+      const folder = await folderFor(key, true);
+      const from = state.verifiedBytes;
+      let index = Math.floor(from / SEGMENT_BYTES);
+      const inPart = from % SEGMENT_BYTES;
+      committed.set(key.digest, from - inPart);
+
+      // A part that only partly survived is rewritten from its start.
+      for await (const name of (
+        folder as unknown as { keys(): AsyncIterable<string> }
+      ).keys()) {
+        const partIndex = name.startsWith(PART_PREFIX)
+          ? Number(name.slice(PART_PREFIX.length))
+          : -1;
+        if (partIndex > index || (partIndex === index && inPart === 0)) {
+          await folder.removeEntry(name).catch(() => {});
+        }
+      }
+
+      let writable: FileSystemWritableFileStream | null = null;
+      let written = inPart;
+
+      const openPart = async () => {
+        const handle = await folder.getFileHandle(partName(index), {
+          create: true,
+        });
+        const stream = await handle.createWritable({
+          keepExistingData: written > 0,
+        });
+        if (written > 0) {
+          await stream.seek(written);
+        }
+        return stream;
+      };
+
+      const closePart = async () => {
+        if (writable) {
+          await writable.close();
+          writable = null;
+          committed.set(key.digest, index * SEGMENT_BYTES + written);
+        }
+      };
+
+      return {
+        async write(chunk) {
+          let offset = 0;
+          while (offset < chunk.byteLength) {
+            writable ??= await openPart();
+            const room = SEGMENT_BYTES - written;
+            const slice = chunk.subarray(
+              offset,
+              offset + Math.min(room, chunk.byteLength - offset),
+            );
+            await writable.write(slice);
+            written += slice.byteLength;
+            offset += slice.byteLength;
+            if (written >= SEGMENT_BYTES) {
+              // Full: closing is what puts it on disk, so a reload finds it.
+              await closePart();
+              index += 1;
+              written = 0;
+            }
+          }
+        },
+        async close() {
+          await closePart();
+          await (pending.get(key.digest) ?? Promise.resolve());
+          const parts: File[] = [];
+          for (let part = 0; ; part += 1) {
+            try {
+              parts.push(
+                await (await folder.getFileHandle(partName(part))).getFile(),
+              );
+            } catch {
+              break;
+            }
+          }
+          committed.delete(key.digest);
+          return new Blob(parts, { type: "application/octet-stream" });
+        },
+        async abort() {
+          // Keep what is on disk: the manager decides whether to forget it.
+          if (writable) {
+            await writable.close().catch(() => {});
+            writable = null;
+          }
+        },
+      };
+    },
+
+    checkpoint(key, state) {
+      const durable = committed.get(key.digest) ?? 0;
+      const verified = Math.min(state.verifiedBytes, durable);
+      if (verified <= 0) {
+        return;
+      }
+      // One write at a time, and only for blocks that are already on disk.
+      const previous = pending.get(key.digest) ?? Promise.resolve();
+      const next = previous
+        .then(() =>
+          writeState(key, {
+            verifiedBytes: verified,
+            blockHashes: state.blockHashes.slice(
+              0,
+              Math.ceil(verified / BLOCK_BYTES),
+            ),
+            size: key.size,
+            segmentBytes: SEGMENT_BYTES,
+          }),
+        )
+        .catch(() => {});
+      pending.set(key.digest, next);
+      return next;
+    },
+
+    async forget(key) {
+      committed.delete(key.digest);
+      await (pending.get(key.digest) ?? Promise.resolve());
+      pending.delete(key.digest);
+      const root = await opfsDirectory(options).catch(() => null);
+      await root?.removeEntry(key.digest, { recursive: true }).catch(() => {});
+    },
+  };
 }

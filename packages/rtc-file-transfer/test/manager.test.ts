@@ -697,6 +697,144 @@ describe("verified blocks and resume", () => {
     assert.ok(kept > 0 && kept < source.byteLength, "resumed part way, not from zero");
   });
 
+  /** A ResumeProvider that keeps parts in memory, standing in for disk. */
+  function memoryStore() {
+    const files = new Map<string, Uint8Array<ArrayBuffer>[]>();
+    const states = new Map<string, { verifiedBytes: number; blockHashes: string[] }>();
+    /** Bytes handed to a sink but not yet "committed", as an open segment would be. */
+    let uncommitted = 0;
+    return {
+      files,
+      states,
+      hold(bytes: number) {
+        uncommitted = bytes;
+      },
+      provider: {
+        load: async (key: { digest: string }) => states.get(key.digest) ?? null,
+        open: async (key: { digest: string }, state: { verifiedBytes: number }) => {
+          const parts = files.get(key.digest) ?? [];
+          // Drop anything past what was checkpointed, as reopening a file would.
+          let kept = 0;
+          const prefix: Uint8Array<ArrayBuffer>[] = [];
+          for (const part of parts) {
+            if (kept + part.byteLength > state.verifiedBytes) {
+              break;
+            }
+            kept += part.byteLength;
+            prefix.push(part);
+          }
+          files.set(key.digest, prefix);
+          return {
+            write: (chunk: Uint8Array<ArrayBuffer>) => void prefix.push(chunk.slice()),
+            close: () => new Blob(prefix as BlobPart[]),
+            abort: () => {},
+          };
+        },
+        checkpoint: (
+          key: { digest: string },
+          state: { verifiedBytes: number; blockHashes: string[] },
+        ) => {
+          const durable = Math.max(0, state.verifiedBytes - uncommitted);
+          if (durable > 0) {
+            states.set(key.digest, {
+              verifiedBytes: durable,
+              blockHashes: state.blockHashes.slice(0, Math.ceil(durable / MB)),
+            });
+          }
+        },
+        forget: (key: { digest: string }) => {
+          states.delete(key.digest);
+          files.delete(key.digest);
+        },
+      },
+    };
+  }
+
+  it("picks a download back up after a reload, from what the store had committed", async () => {
+    const store = memoryStore();
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    let bob = bus.addPeer("peer-bob00", { resume: store.provider });
+    const source = randomBytes(4 * MB);
+
+    alice.manager.offerFiles([new File([source], "reload.bin")], { digest: true });
+    await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+    bus.net.pauseAfterBytes = 2 * MB + 64 * 1024;
+    assert.equal(bob.manager.request(incoming(bob)[0].id), true);
+    await waitFor(() => (store.states.get(incoming(bob)[0].digest!)?.verifiedBytes ?? 0) >= MB);
+    const committed = store.states.get(incoming(bob)[0].digest!)!.verifiedBytes;
+
+    // The tab goes away mid-transfer: no dispose, no pause, nothing tidy.
+    bob.manager.dispose();
+    bus.peers.delete("peer-bob00");
+    bus.net.setFlowing(true);
+
+    // A new page load, same store. The offer comes back with its digest.
+    bob = bus.addPeer("peer-bob00", { resume: store.provider });
+    alice.manager.announce();
+    await waitFor(() => incoming(bob)[0]?.resumableBytes !== undefined, 5000);
+    assert.equal(incoming(bob)[0].resumableBytes, committed);
+    assert.ok(committed > 0 && committed < source.byteLength);
+
+    assert.equal(bob.manager.request(incoming(bob)[0].id), true);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 5000);
+    const item = incoming(bob)[0];
+    assert.equal(item.status, "done");
+    assert.deepEqual(new Uint8Array(await item.blob!.arrayBuffer()), source);
+    assert.equal(store.states.has(item.digest!), false, "a finished file is forgotten");
+  });
+
+  it("refetches a segment the store never committed", async () => {
+    const store = memoryStore();
+    // A whole block arrives but stays in an open segment, so it isn't durable.
+    store.hold(MB);
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    let bob = bus.addPeer("peer-bob00", { resume: store.provider });
+    const source = randomBytes(3 * MB);
+
+    alice.manager.offerFiles([new File([source], "partial.bin")], { digest: true });
+    await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+    bus.net.pauseAfterBytes = 2 * MB + 64 * 1024;
+    bob.manager.request(incoming(bob)[0].id);
+    await waitFor(() => (store.states.get(incoming(bob)[0].digest!)?.verifiedBytes ?? 0) > 0);
+    assert.equal(
+      store.states.get(incoming(bob)[0].digest!)!.verifiedBytes,
+      MB,
+      "only the committed segment counts",
+    );
+
+    bob.manager.dispose();
+    bus.peers.delete("peer-bob00");
+    bus.net.setFlowing(true);
+    store.hold(0);
+    bob = bus.addPeer("peer-bob00", { resume: store.provider });
+    alice.manager.announce();
+    await waitFor(() => incoming(bob)[0]?.resumableBytes === MB, 5000);
+    assert.equal(bob.manager.request(incoming(bob)[0].id), true);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 5000);
+    assert.deepEqual(new Uint8Array(await incoming(bob)[0].blob!.arrayBuffer()), source);
+  });
+
+  it("ignores stored progress for a file of a different size, and forgets on dismiss", async () => {
+    const store = memoryStore();
+    store.states.set("d".repeat(64), { verifiedBytes: 1024, blockHashes: [] });
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00", { resume: store.provider });
+
+    alice.manager.offerFiles([new File([randomBytes(2 * MB)], "other.bin")], { digest: true });
+    await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(incoming(bob)[0].resumableBytes, undefined, "a different digest is not resumed");
+
+    bob.manager.request(incoming(bob)[0].id);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 5000);
+    const digest = incoming(bob)[0].digest!;
+    bob.manager.dismiss(incoming(bob)[0].id);
+    assert.equal(store.states.has(digest), false);
+  });
+
   it("refuses to pause a transfer with a v1 sender", async () => {
     bus = new FakeSignaling();
     const alice = bus.addPeer("peer-alice", { capabilities: [] });
