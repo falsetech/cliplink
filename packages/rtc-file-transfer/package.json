@@ -1,6 +1,6 @@
 {
   "name": "@thebkht/rtc-file-transfer",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Peer-to-peer file transfer over WebRTC data channels, with chunking, backpressure, integrity checks, resume, streaming to disk, and offer/revoke. Bring your own signaling.",
   "license": "MIT",
   "author": "Bakhtiyor Ganijon",
@@ -30,7 +30,8 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
-    "./sinks": "./src/sinks.ts"
+    "./sinks": "./src/sinks.ts",
+    "./adapters": "./src/adapters.ts"
   },
   "types": "./src/index.ts",
   "publishConfig": {
@@ -43,6 +44,10 @@
       "./sinks": {
         "types": "./dist/sinks.d.ts",
         "default": "./dist/sinks.js"
+      },
+      "./adapters": {
+        "types": "./dist/adapters.d.ts",
+        "default": "./dist/adapters.js"
       }
     },
     "types": "./dist/index.d.ts"
