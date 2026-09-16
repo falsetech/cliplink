@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>rtc-file-transfer — two tabs</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      body {
+        margin: 0 auto;
+        padding: 2rem 1rem 4rem;
+        max-width: 46rem;
+        line-height: 1.5;
+      }
+      h1 {
+        font-size: 1.25rem;
+        margin: 0;
+      }
+      p.lede {
+        margin: 0.25rem 0 1.5rem;
+        opacity: 0.7;
+      }
+      fieldset {
+        border: 1px solid color-mix(in oklab, currentColor 25%, transparent);
+        border-radius: 0.5rem;
+        padding: 1rem;
+        margin: 0 0 1rem;
+      }
+      legend {
+        padding: 0 0.4rem;
+        font-weight: 600;
+      }
+      button {
+        font: inherit;
+        padding: 0.3rem 0.7rem;
+        border-radius: 0.4rem;
+        border: 1px solid color-mix(in oklab, currentColor 30%, transparent);
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 0.75rem;
+      }
+      li {
+        display: grid;
+        gap: 0.35rem;
+      }
+      .row {
+        display: flex;
+        gap: 0.5rem;
+        align-items: baseline;
+        flex-wrap: wrap;
+      }
+      .name {
+        font-weight: 600;
+      }
+      .meta {
+        opacity: 0.7;
+        font-variant-numeric: tabular-nums;
+        font-size: 0.875rem;
+      }
+      progress {
+        width: 100%;
+        height: 0.4rem;
+      }
+      .empty {
+        opacity: 0.6;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>rtc-file-transfer — two tabs</h1>
+    <p class="lede">
+      Open this page in two tabs of the same browser. They find each other over
+      <code>BroadcastChannel</code>; the bytes go peer-to-peer over WebRTC. Nothing is uploaded
+      anywhere, and there is no server.
+    </p>
+
+    <fieldset>
+      <legend>Send</legend>
+      <div class="row">
+        <input id="file" type="file" multiple />
+        <label><input id="digest" type="checkbox" checked /> hash for whole-file verify + resume</label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Receive</legend>
+      <ul id="items">
+        <li class="empty">Nothing offered yet. Pick a file in the other tab.</li>
+      </ul>
+      <p class="meta">
+        Reload this tab mid-download: the offer comes back with what is already on disk, and
+        Download continues from there.
+      </p>
+    </fieldset>
+
+    <script type="module">
+      // The latest published build, served straight from the tarball — the package
+      // has no dependencies, so nothing has to be bundled. To try local changes
+      // instead, run `pnpm -F @thebkht/rtc-file-transfer build` and point these at
+      // "../dist/index.js", "../dist/sinks.js" and "../dist/adapters.js".
+      import { createFileTransferManager } from "https://cdn.jsdelivr.net/npm/@thebkht/rtc-file-transfer/dist/index.js";
+      import {
+        bestSink,
+        opfsResume,
+      } from "https://cdn.jsdelivr.net/npm/@thebkht/rtc-file-transfer/dist/sinks.js";
+      import { broadcastChannelSignaling } from "https://cdn.jsdelivr.net/npm/@thebkht/rtc-file-transfer/dist/adapters.js";
+
+      const peerId = crypto.randomUUID();
+      const channel = new BroadcastChannel("rtc-file-transfer-demo");
+      const signaling = broadcastChannelSignaling(channel, peerId);
+
+      const files = createFileTransferManager({
+        peerId,
+        sendSignal: signaling.sendSignal,
+        resume: opfsResume(),
+        onItemsChange: render,
+        onNotice: (notice) => {
+          if (notice.type === "received" && notice.item.blob) {
+            // The Blob is backed by OPFS, so this never holds the file in memory.
+            const url = URL.createObjectURL(notice.item.blob);
+            const link = Object.assign(document.createElement("a"), {
+              href: url,
+              download: notice.item.name,
+            });
+            link.click();
+            setTimeout(() => URL.revokeObjectURL(url), 10_000);
+          }
+          if (notice.type === "failed") {
+            console.warn(notice.code, notice.message);
+          }
+        },
+      });
+      signaling.connect(files);
+
+      document.getElementById("file").addEventListener("change", (event) => {
+        const picked = [...event.target.files];
+        if (picked.length) {
+          files.offerFiles(picked, { digest: document.getElementById("digest").checked });
+        }
+        event.target.value = "";
+      });
+
+      const list = document.getElementById("items");
+
+      function size(bytes) {
+        const units = ["B", "KB", "MB", "GB"];
+        let value = bytes;
+        let unit = 0;
+        while (value >= 1024 && unit < units.length - 1) {
+          value /= 1024;
+          unit += 1;
+        }
+        return `${value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+      }
+
+      function describe(item) {
+        const parts = [size(item.size)];
+        if (item.status === "transferring") {
+          parts.push(`${size(item.bytes)} in`);
+          if (item.bytesPerSecond) parts.push(`${size(item.bytesPerSecond)}/s`);
+          if (item.etaMs) parts.push(`${Math.ceil(item.etaMs / 1000)}s left`);
+        } else if (item.resumableBytes) {
+          parts.push(`${size(item.resumableBytes)} kept`);
+        } else if (item.hashedBytes !== undefined && item.hashedBytes < item.size) {
+          parts.push(`hashing ${Math.round((item.hashedBytes / item.size) * 100)}%`);
+        } else {
+          parts.push(item.status);
+        }
+        if (item.errorCode) parts.push(item.errorCode);
+        return parts.join(" · ");
+      }
+
+      function button(label, onClick) {
+        const element = document.createElement("button");
+        element.textContent = label;
+        element.addEventListener("click", onClick);
+        return element;
+      }
+
+      function actions(item) {
+        if (item.direction === "outgoing") {
+          return item.status === "revoked" ? [] : [button("Revoke", () => files.revoke(item.id))];
+        }
+        switch (item.status) {
+          case "offered":
+          case "failed":
+          case "paused":
+            return [
+              button(item.status === "offered" ? "Download" : "Resume", async () => {
+                // bestSink asks for a save location where the browser has a picker,
+                // and falls back to OPFS. It must run inside the click.
+                const sink = await bestSink(item).catch(() => undefined);
+                files.request(item.id, { sink });
+              }),
+              button("Dismiss", () => files.dismiss(item.id)),
+            ];
+          case "transferring":
+            return [
+              button("Pause", () => files.pause(item.id)),
+              button("Cancel", () => files.cancel(item.id)),
+            ];
+          default:
+            return [button("Dismiss", () => files.dismiss(item.id))];
+        }
+      }
+
+      function render(items) {
+        list.replaceChildren();
+        if (!items.length) {
+          const empty = document.createElement("li");
+          empty.className = "empty";
+          empty.textContent = "Nothing offered yet. Pick a file in the other tab.";
+          list.append(empty);
+          return;
+        }
+        for (const item of items) {
+          const row = document.createElement("div");
+          row.className = "row";
+          const name = document.createElement("span");
+          name.className = "name";
+          name.textContent = `${item.direction === "outgoing" ? "↑" : "↓"} ${item.name}`;
+          const meta = document.createElement("span");
+          meta.className = "meta";
+          meta.textContent = describe(item);
+          row.append(name, meta, ...actions(item));
+
+          const entry = document.createElement("li");
+          entry.append(row);
+          if (item.status === "transferring" || item.resumableBytes) {
+            const bar = document.createElement("progress");
+            bar.max = item.size;
+            bar.value = item.bytes || item.resumableBytes || 0;
+            entry.append(bar);
+          }
+          list.append(entry);
+        }
+      }
+    </script>
+  </body>
+</html>

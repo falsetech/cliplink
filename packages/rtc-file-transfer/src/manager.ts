@@ -1215,7 +1215,12 @@ export function createFileTransferManager(options: FileTransferOptions) {
     }
     download.pending += 1;
     download.writes = download.writes
-      .then(() => (transfer.discard || download.settled ? undefined : work(download)))
+      // `disposed` matters as much as the other two: work queued before dispose
+      // would otherwise write into a sink that has already been aborted, and
+      // checkpoint bytes past the point the manager stopped owning them.
+      .then(() =>
+        transfer.discard || download.settled || disposed ? undefined : work(download),
+      )
       .catch((error: unknown) => {
         transfer.discard = true;
         failTransfer(
@@ -1258,9 +1263,11 @@ export function createFileTransferManager(options: FileTransferOptions) {
       await download.sink.write(block);
       download.blockHashes[message.index] = message.hash;
       download.verifiedBytes += block.byteLength;
-      if (download.key && resumeStore) {
+      if (download.key && resumeStore && !disposed) {
         // The store decides how much of this is durable; a reload resumes from
-        // whatever it recorded, never from what merely arrived.
+        // whatever it recorded, never from what merely arrived. A manager that
+        // was disposed mid-block records nothing: its sink is already aborted,
+        // so those bytes are not there to resume from.
         void Promise.resolve(
           resumeStore.checkpoint(download.key, {
             verifiedBytes: download.verifiedBytes,
