@@ -128,6 +128,14 @@ export function IconArrowUp(props: IconProps) {
   );
 }
 
+export function IconArrowDown(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M12 5v14M19 12l-7 7-7-7" />
+    </Svg>
+  );
+}
+
 /** Points right when closed; the caller rotates it to point down when open. */
 export function IconChevron(props: IconProps) {
   return (

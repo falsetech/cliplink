@@ -1,9 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import type { RoomCode } from "@/lib/cliplink/types";
-import { cn } from "@/lib/utils";
-
-import { actionButtonClass, panelAccentClass, panelSurfaceStyle } from "./ui";
 
 export type ShareState =
   | { phase: "loading" }
@@ -31,14 +29,13 @@ export function ShareBanner({ state, rooms, onSendToRoom }: ShareBannerProps) {
 
   return (
     <section
-      className="mx-auto mb-5 flex w-full max-w-170 flex-col gap-3 rounded-surface border border-line p-4 md:mb-9"
-      style={panelSurfaceStyle}
+      className="mx-auto mb-8 flex w-full max-w-lg flex-col gap-3 rounded-2xl bg-card p-4 shadow-row md:mb-10"
       aria-live="polite"
     >
-      <p className="m-0 text-2xs tracking-label-wide text-muted uppercase">
+      <p className="m-0 text-xs font-medium text-muted-foreground">
         Shared to CLIPLINK
       </p>
-      <p className="m-0 text-sm text-pretty wrap-break-word text-fg">
+      <p className="m-0 text-base text-pretty wrap-break-word text-foreground">
         {bannerText(state)}
       </p>
 
@@ -46,18 +43,13 @@ export function ShareBanner({ state, rooms, onSendToRoom }: ShareBannerProps) {
         rooms.length > 0 ? (
           <div className="flex flex-wrap gap-2">
             {rooms.map((code) => (
-              <button
-                key={code}
-                type="button"
-                className={cn(actionButtonClass, panelAccentClass)}
-                onClick={() => onSendToRoom(code)}
-              >
-                Send to room {code}
-              </button>
+              <Button key={code} size="sm" onClick={() => onSendToRoom(code)}>
+                Send to Room {code}
+              </Button>
             ))}
           </div>
         ) : (
-          <p className="m-0 text-2xs text-pretty text-muted">
+          <p className="m-0 text-xs text-pretty text-muted-foreground">
             Create a room or join one below, and this comes along.
           </p>
         )
