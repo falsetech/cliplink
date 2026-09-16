@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0
+
+- New `resume` option: a `ResumeProvider` keeps partial downloads across page loads, so a reload or a crash no longer starts a file over. Offers need a `digest` (`offerFiles(entries, { digest: true })`), which is what identifies a file across loads.
+- `opfsResume()` in `/sinks` is a provider built on the Origin Private File System. It writes fixed-size part files and closes each as it fills, so at most one segment is refetched; `close` returns the file as a disk-backed Blob, and finished, revoked or dismissed files are deleted.
+- Incoming items show `resumableBytes` from the store before anything is requested, and the store supplies the sink for fresh downloads of files that carry a digest.
+
 ## 0.9.0
 
 - New capability `flow`: the receiver credits the sender with what its sink has committed, and the sender stops once it is `windowBytes` (16 MB) ahead. Memory is now bounded at both ends, so a slow disk can't pile up in the receiver's. Requires `blocks`; peers without it fall back to `bufferedAmount` alone.

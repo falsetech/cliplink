@@ -133,6 +133,43 @@ export type OfferOptions = {
   digest?: boolean;
 };
 
+/**
+ * What a paused or dropped download kept, enough to carry on after a reload:
+ * how much is safely on disk, and the hash of every block behind it.
+ */
+export type ResumeState = {
+  verifiedBytes: number;
+  blockHashes: string[];
+};
+
+/** Identifies a file across page loads: its digest, plus what it is. */
+export type ResumeKey = {
+  /** The offer's `digest`; a file with the same content always has the same one. */
+  digest: string;
+  size: number;
+  name: string;
+};
+
+/**
+ * Storage for partial downloads, so they survive a reload rather than only a
+ * dropped connection. `opfsResume()` in `@thebkht/rtc-file-transfer/sinks` is a
+ * ready-made one.
+ *
+ * Only offers that carry a `digest` can be resumed this way, since that is what
+ * identifies the file across page loads. `checkpoint` must report only what is
+ * durably written: whatever it records is what the next load resumes from.
+ */
+export type ResumeProvider = {
+  /** What is on disk for this file, or null. */
+  load(key: ResumeKey): Promise<ResumeState | null>;
+  /** Reopen the file at `state.verifiedBytes` to append to it. Null if it can't be. */
+  open(key: ResumeKey, state: ResumeState): Promise<FileSink | null>;
+  /** Record progress. Called as blocks are committed, and may be throttled. */
+  checkpoint(key: ResumeKey, state: ResumeState): void | Promise<void>;
+  /** Drop everything kept for this file. */
+  forget(key: ResumeKey): void | Promise<void>;
+};
+
 export type RequestOptions = {
   /**
    * Defaults to an in-memory sink that assembles a Blob, which is refused for
@@ -173,6 +210,11 @@ export type FileTransferOptions = {
    * behave exactly like a v1 peer.
    */
   capabilities?: Capability[];
+  /**
+   * Keeps partial downloads across page loads. Used only for offers that carry
+   * a `digest` and peers that support `resume`.
+   */
+  resume?: ResumeProvider;
 };
 
 type Timer = ReturnType<typeof setTimeout>;
@@ -190,6 +232,8 @@ type Download = {
   verifiedBytes: number;
   /** Hash of every block kept so far, in order; checked against the offer's digest. */
   blockHashes: string[];
+  /** Set when this download is being kept across page loads. */
+  key: ResumeKey | null;
   /** Queued sink work that hasn't finished yet. */
   pending: number;
   /** `close` has been called and hasn't resolved yet. */
@@ -422,6 +466,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
   const createId = options.createId ?? createRandomId;
   const newPeerConnection =
     options.createPeerConnection ?? ((config) => new RTCPeerConnection(config));
+  const resumeStore = options.resume;
   const advertised = new Set(
     options.capabilities ?? (hasSubtleCrypto() ? CAPABILITIES : []),
   );
@@ -436,6 +481,8 @@ export function createFileTransferManager(options: FileTransferOptions) {
   const transfers = new Map<string, Transfer>();
   /** Incoming item id → its download, while one is running or can resume. */
   const downloads = new Map<string, Download>();
+  /** Incoming item id → what a previous page load left on disk. */
+  const stored = new Map<string, ResumeState>();
   let emitTimer: Timer | null = null;
   let disposed = false;
 
@@ -514,6 +561,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       writes: Promise.resolve(),
       verifiedBytes: 0,
       blockHashes: [],
+      key: null,
       pending: 0,
       closing: false,
       settled: false,
@@ -877,6 +925,153 @@ export function createFileTransferManager(options: FileTransferOptions) {
   }
 
   /**
+   * Opens the connection for a download that already has its sink, and tells
+   * the sender where to start. `keepOnFailure` is set when the sink holds a
+   * prefix worth keeping if signaling turns out to be down.
+   */
+  function beginReceive(item: FileItem, download: Download, keepOnFailure: boolean) {
+    const blocks = hasCap("blocks", item.caps);
+    const flow = blocks && hasCap("flow", item.caps);
+    const offset = download.verifiedBytes;
+
+    const transferId = createId();
+    const transfer = newTransfer(transferId, "receive", item.peerId, item.id, {
+      download,
+      blocks,
+      flow,
+      offset,
+    });
+    transfer.pc.addEventListener("datachannel", (event) => {
+      attachReceiveChannel(transfer, event.channel);
+    });
+
+    const signal: FileSignal = {
+      type: "file-request",
+      offerId: item.offerId,
+      transferId,
+      ...(selfCaps.length > 0 && { caps: selfCaps }),
+      ...(offset > 0 && { offset }),
+    };
+    if (!sendSignal(signal, item.peerId)) {
+      closeTransfer(transfer);
+      if (!keepOnFailure) {
+        releaseDownload(item.id);
+      }
+      return false;
+    }
+
+    transfers.set(transferId, transfer);
+    item.status = "connecting";
+    item.bytes = offset;
+    item.error = undefined;
+    item.errorCode = undefined;
+    item.blob = undefined;
+    item.savedToSink = undefined;
+    item.resumableBytes = undefined;
+    clearRate(item);
+    touch(transfer);
+    emit();
+    return true;
+  }
+
+  /**
+   * Picks a download back up from the store after a reload: reopens the file
+   * where it left off, or starts it over if the store can no longer supply it.
+   */
+  async function beginStoredReceive(item: FileItem, key: ResumeKey, state: ResumeState) {
+    let sink: FileSink | null = null;
+    try {
+      sink = await resumeStore!.open(key, state);
+    } catch {
+      sink = null;
+    }
+    if (items.get(item.id) !== item || item.status !== "connecting") {
+      if (sink) {
+        abortSink(sink);
+      }
+      return;
+    }
+    stored.delete(item.id);
+    const download = createDownload(sink ?? createMemorySink(item.mime));
+    if (sink) {
+      download.verifiedBytes = state.verifiedBytes;
+      download.blockHashes = state.blockHashes.slice();
+      download.key = key;
+    } else if (item.size > limits.maxMemoryBytes) {
+      item.status = "failed";
+      item.resumableBytes = undefined;
+      item.bytes = 0;
+      emit();
+      onNotice({
+        type: "failed",
+        item: { ...item },
+        code: "needs-sink",
+        message: MESSAGES["needs-sink"],
+      });
+      return;
+    }
+    releaseDownload(item.id);
+    downloads.set(item.id, download);
+    if (!beginReceive(item, download, false)) {
+      item.status = "offered";
+      item.bytes = 0;
+      emit();
+    }
+  }
+
+  function resumeKeyFor(item: FileItem): ResumeKey | null {
+    return item.digest ? { digest: item.digest, size: item.size, name: item.name } : null;
+  }
+
+  /** Whether this item could be picked up again after a reload. */
+  function canStore(item: FileItem) {
+    return (
+      resumeStore !== undefined &&
+      item.direction === "incoming" &&
+      item.digest !== undefined &&
+      hasCap("blocks", item.caps) &&
+      hasCap("resume", item.caps)
+    );
+  }
+
+  /** Ask the store what is already on disk for a freshly offered file. */
+  async function loadStored(item: FileItem) {
+    const key = resumeKeyFor(item);
+    if (!resumeStore || !key) {
+      return;
+    }
+    let state: ResumeState | null = null;
+    try {
+      state = await resumeStore.load(key);
+    } catch {
+      return;
+    }
+    const current = items.get(item.id);
+    if (
+      !state ||
+      state.verifiedBytes <= 0 ||
+      state.verifiedBytes >= item.size ||
+      current !== item ||
+      item.status !== "offered" ||
+      downloads.has(item.id)
+    ) {
+      return;
+    }
+    stored.set(item.id, state);
+    item.resumableBytes = state.verifiedBytes;
+    item.bytes = state.verifiedBytes;
+    emit();
+  }
+
+  function forgetStored(item: FileItem) {
+    stored.delete(item.id);
+    const key = resumeKeyFor(item);
+    if (resumeStore && key && canStore(item)) {
+      void Promise.resolve(resumeStore.forget(key)).catch(() => {});
+    }
+  }
+
+  /**
    * Hashes an offered file block by block, then re-announces the offer with a
    * `digest` over it. Old peers drop the field, and a receiver that already has
    * the offer keeps the one it has. Hashing a large file takes a while, so the
@@ -1063,6 +1258,16 @@ export function createFileTransferManager(options: FileTransferOptions) {
       await download.sink.write(block);
       download.blockHashes[message.index] = message.hash;
       download.verifiedBytes += block.byteLength;
+      if (download.key && resumeStore) {
+        // The store decides how much of this is durable; a reload resumes from
+        // whatever it recorded, never from what merely arrived.
+        void Promise.resolve(
+          resumeStore.checkpoint(download.key, {
+            verifiedBytes: download.verifiedBytes,
+            blockHashes: download.blockHashes,
+          }),
+        ).catch(() => {});
+      }
       if (transfer.flow && transfer.channel?.readyState === "open") {
         // Only what the sink has taken, so the sender's window bounds this
         // device's memory rather than trailing it.
@@ -1125,6 +1330,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       return;
     }
 
+    forgetStored(item);
     item.blob = result instanceof Blob ? result : undefined;
     item.savedToSink = !(result instanceof Blob);
     item.status = "done";
@@ -1223,6 +1429,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       if (offer.digest && !existing.digest) {
         existing.digest = offer.digest;
         emit();
+        void loadStored(existing);
       }
       if (existing.status === "revoked") {
         existing.status = "offered";
@@ -1253,6 +1460,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
     };
     addItem(item);
     emit();
+    void loadStored(item);
     onNotice({ type: "incoming-offer", item: { ...item } });
   }
 
@@ -1262,6 +1470,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       item.error = undefined;
       item.errorCode = undefined;
       // Nothing left to resume from, so don't keep the partial file open.
+      forgetStored(item);
       item.resumableBytes = undefined;
       item.bytes = 0;
       releaseDownload(item.id);
@@ -1500,69 +1709,41 @@ export function createFileTransferManager(options: FileTransferOptions) {
       const retained = downloads.get(id);
       const resuming =
         retained !== undefined && hasCap("blocks", item.caps) && hasCap("resume", item.caps);
-      let download: Download;
       if (resuming) {
         // The retained sink already holds the verified prefix.
         if (options.sink) {
           abortSink(options.sink);
         }
-        download = retained;
-      } else {
-        if (!options.sink && item.size > limits.maxMemoryBytes) {
-          onNotice({
-            type: "failed",
-            item: { ...item },
-            code: "needs-sink",
-            message: MESSAGES["needs-sink"],
-          });
-          return false;
-        }
-        releaseDownload(id);
-        download = createDownload(options.sink ?? createMemorySink(item.mime));
-        downloads.set(id, download);
+        return beginReceive(item, retained, true);
       }
-      const blocks = hasCap("blocks", item.caps);
-      const flow = blocks && hasCap("flow", item.caps);
-      const offset = resuming ? download.verifiedBytes : 0;
 
-      const transferId = createId();
-      const transfer = newTransfer(transferId, "receive", item.peerId, id, {
-        download,
-        blocks,
-        flow,
-        offset,
-      });
-      transfer.pc.addEventListener("datachannel", (event) => {
-        attachReceiveChannel(transfer, event.channel);
-      });
+      // Nothing in memory, but the store may still have this file from an
+      // earlier page load — or can give it somewhere durable to start.
+      const key = resumeKeyFor(item);
+      if (resumeStore && key && canStore(item) && !options.sink) {
+        const state = stored.get(id) ?? { verifiedBytes: 0, blockHashes: [] };
+        item.status = "connecting";
+        item.error = undefined;
+        item.errorCode = undefined;
+        emit();
+        void beginStoredReceive(item, key, state);
+        return true;
+      }
 
-      const signal: FileSignal = {
-        type: "file-request",
-        offerId: item.offerId,
-        transferId,
-        ...(selfCaps.length > 0 && { caps: selfCaps }),
-        ...(offset > 0 && { offset }),
-      };
-      if (!sendSignal(signal, item.peerId)) {
-        closeTransfer(transfer);
-        if (!resuming) {
-          releaseDownload(id);
-        }
+      if (!options.sink && item.size > limits.maxMemoryBytes) {
+        onNotice({
+          type: "failed",
+          item: { ...item },
+          code: "needs-sink",
+          message: MESSAGES["needs-sink"],
+        });
         return false;
       }
-
-      transfers.set(transferId, transfer);
-      item.status = "connecting";
-      item.bytes = offset;
-      item.error = undefined;
-      item.errorCode = undefined;
-      item.blob = undefined;
-      item.savedToSink = undefined;
-      item.resumableBytes = undefined;
-      clearRate(item);
-      touch(transfer);
-      emit();
-      return true;
+      releaseDownload(id);
+      const download = createDownload(options.sink ?? createMemorySink(item.mime));
+      downloads.set(id, download);
+      const keepOnFailure = false;
+      return beginReceive(item, download, keepOnFailure);
     },
 
     /**
@@ -1608,6 +1789,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
     dismiss(id: string) {
       const item = items.get(id);
       if (item?.direction === "incoming" && !hasActiveTransfer(id)) {
+        forgetStored(item);
         items.delete(id);
         releaseDownload(id);
         emit();

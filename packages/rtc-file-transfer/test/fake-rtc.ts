@@ -216,7 +216,7 @@ export class FakePeerConnection extends EventTarget {
 }
 
 type PeerOptions = Partial<
-  Pick<FileTransferOptions, "limits" | "createId" | "iceServers" | "capabilities">
+  Pick<FileTransferOptions, "limits" | "createId" | "iceServers" | "capabilities" | "resume">
 >;
 
 export type TestPeer = {
