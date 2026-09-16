@@ -11,7 +11,7 @@ Send files peer-to-peer over WebRTC data channels, with the parts that are easy 
 - **Backpressure.** Stops sending at a high-water mark on `bufferedAmount` and resumes on `bufferedamountlow`, so large files don't fill the send queue and kill the channel.
 - **Chunking.** Chunks are capped at the SCTP `maxMessageSize` the connection actually negotiated.
 - **Stall detection.** A transfer that makes no progress fails with a code instead of hanging forever.
-- **Integrity checks.** Every 1 MiB is verified against a SHA-256 digest before it's kept.
+- **Integrity checks.** Every 1 MiB is verified against a SHA-256 digest before it's kept, and an offer can carry a digest of the whole file that the receiver checks at the end.
 - **Resume.** A download that drops part way picks up from its last verified block instead of starting over.
 - **Stream to disk.** Downloads can write into any sink, so large files never have to fit in memory. Ready-made sinks cover a file the user picks, a folder, and the Origin Private File System, which works in every current browser.
 - **Progress.** Incoming items report bytes, a smoothed transfer rate, and time left.
@@ -114,7 +114,9 @@ Anything else still works the way the example above does — an adapter is a con
 
 The manager returns `handleSignal`, `announce`, `offerFiles`, `request`, `cancel`, `revoke`, `dismiss` and `dispose`.
 
-`offerFiles(entries, { batch? })` takes `File`s or `{ file, path }` entries, where `path` is the folder a file sits in (`photos/2024`). With `batch: true`, every file in the call shares one `batchId`, so a receiver can show them as a group. Incoming items carry `path` (sanitized, and dropped if it tries to climb out with `..`) and `batchId`.
+`offerFiles(entries, { batch?, digest? })` takes `File`s or `{ file, path }` entries, where `path` is the folder a file sits in (`photos/2024`). With `batch: true`, every file in the call shares one `batchId`, so a receiver can show them as a group.
+
+With `digest: true`, each file is hashed in the background and the offer is re-announced carrying a `digest` of the whole file. The file is offered straight away either way, and `item.hashedBytes` reports how far the hashing has got. See [Verifying the whole file](#verifying-the-whole-file). Incoming items carry `path` (sanitized, and dropped if it tries to climb out with `..`) and `batchId`.
 
 `offerFiles` returns `{ offered, rejected }`. Each rejection is `{ file, code: "empty" | "too-large", limit }`.
 
@@ -147,13 +149,23 @@ button.addEventListener("click", async () => {
 
 To write your own, implement `write`, `close` and `abort`. Writes are serialized. `close` runs once every byte has arrived; return a `Blob` from it to expose one as `item.blob`, or return nothing and the item gets `savedToSink: true`. `abort` runs if the download fails or never starts, and a sink that throws fails the transfer with `write-error`. The receiver can't slow the sender down, so bytes that arrive faster than the sink writes them queue in memory.
 
+### Verifying the whole file
+
+Block hashes ride the data channel next to the bytes they cover, so they catch corruption but not a sender that lies about both. An offer's `digest` closes that: it is the SHA-256 of the file's block digests joined together, it travels over your signaling layer rather than the data channel, and the receiver checks it once every block has arrived. A mismatch fails with `digest-mismatch` and keeps nothing, since the bytes aren't the ones that were offered.
+
+```ts
+files.offerFiles([...input.files!], { digest: true });
+```
+
+It needs `blocks` on both sides. Only trust it as far as you trust your signaling: a sender that controls both paths can still make them agree. The first digest an offer arrives with is the one that is kept, so a later re-announce can't swap it.
+
 ### Resuming
 
 When both peers support `resume`, a download that fails part way (`stalled`, `nat`, `negotiation`, `closed`, `corrupt`, `sender-left`, or `remote-canceled`) keeps what it has verified. The item shows `resumableBytes`, and calling `request(id)` again picks up from there, writing into the same sink. A new sink passed then is aborted. The kept sink is released when the item is dismissed, or when the sender revokes the offer or leaves.
 
 ### Failure codes
 
-`stalled` · `nat` · `read-error` · `negotiation` · `incomplete` · `overflow` · `canceled` · `revoked` · `sender-left` · `closed` · `write-error` · `corrupt` · `needs-sink` · `remote-canceled`
+`stalled` · `nat` · `read-error` · `negotiation` · `incomplete` · `overflow` · `canceled` · `revoked` · `sender-left` · `closed` · `write-error` · `corrupt` · `digest-mismatch` · `needs-sink` · `remote-canceled`
 
 Each failure notice also carries an English `message`. Use the `code` to show your own wording.
 
@@ -173,7 +185,7 @@ Newer peers negotiate optional features through fields that v1 peers never send 
 - With `blocks`, the sender follows every `BLOCK_BYTES` (1 MiB) of data with the string `{"t":"block","i":<index>,"h":"<sha256 hex>"}`. The receiver checks each block before writing it to the sink.
 - With `resume` (which requires `blocks`), `file-request.offset` asks the sender to start at a block boundary.
 
-`file-offer` can also carry `path` and `batchId`. These aren't capabilities: they're display metadata, and an older receiver simply shows loose files.
+`file-offer` can also carry `path`, `batchId` and `digest`. These aren't capabilities: older peers drop them on receipt, showing loose files and skipping the whole-file check.
 
 ## Why not simple-peer or PeerJS?
 

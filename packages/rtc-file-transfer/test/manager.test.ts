@@ -494,6 +494,91 @@ describe("verified blocks and resume", () => {
     });
   }
 
+  it("hashes an offer, re-announces it, and the receiver checks the whole file", async () => {
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00");
+    const source = randomBytes(BLOCK_BYTES * 2 + 512);
+
+    alice.manager.offerFiles([new File([source], "whole.bin")], { digest: true });
+    await waitFor(() => outgoing(alice).digest !== undefined);
+    assert.equal(outgoing(alice).hashedBytes, source.byteLength);
+
+    await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+    assert.equal(incoming(bob)[0].digest, outgoing(alice).digest);
+
+    assert.equal(bob.manager.request(incoming(bob)[0].id), true);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"));
+    assert.deepEqual(new Uint8Array(await incoming(bob)[0].blob!.arrayBuffer()), source);
+  });
+
+  it("fails a file whose blocks are all valid but whose digest is not the one offered", async () => {
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00");
+    // The offer claims a digest of its own, as a sender lying over signaling
+    // would; every block still arrives with a hash that matches its bytes.
+    bus.transform = (payload) =>
+      payload.type === "file-offer" && payload.digest
+        ? { ...payload, digest: "f".repeat(64) }
+        : payload;
+
+    alice.manager.offerFiles([new File([randomBytes(BLOCK_BYTES + 9)], "lie.bin")], {
+      digest: true,
+    });
+    await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+    assert.equal(bob.manager.request(incoming(bob)[0].id), true);
+
+    await waitFor(() => failure(bob)?.code === "digest-mismatch");
+    const item = incoming(bob)[0];
+    assert.equal(item.status, "failed");
+    assert.equal(item.blob, undefined);
+    // Not worth resuming: the bytes are not the ones that were offered.
+    assert.equal(item.resumableBytes, undefined);
+  });
+
+  it("keeps the first digest an offer arrives with", async () => {
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00");
+    alice.manager.offerFiles([new File([randomBytes(2048)], "once.bin")], { digest: true });
+    await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+    const first = incoming(bob)[0].digest;
+
+    const offer = incoming(bob)[0];
+    bob.manager.handleSignal("peer-alice", {
+      type: "file-offer",
+      offerId: offer.offerId,
+      name: offer.name,
+      size: offer.size,
+      mime: offer.mime,
+      digest: "a".repeat(64),
+    });
+    assert.equal(incoming(bob)[0].digest, first);
+  });
+
+  it("offers without a digest unless asked, and v1 receivers ignore the field", async () => {
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00", { capabilities: [] });
+    const source = randomBytes(4096);
+    alice.manager.offerFiles([new File([source], "plain.bin")]);
+    await waitFor(() => incoming(bob).length === 1);
+    assert.equal(outgoing(alice).digest, undefined);
+    assert.equal(outgoing(alice).hashedBytes, undefined);
+
+    alice.manager.offerFiles([new File([source], "hashed.bin")], { digest: true });
+    await waitFor(() => outgoing(alice).digest !== undefined || incoming(bob).length === 2);
+    await waitFor(() => incoming(bob).length === 2);
+    const item = incoming(bob).find((candidate) => candidate.name === "hashed.bin")!;
+    assert.equal(bob.manager.request(item.id), true);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"));
+    assert.deepEqual(
+      new Uint8Array(await incoming(bob).find((i) => i.name === "hashed.bin")!.blob!.arrayBuffer()),
+      source,
+    );
+  });
+
   it("fails a corrupted block, and a retry delivers the file intact", async () => {
     bus = new FakeSignaling();
     bus.addPeer("peer-alice");

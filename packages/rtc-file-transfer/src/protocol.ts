@@ -32,6 +32,16 @@ export type FileOffer = {
   path?: string;
   /** Shared by files offered together, so a receiver can group them. */
   batchId?: string;
+  /**
+   * SHA-256 of the file's block digests joined together, as hex. Sent by a
+   * sender that hashed the file up front (`offerFiles(entries, { digest: true })`)
+   * and checked by the receiver once every block has arrived, so a file that
+   * passed block by block is also right as a whole.
+   *
+   * It travels over signaling while the bytes travel over the data channel, so
+   * it only detects a lying sender if your signaling layer is trustworthy.
+   */
+  digest?: string;
 };
 
 export type RtcDescription = {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0
+
+- `offerFiles(entries, { digest: true })` hashes each file in the background and re-announces the offer with a `digest`: the SHA-256 of its block digests joined together. `FileItem.hashedBytes` reports progress.
+- Receivers check that digest once every block has arrived, and fail with the new code `digest-mismatch` if it doesn't match. Since the digest travels over signaling and the bytes over the data channel, it catches a sender that lies on one path.
+- The digest is an optional `file-offer` field, so v1 peers drop it and behave exactly as before. An offer keeps the first digest it arrives with.
+
 ## 0.7.0
 
 - `@thebkht/rtc-file-transfer/adapters`: signaling adapters for transports you already have — `webSocketSignaling`, `broadcastChannelSignaling`, `supabaseSignaling`, `trysteroSignaling`, `peerJsSignaling` and `simplePeerSignaling`. Each validates inbound signals with `parseFileSignal`, drops signals meant for another peer, reports departures where the transport knows about them, and announces once it is ready. The library types are structural, so there are still no dependencies.
