@@ -24,6 +24,7 @@ import {
   createDirectorySink,
   pickDiskSink,
   pickDirectory,
+  releaseDiskFiles,
 } from "@/lib/cliplink/file-sink";
 import type { PeerId, SignalPayload } from "@/lib/cliplink/types";
 import { createZip } from "@/lib/cliplink/zip";
@@ -506,6 +507,8 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
           URL.revokeObjectURL(url);
         }
         urls.clear();
+        // After the object URLs: those are what still pointed at these files.
+        releaseDiskFiles();
         setItems([]);
       },
     };

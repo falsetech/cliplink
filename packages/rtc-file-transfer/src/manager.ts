@@ -48,6 +48,8 @@ export type FailureCode =
   | "write-error"
   /** A block failed its SHA-256 check. */
   | "corrupt"
+  /** The file is over `limits.maxMemoryBytes` and `request` was given no sink. */
+  | "needs-sink"
   /** The other peer canceled; `message` is the reason it sent. */
   | "remote-canceled";
 
@@ -92,6 +94,9 @@ export type FileItem = FileOffer & {
  *
  * The receiver cannot slow the sender down, so bytes that arrive faster than
  * the sink writes them queue in memory.
+ *
+ * `@thebkht/rtc-file-transfer/sinks` has ready-made sinks for a file the user
+ * picks, a folder, and the Origin Private File System.
  */
 export type FileSink = {
   write(chunk: Uint8Array<ArrayBuffer>): void | Promise<void>;
@@ -112,7 +117,10 @@ export type OfferOptions = {
 };
 
 export type RequestOptions = {
-  /** Defaults to an in-memory sink that assembles a Blob. */
+  /**
+   * Defaults to an in-memory sink that assembles a Blob, which is refused for
+   * files over `limits.maxMemoryBytes`.
+   */
   sink?: FileSink;
 };
 
@@ -232,6 +240,7 @@ const MESSAGES: Record<Exclude<FailureCode, "remote-canceled">, string> = {
   closed: "The connection closed before the file finished.",
   "write-error": "Couldn't save the file on this device.",
   corrupt: "Part of the file arrived damaged. Try again.",
+  "needs-sink": "This file is too large to download into memory.",
 };
 
 /** Failures worth resuming after: the data so far is good, the link wasn't. */
@@ -1274,6 +1283,8 @@ export function createFileTransferManager(options: FileTransferOptions) {
     /**
      * Ask the sender for an incoming file. Returns false if the item can't be
      * downloaded or signaling is unavailable; a passed sink is aborted then.
+     * A file over `limits.maxMemoryBytes` with no sink also returns false, with
+     * a `needs-sink` failure notice.
      */
     request(id: string, options: RequestOptions = {}) {
       const item = items.get(id);
@@ -1299,6 +1310,15 @@ export function createFileTransferManager(options: FileTransferOptions) {
         }
         download = retained;
       } else {
+        if (!options.sink && item.size > limits.maxMemoryBytes) {
+          onNotice({
+            type: "failed",
+            item: { ...item },
+            code: "needs-sink",
+            message: MESSAGES["needs-sink"],
+          });
+          return false;
+        }
         releaseDownload(id);
         download = createDownload(options.sink ?? createMemorySink(item.mime));
         downloads.set(id, download);

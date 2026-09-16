@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0
+
+- `@thebkht/rtc-file-transfer/sinks`: ready-made sinks for a file the user picks (`pickFileSink`), a folder (`pickDirectory`, `directorySink`), the Origin Private File System (`opfsSink`, `clearOpfs`), and any writable stream (`writableSink`), plus `bestSink` and the `canPickFile`, `canPickDirectory` and `hasOpfs` checks. OPFS brings streaming to disk to Firefox and Safari.
+- New limit `maxMemoryBytes` (500 MB): `request` without a sink refuses a larger file, returning `false` with the new failure code `needs-sink`.
+- The `maxFileBytes` default rises from 500 MB to 64 GiB, now that large files have somewhere to go. Receivers on 0.5.0 or older still ignore offers over 500 MB.
+
 ## 0.5.0
 
 - Folders: `offerFiles` accepts `{ file, path }` entries and a `batch` option. Offers carry optional `path` and `batchId` fields, which older receivers drop, so they see loose files.
