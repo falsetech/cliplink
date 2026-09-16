@@ -50,6 +50,8 @@ export type FailureCode =
   | "corrupt"
   /** The file is over `limits.maxMemoryBytes` and `request` was given no sink. */
   | "needs-sink"
+  /** Every block passed, but the file as a whole didn't match the offer's `digest`. */
+  | "digest-mismatch"
   /** The other peer canceled; `message` is the reason it sent. */
   | "remote-canceled";
 
@@ -81,6 +83,11 @@ export type FileItem = FileOffer & {
   bytesPerSecond?: number;
   /** Estimated time left at `bytesPerSecond` (incoming, while transferring). */
   etaMs?: number;
+  /**
+   * Bytes hashed so far while preparing an offer's `digest` (outgoing only).
+   * Reaches `size` when the digest is ready and the offer is re-announced.
+   */
+  hashedBytes?: number;
   /** Devices currently pulling / that finished pulling this file (outgoing only). */
   activeTransfers: number;
   completedTransfers: number;
@@ -114,6 +121,13 @@ export type OfferEntry = {
 export type OfferOptions = {
   /** Give every file in this call one `batchId`. */
   batch?: boolean;
+  /**
+   * Hash each file up front and re-announce the offer with a `digest`, so
+   * receivers can check the whole file once it has arrived. Hashing runs in the
+   * background and reports progress as `hashedBytes`; the file is offered
+   * straight away either way.
+   */
+  digest?: boolean;
 };
 
 export type RequestOptions = {
@@ -171,6 +185,8 @@ type Download = {
   writes: Promise<void>;
   /** Bytes written after passing their block check (blocks mode). */
   verifiedBytes: number;
+  /** Hash of every block kept so far, in order; checked against the offer's digest. */
+  blockHashes: string[];
   /** Queued sink work that hasn't finished yet. */
   pending: number;
   /** `close` has been called and hasn't resolved yet. */
@@ -241,6 +257,7 @@ const MESSAGES: Record<Exclude<FailureCode, "remote-canceled">, string> = {
   "write-error": "Couldn't save the file on this device.",
   corrupt: "Part of the file arrived damaged. Try again.",
   "needs-sink": "This file is too large to download into memory.",
+  "digest-mismatch": "The file that arrived isn't the one that was offered.",
 };
 
 /** Failures worth resuming after: the data so far is good, the link wasn't. */
@@ -260,9 +277,33 @@ function hasSubtleCrypto() {
   return typeof crypto !== "undefined" && typeof crypto.subtle?.digest === "function";
 }
 
+function toHex(bytes: Uint8Array<ArrayBuffer>) {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function fromHex(hex: string) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
+  }
+  return bytes;
+}
+
 async function sha256Hex(data: Uint8Array<ArrayBuffer>) {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", data));
-  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return toHex(new Uint8Array(await crypto.subtle.digest("SHA-256", data)));
+}
+
+/**
+ * The file's digest: SHA-256 over its block digests, joined as raw bytes. It
+ * covers the whole file without the receiver having to hold it, since the
+ * block hashes are all it keeps.
+ */
+async function digestOfBlocks(blockHashes: string[]) {
+  const joined = new Uint8Array(blockHashes.length * 32);
+  for (const [index, hash] of blockHashes.entries()) {
+    joined.set(fromHex(hash), index * 32);
+  }
+  return sha256Hex(joined);
 }
 
 function joinParts(parts: Uint8Array<ArrayBuffer>[], length: number) {
@@ -355,6 +396,8 @@ export function createFileTransferManager(options: FileTransferOptions) {
 
   const items = new Map<string, FileItem>();
   const outgoingFiles = new Map<string, File>();
+  /** Offer id → its file's block hashes, once hashed for a `digest`. */
+  const offerBlockHashes = new Map<string, string[]>();
   const transfers = new Map<string, Transfer>();
   /** Incoming item id → its download, while one is running or can resume. */
   const downloads = new Map<string, Download>();
@@ -422,6 +465,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       ...(selfCaps.length > 0 && { caps: selfCaps }),
       ...(item.path && { path: item.path }),
       ...(item.batchId && { batchId: item.batchId }),
+      ...(item.digest && { digest: item.digest }),
     };
   }
 
@@ -434,6 +478,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       sink,
       writes: Promise.resolve(),
       verifiedBytes: 0,
+      blockHashes: [],
       pending: 0,
       closing: false,
       settled: false,
@@ -681,6 +726,8 @@ export function createFileTransferManager(options: FileTransferOptions) {
   }
 
   async function pumpFile(transfer: Transfer, channel: RTCDataChannel, file: File) {
+    const item = items.get(transfer.itemId);
+    const cachedHashes = item && offerBlockHashes.get(item.offerId);
     const maxMessage = transfer.pc.sctp?.maxMessageSize;
     const chunkSize =
       maxMessage && maxMessage > 0
@@ -693,14 +740,16 @@ export function createFileTransferManager(options: FileTransferOptions) {
           const block = new Uint8Array(
             await file.slice(start, start + BLOCK_BYTES).arrayBuffer(),
           );
-          const hash = await sha256Hex(block);
+          const index = start / BLOCK_BYTES;
+          // Hashed already if this offer carries a digest.
+          const hash =
+            cachedHashes?.[index] ?? (await sha256Hex(block));
           for (let offset = 0; offset < block.byteLength; offset += chunkSize) {
             const chunk = block.buffer.slice(offset, offset + chunkSize);
             if (!(await sendChunk(transfer, channel, chunk))) {
               return;
             }
           }
-          const index = start / BLOCK_BYTES;
           const message = JSON.stringify({ t: "block", i: index, h: hash });
           if (!(await sendChunk(transfer, channel, message))) {
             return;
@@ -763,6 +812,44 @@ export function createFileTransferManager(options: FileTransferOptions) {
       closed: false,
     };
     return { ...base, pc: createPeerConnection(base) };
+  }
+
+  /**
+   * Hashes an offered file block by block, then re-announces the offer with a
+   * `digest` over it. Old peers drop the field, and a receiver that already has
+   * the offer keeps the one it has. Hashing a large file takes a while, so the
+   * file is offered first and this catches up.
+   */
+  async function hashOffer(item: FileItem, file: File) {
+    const hashes: string[] = [];
+    try {
+      for (let start = 0; start < file.size; start += BLOCK_BYTES) {
+        const block = new Uint8Array(
+          await file.slice(start, start + BLOCK_BYTES).arrayBuffer(),
+        );
+        hashes.push(await sha256Hex(block));
+        if (disposed || items.get(item.id) !== item) {
+          return;
+        }
+        item.hashedBytes = Math.min(start + BLOCK_BYTES, file.size);
+        emitSoon();
+      }
+    } catch {
+      // Unreadable now; the transfer itself will report it if it is requested.
+      item.hashedBytes = undefined;
+      emitSoon();
+      return;
+    }
+    if (disposed || items.get(item.id) !== item) {
+      return;
+    }
+    offerBlockHashes.set(item.offerId, hashes);
+    item.digest = await digestOfBlocks(hashes);
+    if (disposed || items.get(item.id) !== item) {
+      return;
+    }
+    sendSignal(toOffer(item));
+    emit();
   }
 
   async function startSend(
@@ -895,6 +982,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
         throw new CorruptBlockError();
       }
       await download.sink.write(block);
+      download.blockHashes[message.index] = message.hash;
       download.verifiedBytes += block.byteLength;
     });
   }
@@ -918,6 +1006,18 @@ export function createFileTransferManager(options: FileTransferOptions) {
     if (transfer.blocks && download.verifiedBytes !== item.size) {
       failTransfer(transfer, "corrupt", true);
       return;
+    }
+    // Every block matched the hash sent beside it; this checks those hashes
+    // against the digest that came over signaling, a different path entirely.
+    if (transfer.blocks && item.digest) {
+      const digest = await digestOfBlocks(download.blockHashes);
+      if (transfer.closed || download.settled) {
+        return;
+      }
+      if (digest !== item.digest) {
+        failTransfer(transfer, "digest-mismatch", true);
+        return;
+      }
     }
 
     let result: void | Blob;
@@ -1032,8 +1132,12 @@ export function createFileTransferManager(options: FileTransferOptions) {
     const id = itemKey(from, offer.offerId);
     const existing = items.get(id);
     if (existing) {
-      // Re-announced after the sender reconnected.
+      // Re-announced after the sender reconnected, or once its digest is ready.
       existing.caps = offer.caps;
+      if (offer.digest && !existing.digest) {
+        existing.digest = offer.digest;
+        emit();
+      }
       if (existing.status === "revoked") {
         existing.status = "offered";
         existing.error = undefined;
@@ -1050,6 +1154,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       size: offer.size,
       mime: offer.mime,
       caps: offer.caps,
+      ...(offer.digest !== undefined && { digest: offer.digest }),
       ...(offer.path !== undefined && { path: sanitizeRelativePath(offer.path) }),
       ...(offer.batchId !== undefined && { batchId: offer.batchId }),
       direction: "incoming",
@@ -1255,6 +1360,10 @@ export function createFileTransferManager(options: FileTransferOptions) {
         addItem(item);
         sendSignal(toOffer(item));
         offered += 1;
+        if (options.digest && selfCaps.includes("blocks")) {
+          item.hashedBytes = 0;
+          void hashOffer(item, file);
+        }
       }
 
       if (offered > 0) {
@@ -1270,6 +1379,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
         return;
       }
       outgoingFiles.delete(item.offerId);
+      offerBlockHashes.delete(item.offerId);
       items.delete(id);
       sendSignal({ type: "file-revoke", offerId: item.offerId });
       for (const transfer of [...transfers.values()]) {
@@ -1393,6 +1503,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       }
       items.clear();
       outgoingFiles.clear();
+      offerBlockHashes.clear();
       emit();
       disposed = true;
     },
