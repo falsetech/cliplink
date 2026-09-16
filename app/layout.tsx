@@ -1,25 +1,18 @@
-import type { Metadata } from "next";
-import { JetBrains_Mono, Syne } from "next/font/google";
+import type { Metadata, Viewport } from "next";
 import { ServiceWorker } from "@/components/cliplink/service-worker";
 
 import { AppThemeProvider } from "./theme-provider";
 import "./globals.css";
 
-// Self-hosted and preloaded. Loading these through an `@import` in globals.css
-// serialised the request behind the stylesheet and cost a round trip to two
-// extra origins before any text could paint.
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-jetbrains-mono",
-});
+// No web fonts. The system stack is SF on Apple platforms, which already ships
+// optical sizing and tracking tables, and costs nothing to load.
 
-const syne = Syne({
-  subsets: ["latin"],
-  weight: ["700", "800"],
-  display: "swap",
-  variable: "--font-syne",
-});
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f2f2f7" },
+    { media: "(prefers-color-scheme: dark)", color: "#000000" },
+  ],
+};
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://cliplink.thebkht.com"),
@@ -53,7 +46,6 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${jetbrainsMono.variable} ${syne.variable}`}
       suppressHydrationWarning
     >
       <body className="antialiased">

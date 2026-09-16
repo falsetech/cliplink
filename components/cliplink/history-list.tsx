@@ -1,20 +1,23 @@
 "use client";
 
 import { useState } from "react";
+import { ClipboardIcon } from "lucide-react";
 
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
-  detectClipKind,
-  formatHistoryTime,
-  truncatePreview,
-} from "@/lib/cliplink/format";
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { detectClipKind, truncatePreview } from "@/lib/cliplink/format";
 import type { SessionClip } from "@/lib/cliplink/types";
 import { cn } from "@/lib/utils";
 
 import { IconChevron } from "./icons";
-import { panelSurfaceStyle, rowClass } from "./ui";
-
-const rowActionClass =
-  "inline-flex min-h-11 items-center rounded-control border border-transparent px-2 text-2xs text-muted transition-[color,border-color,background-color,scale] duration-150 ease-out hover:border-line-strong hover:text-fg focus-visible:border-line-strong focus-visible:text-fg active:scale-[0.96] active:bg-white/4 md:min-h-10 md:shrink-0";
+import { DirectionLabel } from "./direction-label";
+import { rowClass } from "./ui";
 
 /**
  * A clip only earns a disclosure control if there is something behind it.
@@ -41,16 +44,23 @@ export function HistoryList({
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
   return (
-    <div className="flex flex-col gap-2.5">
-      <div className="flex items-center gap-2 text-2xs tracking-label-wide text-muted uppercase">
-        <span>History</span>
-        <span className="h-px flex-1 bg-line" />
-      </div>
-      <div className="flex flex-col gap-1.5">
+    <section className="flex flex-col gap-2">
+      {/* Inset to the rows' own content edge, as grouped-list headers are. */}
+      <h2 className="m-0 px-4 text-lg font-semibold text-foreground">History</h2>
+      <div className="flex flex-col gap-2">
         {history.length === 0 ? (
-          <div className="rounded-surface border border-dashed border-line-strong px-8 py-8 text-center text-xs tracking-label text-muted">
-            No clips yet. Send something.
-          </div>
+          // No container: an empty state is a message, not a drop target.
+          <Empty className="py-10">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <ClipboardIcon />
+              </EmptyMedia>
+              <EmptyTitle>No clips yet</EmptyTitle>
+              <EmptyDescription>
+                Anything sent from a device in this room shows up here.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : (
           history.map((clip) => (
             // The grid wrapper lets a new row open the list rather than
@@ -80,7 +90,7 @@ export function HistoryList({
           ))
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -103,62 +113,47 @@ function HistoryRow({
   const open = expandable && expanded;
 
   return (
-    <div
-      className={cn(
-        rowClass,
-        incoming ? "border-l-2 border-l-incoming-line" : "border-l-2 border-l-muted",
-        arriving && "arrival-cue",
-      )}
-      style={panelSurfaceStyle}
-    >
-      <div className="flex min-w-13 flex-col gap-1 md:min-w-16">
-        <span
-          className={cn(
-            "text-2xs tracking-label uppercase",
-            incoming ? "text-incoming" : "text-muted",
-          )}
-        >
-          {incoming ? "↓ IN" : "↑ OUT"}
-        </span>
-        <span className="text-2xs tracking-label text-muted uppercase tabular-nums">
-          {formatHistoryTime(clip.ts)}
-        </span>
-      </div>
+    <div className={cn(rowClass, arriving && "arrival-cue")}>
+      <DirectionLabel
+        incoming={incoming}
+        label={incoming ? "Received" : "Sent"}
+        ts={clip.ts}
+      />
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="col-span-2 flex min-w-0 flex-1 flex-col md:col-span-1">
         {expandable ? (
           // The whole content column is the target, not just the glyph. The
           // negative inset lets a 40px-tall hit area sit inside a tighter row
           // without pushing the row open.
           <button
-            className="group -my-2 -ml-1.5 flex min-h-10 min-w-0 cursor-pointer items-start gap-1.5 rounded-control border-0 bg-transparent px-1.5 py-2 text-left transition-colors duration-100 ease-out hover:bg-white/2 focus-visible:bg-white/2 active:bg-white/4"
+            className="group -my-1.5 -ml-2 flex min-h-10 min-w-0 cursor-pointer items-start gap-1.5 rounded-lg border-0 bg-transparent px-2 py-2 text-left transition-colors duration-100 ease-out hover:bg-muted focus-visible:bg-muted active:bg-accent"
             type="button"
             aria-expanded={expanded}
             onClick={onToggle}
           >
             <span
               className={cn(
-                "mt-px shrink-0 text-muted transition-[rotate,color] duration-200 ease-out group-hover:text-dim",
+                "mt-0.5 shrink-0 text-muted-foreground transition-[rotate,color] duration-200 ease-out group-hover:text-foreground",
                 // Hints the direction the content will open (down), rather
                 // than only reporting the state after the fact.
                 expanded && "rotate-90",
               )}
             >
-              <IconChevron size={12} />
+              <IconChevron size={14} />
             </span>
             <span
               className={cn(
-                "min-w-0 text-2xs text-dim md:text-xs",
-                open ? "break-words whitespace-pre-wrap" : "truncate",
+                "min-w-0 text-sm text-foreground",
+                open ? "wrap-break-word whitespace-pre-wrap" : "truncate",
               )}
             >
               {open ? clip.text : truncatePreview(clip.text)}
             </span>
           </button>
         ) : (
-          // No affordance where there is nothing to reveal. The 12px chevron
+          // No affordance where there is nothing to reveal. The chevron
           // gutter is still reserved so every row's text starts on one line.
-          <span className="min-w-0 truncate pl-[18px] text-2xs text-dim md:text-xs">
+          <span className="min-w-0 truncate py-0.5 pl-5.5 text-sm text-foreground">
             {clip.text}
           </span>
         )}
@@ -176,32 +171,30 @@ function HistoryRow({
           >
             <div className="overflow-hidden">
               <a
-                className={cn(rowActionClass, "ml-[15px] mt-1")}
+                className={cn(
+                  buttonVariants({ variant: "link", size: "xs" }),
+                  "ml-3.5 px-2",
+                )}
                 href={detected.url}
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                open link ↗
+                Open Link ↗
               </a>
             </div>
           </div>
         ) : null}
       </div>
 
-      <button
-        // The row aligns to the top, so a 40px box centring its label would
-        // drop "copy" below the clip's first line. Same inset as the
-        // disclosure control, so the two labels share a baseline.
-        className={cn(
-          rowActionClass,
-          "col-start-2 mt-1 justify-self-start md:-my-2 md:mt-0 md:items-start md:py-2.5",
-        )}
-        type="button"
+      <Button
+        className="col-start-2 row-start-1 justify-self-end text-link md:self-center"
+        variant="ghost"
+        size="sm"
         aria-label="Copy this clip"
         onClick={onCopy}
       >
-        copy
-      </button>
+        Copy
+      </Button>
     </div>
   );
 }

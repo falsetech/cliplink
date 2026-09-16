@@ -10,7 +10,10 @@ import {
   type ReactNode,
 } from "react";
 
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+
+import { IconX } from "./icons";
 
 /** Must match the sheet-out animation in globals.css. */
 const EXIT_MS = 220;
@@ -327,8 +330,8 @@ export function Sheet({
         data-state={state}
         data-motion="transform"
         className={cn(
-          "relative flex w-full max-w-105 flex-col gap-4.5 rounded-t-sheet rounded-b-surface border border-line-strong p-4.5 shadow-modal",
-          "sm:rounded-sheet sm:p-5",
+          "relative flex w-full max-w-md flex-col gap-4 rounded-3xl bg-popover p-5 text-popover-foreground shadow-modal ring-1 ring-foreground/5",
+          "sm:p-6",
           "origin-bottom sm:origin-center",
           "data-[state=entering]:animate-[sheet-in_280ms_var(--ease-out-quint)_both]",
           "data-[state=exiting]:animate-[sheet-out_220ms_var(--ease-out-quint)_both]",
@@ -348,17 +351,62 @@ export function Sheet({
         {/* Grabber: the affordance that promises the drag, on the surface that
             actually handles it. */}
         <div
-          className="-mt-1 flex cursor-grab touch-none justify-center py-1 active:cursor-grabbing sm:hidden"
+          className="-mt-2 -mb-1 flex cursor-grab touch-none justify-center py-1 active:cursor-grabbing sm:hidden"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
         >
-          <span className="h-1 w-9 rounded-full bg-line-strong" />
+          <span className="h-1.25 w-9 rounded-full bg-muted-foreground/40" />
         </div>
 
         <SheetCloseContext value={beginExit}>{children}</SheetCloseContext>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The title row every sheet shares: an optional line of context above the
+ * title, and the round close button iOS puts in the corner.
+ */
+export function SheetHeader({
+  eyebrow,
+  title,
+  titleClassName,
+  closeLabel,
+}: {
+  eyebrow?: string;
+  title: ReactNode;
+  titleClassName?: string;
+  closeLabel: string;
+}) {
+  const close = useSheetClose();
+
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        {eyebrow ? (
+          <p className="m-0 mb-0.5 text-sm text-muted-foreground">{eyebrow}</p>
+        ) : null}
+        <h2
+          className={cn(
+            "m-0 text-2xl font-bold tracking-tight text-foreground",
+            titleClassName,
+          )}
+        >
+          {title}
+        </h2>
+      </div>
+      <Button
+        variant="secondary"
+        size="icon-sm"
+        className="-mt-1 -mr-1 text-muted-foreground"
+        aria-label={closeLabel}
+        onClick={() => close()}
+      >
+        <IconX size={14} weight="bold" />
+      </Button>
     </div>
   );
 }

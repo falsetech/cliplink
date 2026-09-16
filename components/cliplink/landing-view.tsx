@@ -1,12 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { ROOM_TTL_SECONDS } from "@/lib/cliplink/constants";
 import { normalizeRoomCode } from "@/lib/cliplink/room-code";
+import { validateRoomCode } from "@/lib/cliplink/validation";
 
 import { IconPlus } from "./icons";
-import { primaryButtonClass, secondaryButtonClass } from "./ui";
 
 type LandingViewProps = {
   joinCode: string;
@@ -26,60 +30,68 @@ export function LandingView({
   // Default to the private room. The safer of two choices should be the one
   // taken by someone who does not read the options.
   const [privateRoom, setPrivateRoom] = useState(true);
+  const encryptId = useId();
+  // Validated inline: Join stays quiet until there is a whole code to join,
+  // then takes the filled style, as Send does once there is text to send.
+  const codeComplete = validateRoomCode(joinCode);
+
   return (
-    <section className="mx-auto flex max-w-180 flex-col items-center gap-5 sm:gap-6 md:gap-9">
-      <div className="max-w-full text-center md:max-w-175">
-        <h1 className="font-display mb-4 text-[clamp(1.7rem,15vw,2.45rem)] leading-[0.98] tracking-display text-fg sm:text-[clamp(2rem,11vw,3rem)] sm:leading-[0.96] md:text-[clamp(4.8rem,7.1vw,6.35rem)] md:leading-[0.82]">
-          <span className="block text-balance md:mx-auto md:max-w-[6.2ch]">
-            Copy here.
-          </span>
-          <span className="mt-[0.08em] block text-balance text-hero sm:mt-[0.04em] md:mx-auto md:max-w-[7.3ch]">
-            Paste anywhere.
-          </span>
+    <section className="mx-auto flex max-w-lg flex-col items-center gap-8 md:gap-10">
+      <div className="text-center">
+        <h1 className="mb-3 text-5xl leading-[1.05] font-bold tracking-display text-balance text-foreground md:text-7xl">
+          Copy here.
+          <span className="block text-link">Paste anywhere.</span>
         </h1>
-        <p className="m-0 text-2xs text-pretty text-dim sm:text-xs md:text-sm">
+        <p className="m-0 text-base text-balance text-muted-foreground md:text-lg">
           Create a room. Share the code. Your clipboard, synced across devices.
         </p>
       </div>
 
-      <div className="flex w-full max-w-full flex-col gap-3 md:max-w-170">
-        <button
-          className={primaryButtonClass}
-          onClick={() => onCreate(privateRoom)}
-          disabled={isBusy}
-        >
-          <IconPlus size={14} weight="bold" />
-          New Room
-        </button>
-
-        <label className="flex cursor-pointer items-start gap-2.5 rounded-control border border-line px-3 py-2.5 text-left transition-colors duration-150 hover:border-line-strong">
-          <input
-            className="mt-0.5 size-4 shrink-0 accent-accent"
-            type="checkbox"
-            checked={privateRoom}
-            onChange={(event) => setPrivateRoom(event.target.checked)}
-          />
-          <span className="min-w-0">
-            <span className="block text-2xs tracking-label text-fg">
-              End-to-end encrypt this room
-            </span>
-            <span className="mt-0.5 block text-2xs text-pretty text-muted">
-              {privateRoom
-                ? "A key is created on this device and never sent. Share the link, or the code and key separately. Not even we can read it."
-                : "The code alone opens the room — nothing extra to share. Still encrypted in transit and at rest, but the key comes from the code, so the server can read it."}
-            </span>
-          </span>
-        </label>
-
-        <div className="flex w-full items-center gap-2 text-2xs tracking-label-wide text-muted uppercase sm:gap-3">
-          <span className="h-px flex-1 bg-line" />
-          <span>or join existing</span>
-          <span className="h-px flex-1 bg-line" />
+      <div className="flex w-full flex-col gap-4">
+        {/* A grouped list, as in Settings: the choice sits with the action it
+            changes, so the toggle reads as part of creating the room. The
+            radius is near-concentric with the pill inside it: 24px + 8px padding. */}
+        <div className="overflow-hidden rounded-4xl bg-card shadow-row">
+          <div className="flex items-center gap-4 px-5 pt-4 pb-3.5">
+            <label htmlFor={encryptId} className="min-w-0 flex-1 cursor-pointer">
+              <span className="block text-sm font-medium text-foreground">
+                End-to-end encrypt
+              </span>
+              <span className="mt-0.5 block text-xs text-pretty text-muted-foreground">
+                {privateRoom
+                  ? "A key is created on this device and never sent. Share the link, or the code and key separately. Not even we can read it."
+                  : "The code alone opens the room — nothing extra to share. Still encrypted in transit and at rest, but the key comes from the code, so the server can read it."}
+              </span>
+            </label>
+            <Switch
+              id={encryptId}
+              checked={privateRoom}
+              onCheckedChange={setPrivateRoom}
+            />
+          </div>
+          <Separator className="ml-5 w-auto" />
+          <div className="p-2">
+            <Button
+              className="w-full"
+              size="lg"
+              onClick={() => onCreate(privateRoom)}
+              disabled={isBusy}
+            >
+              <IconPlus size={16} weight="bold" />
+              New Room
+            </Button>
+          </div>
         </div>
 
-        <div className="flex flex-col gap-2 sm:gap-2.5 md:flex-row">
-          <input
-            className="min-h-12 flex-1 rounded-control border border-line-strong bg-surface px-4 py-3 text-center text-xl font-bold tracking-code text-fg uppercase tabular-nums outline-none transition-colors duration-150 placeholder:text-sm placeholder:font-normal placeholder:tracking-label placeholder:normal-case placeholder:text-muted focus:border-accent"
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <Separator className="flex-1" />
+          <span>or join an existing room</span>
+          <Separator className="flex-1" />
+        </div>
+
+        <div className="flex gap-2">
+          <Input
+            className="h-12 flex-1 rounded-full bg-card px-5 text-center font-mono text-xl font-semibold tracking-code uppercase tabular-nums shadow-row placeholder:font-sans placeholder:text-base placeholder:font-normal placeholder:tracking-normal placeholder:normal-case pointer-coarse:h-12 md:text-xl"
             type="text"
             inputMode="text"
             autoCapitalize="characters"
@@ -99,16 +111,18 @@ export function LandingView({
               }
             }}
           />
-          <button
-            className={secondaryButtonClass}
+          <Button
+            variant={codeComplete ? "default" : "secondary"}
+            size="lg"
+            className="min-w-24"
             onClick={onJoin}
-            disabled={isBusy}
+            disabled={isBusy || !codeComplete}
           >
             Join
-          </button>
+          </Button>
         </div>
 
-        <p className="-mt-1 max-w-160 text-center text-2xs text-pretty text-muted">
+        <p className="m-0 text-center text-xs text-pretty text-muted-foreground">
           No sign-up, no install, no saved history. Rooms expire after{" "}
           {ROOM_TTL_SECONDS / 3600} hours of inactivity.
         </p>

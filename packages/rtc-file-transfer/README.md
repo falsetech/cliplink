@@ -13,7 +13,7 @@ Send files peer-to-peer over WebRTC data channels, with the parts that are easy 
 - **Stall detection.** A transfer that makes no progress fails with a code instead of hanging forever.
 - **Integrity checks.** Every 1 MiB is verified against a SHA-256 digest before it's kept.
 - **Resume.** A download that drops part way picks up from its last verified block instead of starting over.
-- **Stream to disk.** Downloads can write into any sink, such as a file from `showSaveFilePicker`, so large files never have to fit in memory.
+- **Stream to disk.** Downloads can write into any sink, so large files never have to fit in memory. Ready-made sinks cover a file the user picks, a folder, and the Origin Private File System, which works in every current browser.
 - **Progress.** Incoming items report bytes, a smoothed transfer rate, and time left.
 - **Offer / request / revoke.** Senders announce metadata and hold only a `File` reference. Receivers pull the file when they choose, and senders can withdraw an offer mid-download.
 - **Untrusted peers.** Signals are validated field by field, file names are sanitized, and a sender that sends more or fewer bytes than it announced is rejected.
@@ -80,7 +80,7 @@ When your signaling layer sees a peer disconnect, tell the manager with `files.h
 | `onItemsChange(items)` | Called with a fresh snapshot whenever state changes. Progress updates are coalesced to every 100 ms. |
 | `onNotice(notice)` | `incoming-offer`, `received`, or `failed` with a `code`. |
 | `iceServers` | Defaults to public Google and Cloudflare STUN servers. Add a TURN server for restrictive networks. |
-| `limits` | Any of `maxFileBytes` (500 MB), `chunkBytes` (64 KB), `bufferHighBytes` (4 MB), `bufferLowBytes` (1 MB), `stallMs` (20 s), `maxItems` (20). |
+| `limits` | Any of `maxFileBytes` (64 GiB), `maxMemoryBytes` (500 MB), `chunkBytes` (64 KB), `bufferHighBytes` (4 MB), `bufferLowBytes` (1 MB), `stallMs` (20 s), `maxItems` (20). |
 | `createId` | Id generator for offers and transfers. |
 | `capabilities` | Protocol features to advertise: `blocks` and `resume`. Defaults to both where `crypto.subtle` exists. Pass `[]` to behave exactly like a v1 peer. |
 | `createPeerConnection` | For environments without a global `RTCPeerConnection`, such as Node with a WebRTC polyfill. |
@@ -95,21 +95,30 @@ While an incoming item is `transferring`, it also carries `bytesPerSecond` (a sm
 
 ### Where received bytes go
 
-`request(id, { sink })` streams a download into a `FileSink` instead of memory. For example, a file the user picked with `showSaveFilePicker`:
+`request(id, { sink })` streams a download into a `FileSink` instead of memory. Without a sink, the download is assembled in memory as a `Blob`, and files over `limits.maxMemoryBytes` are refused: `request` returns `false` with a `needs-sink` failure notice.
+
+`@thebkht/rtc-file-transfer/sinks` has sinks ready to use:
 
 ```ts
-const handle = await showSaveFilePicker({ suggestedName: item.name });
-const writable = await handle.createWritable();
-files.request(item.id, {
-  sink: {
-    write: (chunk) => writable.write(chunk),
-    close: () => writable.close(),
-    abort: () => writable.abort(),
-  },
+import { bestSink } from "@thebkht/rtc-file-transfer/sinks";
+
+// Inside the click handler: the save picker needs user activation.
+button.addEventListener("click", async () => {
+  const sink = await bestSink(item); // rejects with AbortError if the picker is dismissed
+  files.request(item.id, { sink });
 });
 ```
 
-Writes are serialized. `close` runs once every byte has arrived; return a `Blob` from it to expose one as `item.blob`, or return nothing and the item gets `savedToSink: true`. `abort` runs if the download fails or never starts, and a sink that throws fails the transfer with `write-error`. The receiver can't slow the sender down, so bytes that arrive faster than the sink writes them queue in memory. Without a sink, the download is assembled in memory as a `Blob`.
+| Sink | Where the bytes go | Browsers |
+| --- | --- | --- |
+| `pickFileSink(name)` | A file the user picks with `showSaveFilePicker` | Chromium |
+| `directorySink(root, path, name)` | `path/name` inside a folder from `pickDirectory()` | Chromium |
+| `opfsSink(name)` | The Origin Private File System. `close` returns a disk-backed `Blob` as `item.blob` | Chromium, Firefox 111+, Safari 26+ |
+| `writableSink(stream)` | Any `WritableStream` or `FileSystemWritableFileStream` | Everywhere |
+
+`bestSink(item)` tries the picker, then OPFS, and resolves `undefined` when neither exists. OPFS files stay until `clearOpfs()` removes them; remove them only after the user has saved the Blob, since it stops being readable once its file is gone. `canPickFile`, `canPickDirectory` and `hasOpfs` report what the browser supports.
+
+To write your own, implement `write`, `close` and `abort`. Writes are serialized. `close` runs once every byte has arrived; return a `Blob` from it to expose one as `item.blob`, or return nothing and the item gets `savedToSink: true`. `abort` runs if the download fails or never starts, and a sink that throws fails the transfer with `write-error`. The receiver can't slow the sender down, so bytes that arrive faster than the sink writes them queue in memory.
 
 ### Resuming
 
@@ -117,7 +126,7 @@ When both peers support `resume`, a download that fails part way (`stalled`, `na
 
 ### Failure codes
 
-`stalled` · `nat` · `read-error` · `negotiation` · `incomplete` · `overflow` · `canceled` · `revoked` · `sender-left` · `closed` · `write-error` · `corrupt` · `remote-canceled`
+`stalled` · `nat` · `read-error` · `negotiation` · `incomplete` · `overflow` · `canceled` · `revoked` · `sender-left` · `closed` · `write-error` · `corrupt` · `needs-sink` · `remote-canceled`
 
 Each failure notice also carries an English `message`. Use the `code` to show your own wording.
 
