@@ -21,6 +21,7 @@ export type FileItemStatus =
   | "transferring"
   | "done"
   | "failed"
+  | "paused"
   | "revoked";
 
 export type FailureCode =
@@ -52,6 +53,8 @@ export type FailureCode =
   | "needs-sink"
   /** Every block passed, but the file as a whole didn't match the offer's `digest`. */
   | "digest-mismatch"
+  /** `pause` was called; the download keeps what it has verified. */
+  | "paused"
   /** The other peer canceled; `message` is the reason it sent. */
   | "remote-canceled";
 
@@ -228,9 +231,18 @@ type Transfer = {
   rate: number;
   doneSent: boolean;
   closed: boolean;
+  /** Send side, flow mode: bytes handed to the channel, and bytes the receiver has committed. */
+  sentBytes: number;
+  creditedBytes: number;
+  /** Both peers negotiated `flow` for this transfer. */
+  flow: boolean;
+  /** Resolves when a credit arrives, while the sender is waiting for room. */
+  onCredit: (() => void) | null;
 };
 
 const DONE_MESSAGE = "done";
+/** Receiver → sender, in blocks+flow mode: how many bytes are safely committed. */
+const CREDIT_PREFIX = '{"t":"credit"';
 const ACK_MESSAGE = "ack";
 const PROGRESS_EMIT_MS = 100;
 const RECEIVER_CLOSE_GRACE_MS = 5_000;
@@ -258,10 +270,12 @@ const MESSAGES: Record<Exclude<FailureCode, "remote-canceled">, string> = {
   corrupt: "Part of the file arrived damaged. Try again.",
   "needs-sink": "This file is too large to download into memory.",
   "digest-mismatch": "The file that arrived isn't the one that was offered.",
+  paused: "Download paused.",
 };
 
 /** Failures worth resuming after: the data so far is good, the link wasn't. */
 const RESUMABLE = new Set<FailureCode>([
+  "paused",
   "stalled",
   "nat",
   "negotiation",
@@ -314,6 +328,27 @@ function joinParts(parts: Uint8Array<ArrayBuffer>[], length: number) {
     offset += part.byteLength;
   }
   return joined;
+}
+
+/** The in-band credit from a receiver: `{"t":"credit","b":1048576}`. */
+function parseCreditMessage(raw: string) {
+  try {
+    const message: unknown = JSON.parse(raw);
+    if (
+      typeof message === "object" &&
+      message !== null &&
+      "t" in message &&
+      message.t === "credit" &&
+      "b" in message &&
+      Number.isSafeInteger(message.b) &&
+      (message.b as number) >= 0
+    ) {
+      return message.b as number;
+    }
+  } catch {
+    // not JSON
+  }
+  return null;
 }
 
 /** The in-band message that follows each block: `{"t":"block","i":0,"h":"…"}`. */
@@ -626,13 +661,16 @@ export function createFileTransferManager(options: FileTransferOptions) {
         releaseDownload(item.id);
         item.resumableBytes = undefined;
       }
-      item.status = "failed";
-      item.error = message;
-      item.errorCode = code;
+      const paused = code === "paused" && item.resumableBytes !== undefined;
+      item.status = paused ? "paused" : "failed";
+      item.error = paused ? undefined : message;
+      item.errorCode = paused ? undefined : code;
       item.bytes = item.resumableBytes ?? 0;
       clearRate(item);
       emit();
-      onNotice({ type: "failed", item: { ...item }, code, message });
+      if (!paused) {
+        onNotice({ type: "failed", item: { ...item }, code, message });
+      }
     };
 
     if (retain && download.pending > 0) {
@@ -701,17 +739,36 @@ export function createFileTransferManager(options: FileTransferOptions) {
     });
   }
 
-  /** Sends one chunk once the channel has room. False if the transfer ended. */
+  /** Resolves when the receiver credits more bytes, or the transfer ends. */
+  function waitForCredit(transfer: Transfer) {
+    return new Promise<void>((resolve) => {
+      transfer.onCredit = () => {
+        transfer.onCredit = null;
+        resolve();
+      };
+    });
+  }
+
+  /**
+   * Sends one chunk once the channel has room, and — in flow mode — once the
+   * receiver is no longer `windowBytes` behind. False if the transfer ended.
+   */
   async function sendChunk(
     transfer: Transfer,
     channel: RTCDataChannel,
     chunk: ArrayBuffer | string,
   ) {
-    while (channel.bufferedAmount > limits.bufferHighBytes) {
+    while (
+      channel.bufferedAmount > limits.bufferHighBytes ||
+      (transfer.flow && transfer.sentBytes - transfer.creditedBytes > limits.windowBytes)
+    ) {
       if (transfer.closed || channel.readyState !== "open") {
         return false;
       }
-      await waitForDrain(channel);
+      await (channel.bufferedAmount > limits.bufferHighBytes
+        ? waitForDrain(channel)
+        : // The stall timer is running: a receiver that never credits fails it.
+          waitForCredit(transfer));
     }
     if (transfer.closed || channel.readyState !== "open") {
       return false;
@@ -720,6 +777,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       channel.send(chunk);
     } else {
       channel.send(chunk);
+      transfer.sentBytes += chunk.byteLength;
     }
     touch(transfer);
     return true;
@@ -788,7 +846,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
     role: Transfer["role"],
     remotePeer: PeerId,
     itemId: string,
-    setup: Pick<Transfer, "download" | "blocks" | "offset">,
+    setup: Pick<Transfer, "download" | "blocks" | "offset" | "flow">,
   ): Transfer {
     const base = {
       id,
@@ -810,6 +868,10 @@ export function createFileTransferManager(options: FileTransferOptions) {
       rate: 0,
       doneSent: false,
       closed: false,
+      sentBytes: setup.offset,
+      creditedBytes: setup.offset,
+      flow: setup.flow,
+      onCredit: null,
     };
     return { ...base, pc: createPeerConnection(base) };
   }
@@ -872,6 +934,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
     }
 
     const blocks = hasCap("blocks", request.caps);
+    const flow = blocks && hasCap("flow", request.caps);
     const offset = blocks && selfCaps.includes("resume") ? (request.offset ?? 0) : 0;
     if (offset > file.size || (offset % BLOCK_BYTES !== 0 && offset !== file.size)) {
       sendSignal(
@@ -884,6 +947,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
     const transfer = newTransfer(transferId, "send", from, id, {
       download: null,
       blocks,
+      flow,
       offset,
     });
     transfers.set(transferId, transfer);
@@ -902,6 +966,21 @@ export function createFileTransferManager(options: FileTransferOptions) {
     channel.addEventListener("message", (event) => {
       if (event.data === ACK_MESSAGE) {
         finishSend(transfer, true);
+        return;
+      }
+      if (typeof event.data !== "string" || !event.data.startsWith(CREDIT_PREFIX)) {
+        return;
+      }
+      const credited = parseCreditMessage(event.data);
+      if (credited !== null && credited > transfer.creditedBytes) {
+        transfer.creditedBytes = credited;
+        // Progress the sender can see, so a slow sink isn't read as a stall.
+        // Not once everything is sent: the ack timer has the slot then, and a
+        // trailing credit must not shorten it back to a stall.
+        if (!transfer.doneSent) {
+          touch(transfer);
+        }
+        transfer.onCredit?.();
       }
     });
     channel.addEventListener("close", () => {
@@ -984,6 +1063,13 @@ export function createFileTransferManager(options: FileTransferOptions) {
       await download.sink.write(block);
       download.blockHashes[message.index] = message.hash;
       download.verifiedBytes += block.byteLength;
+      if (transfer.flow && transfer.channel?.readyState === "open") {
+        // Only what the sink has taken, so the sender's window bounds this
+        // device's memory rather than trailing it.
+        transfer.channel.send(
+          JSON.stringify({ t: "credit", b: download.verifiedBytes }),
+        );
+      }
     });
   }
 
@@ -1171,7 +1257,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
   }
 
   function revokeIncoming(item: FileItem, code: "revoked" | "sender-left") {
-    if (item.status === "offered" || item.status === "failed") {
+    if (item.status === "offered" || item.status === "failed" || item.status === "paused") {
       item.status = "revoked";
       item.error = undefined;
       item.errorCode = undefined;
@@ -1401,7 +1487,9 @@ export function createFileTransferManager(options: FileTransferOptions) {
       if (
         !item ||
         item.direction !== "incoming" ||
-        (item.status !== "offered" && item.status !== "failed")
+        (item.status !== "offered" &&
+          item.status !== "failed" &&
+          item.status !== "paused")
       ) {
         if (options.sink) {
           abortSink(options.sink);
@@ -1434,12 +1522,14 @@ export function createFileTransferManager(options: FileTransferOptions) {
         downloads.set(id, download);
       }
       const blocks = hasCap("blocks", item.caps);
+      const flow = blocks && hasCap("flow", item.caps);
       const offset = resuming ? download.verifiedBytes : 0;
 
       const transferId = createId();
       const transfer = newTransfer(transferId, "receive", item.peerId, id, {
         download,
         blocks,
+        flow,
         offset,
       });
       transfer.pc.addEventListener("datachannel", (event) => {
@@ -1473,6 +1563,36 @@ export function createFileTransferManager(options: FileTransferOptions) {
       touch(transfer);
       emit();
       return true;
+    },
+
+    /**
+     * Pause an incoming download, keeping every verified block. `resume` (or
+     * `request`) picks it up from there, into the same sink. Only possible when
+     * both peers support `resume`; returns false otherwise, and the caller can
+     * offer `cancel` instead.
+     */
+    pause(id: string) {
+      const item = items.get(id);
+      if (
+        !item ||
+        item.status === "done" ||
+        !hasCap("blocks", item.caps) ||
+        !hasCap("resume", item.caps)
+      ) {
+        return false;
+      }
+      for (const transfer of [...transfers.values()]) {
+        if (transfer.itemId === id && transfer.role === "receive" && !transfer.finishing) {
+          failTransfer(transfer, "paused", true);
+          return true;
+        }
+      }
+      return false;
+    },
+
+    /** Continue a paused or failed download. The same as calling `request` again. */
+    resume(id: string, options: RequestOptions = {}) {
+      return this.request(id, options);
     },
 
     /** Abort an in-progress incoming download. */

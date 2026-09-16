@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.0
+
+- New capability `flow`: the receiver credits the sender with what its sink has committed, and the sender stops once it is `windowBytes` (16 MB) ahead. Memory is now bounded at both ends, so a slow disk can't pile up in the receiver's. Requires `blocks`; peers without it fall back to `bufferedAmount` alone.
+- `pause(id)` and `resume(id)`: pause an incoming download and keep every verified block. The item's status becomes `paused`, with no failure notice, and resuming continues into the same sink. Needs `blocks` and `resume` on both sides; `pause` returns false otherwise.
+- New limit `windowBytes`, new status `paused`, new failure code `paused` (sent to the sender as the reason; the paused item carries no error).
+
 ## 0.8.0
 
 - `offerFiles(entries, { digest: true })` hashes each file in the background and re-announces the offer with a `digest`: the SHA-256 of its block digests joined together. `FileItem.hashedBytes` reports progress.

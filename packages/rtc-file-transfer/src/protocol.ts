@@ -10,10 +10,14 @@ export type PeerId = string;
  *   digest of it, and the receiver verifies each block before keeping it.
  * - `resume`: the sender honors `offset` on `file-request`. Requires `blocks`,
  *   since only verified blocks are safe to resume after.
+ * - `flow`: the receiver reports how much it has committed to its sink, and the
+ *   sender stops once it is `windowBytes` ahead. Requires `blocks`, since a
+ *   block is what the receiver commits. Without it a slow disk piles up in the
+ *   receiver's memory.
  */
-export type Capability = "blocks" | "resume";
+export type Capability = "blocks" | "resume" | "flow";
 
-export const CAPABILITIES: readonly Capability[] = ["blocks", "resume"];
+export const CAPABILITIES: readonly Capability[] = ["blocks", "resume", "flow"];
 
 /** Size of a verified block. Resume offsets fall on these boundaries. */
 export const BLOCK_BYTES = 1024 * 1024;

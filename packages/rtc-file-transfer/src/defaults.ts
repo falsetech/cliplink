@@ -14,6 +14,11 @@ export type TransferLimits = {
   bufferLowBytes: number;
   /** Fail a transfer that makes no progress for this long. */
   stallMs: number;
+  /**
+   * How far ahead of the receiver's sink the sender may run, when both peers
+   * support `flow`. Bounds the receiver's memory on a slow disk.
+   */
+  windowBytes: number;
   /** Idle incoming items beyond this count are evicted, oldest first. */
   maxItems: number;
 };
@@ -25,6 +30,7 @@ export const DEFAULT_LIMITS: TransferLimits = {
   bufferHighBytes: 4 * 1024 * 1024,
   bufferLowBytes: 1024 * 1024,
   stallMs: 20_000,
+  windowBytes: 16 * 1024 * 1024,
   maxItems: 20,
 };
 
