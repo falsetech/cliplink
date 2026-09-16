@@ -8,11 +8,11 @@
 
 Send files peer-to-peer over WebRTC data channels, with the parts that are easy to get wrong already done:
 
-- **Backpressure.** Stops sending at a high-water mark on `bufferedAmount` and resumes on `bufferedamountlow`, so large files don't fill the send queue and kill the channel.
+- **Backpressure, both ends.** Stops sending at a high-water mark on `bufferedAmount` and resumes on `bufferedamountlow`, so large files don't fill the send queue and kill the channel. The receiver can hold the sender back too, so a slow disk doesn't pile up in its memory.
 - **Chunking.** Chunks are capped at the SCTP `maxMessageSize` the connection actually negotiated.
 - **Stall detection.** A transfer that makes no progress fails with a code instead of hanging forever.
 - **Integrity checks.** Every 1 MiB is verified against a SHA-256 digest before it's kept, and an offer can carry a digest of the whole file that the receiver checks at the end.
-- **Resume.** A download that drops part way picks up from its last verified block instead of starting over.
+- **Resume and pause.** A download that drops part way — or that the user paused — picks up from its last verified block instead of starting over.
 - **Stream to disk.** Downloads can write into any sink, so large files never have to fit in memory. Ready-made sinks cover a file the user picks, a folder, and the Origin Private File System, which works in every current browser.
 - **Progress.** Incoming items report bytes, a smoothed transfer rate, and time left.
 - **Offer / request / revoke.** Senders announce metadata and hold only a `File` reference. Receivers pull the file when they choose, and senders can withdraw an offer mid-download.
@@ -107,12 +107,12 @@ Anything else still works the way the example above does — an adapter is a con
 | `onItemsChange(items)` | Called with a fresh snapshot whenever state changes. Progress updates are coalesced to every 100 ms. |
 | `onNotice(notice)` | `incoming-offer`, `received`, or `failed` with a `code`. |
 | `iceServers` | Defaults to public Google and Cloudflare STUN servers. Add a TURN server for restrictive networks. |
-| `limits` | Any of `maxFileBytes` (64 GiB), `maxMemoryBytes` (500 MB), `chunkBytes` (64 KB), `bufferHighBytes` (4 MB), `bufferLowBytes` (1 MB), `stallMs` (20 s), `maxItems` (20). |
+| `limits` | Any of `maxFileBytes` (64 GiB), `maxMemoryBytes` (500 MB), `chunkBytes` (64 KB), `bufferHighBytes` (4 MB), `bufferLowBytes` (1 MB), `windowBytes` (16 MB), `stallMs` (20 s), `maxItems` (20). |
 | `createId` | Id generator for offers and transfers. |
-| `capabilities` | Protocol features to advertise: `blocks` and `resume`. Defaults to both where `crypto.subtle` exists. Pass `[]` to behave exactly like a v1 peer. |
+| `capabilities` | Protocol features to advertise: `blocks`, `resume` and `flow`. Defaults to all of them where `crypto.subtle` exists. Pass `[]` to behave exactly like a v1 peer. |
 | `createPeerConnection` | For environments without a global `RTCPeerConnection`, such as Node with a WebRTC polyfill. |
 
-The manager returns `handleSignal`, `announce`, `offerFiles`, `request`, `cancel`, `revoke`, `dismiss` and `dispose`.
+The manager returns `handleSignal`, `announce`, `offerFiles`, `request`, `pause`, `resume`, `cancel`, `revoke`, `dismiss` and `dispose`.
 
 `offerFiles(entries, { batch?, digest? })` takes `File`s or `{ file, path }` entries, where `path` is the folder a file sits in (`photos/2024`). With `batch: true`, every file in the call shares one `batchId`, so a receiver can show them as a group.
 
@@ -147,7 +147,7 @@ button.addEventListener("click", async () => {
 
 `bestSink(item)` tries the picker, then OPFS, and resolves `undefined` when neither exists. OPFS files stay until `clearOpfs()` removes them; remove them only after the user has saved the Blob, since it stops being readable once its file is gone. `canPickFile`, `canPickDirectory` and `hasOpfs` report what the browser supports.
 
-To write your own, implement `write`, `close` and `abort`. Writes are serialized. `close` runs once every byte has arrived; return a `Blob` from it to expose one as `item.blob`, or return nothing and the item gets `savedToSink: true`. `abort` runs if the download fails or never starts, and a sink that throws fails the transfer with `write-error`. The receiver can't slow the sender down, so bytes that arrive faster than the sink writes them queue in memory.
+To write your own, implement `write`, `close` and `abort`. Writes are serialized. `close` runs once every byte has arrived; return a `Blob` from it to expose one as `item.blob`, or return nothing and the item gets `savedToSink: true`. `abort` runs if the download fails or never starts, and a sink that throws fails the transfer with `write-error`. With `flow` on both sides the sink sets the pace, so a slow disk can't pile up in memory; against a peer without it, bytes that arrive faster than the sink writes them still queue.
 
 ### Verifying the whole file
 
@@ -159,13 +159,17 @@ files.offerFiles([...input.files!], { digest: true });
 
 It needs `blocks` on both sides. Only trust it as far as you trust your signaling: a sender that controls both paths can still make them agree. The first digest an offer arrives with is the one that is kept, so a later re-announce can't swap it.
 
-### Resuming
+### Pausing and resuming
+
+`pause(id)` stops an incoming download and keeps every verified block; the item goes to `paused` with no failure notice, and `resume(id)` — the same thing as calling `request` again — continues from there into the same sink. It needs `blocks` and `resume` on both sides, and returns false otherwise, so the UI can offer `cancel` instead.
 
 When both peers support `resume`, a download that fails part way (`stalled`, `nat`, `negotiation`, `closed`, `corrupt`, `sender-left`, or `remote-canceled`) keeps what it has verified. The item shows `resumableBytes`, and calling `request(id)` again picks up from there, writing into the same sink. A new sink passed then is aborted. The kept sink is released when the item is dismissed, or when the sender revokes the offer or leaves.
 
 ### Failure codes
 
-`stalled` · `nat` · `read-error` · `negotiation` · `incomplete` · `overflow` · `canceled` · `revoked` · `sender-left` · `closed` · `write-error` · `corrupt` · `digest-mismatch` · `needs-sink` · `remote-canceled`
+`stalled` · `nat` · `read-error` · `negotiation` · `incomplete` · `overflow` · `canceled` · `revoked` · `sender-left` · `closed` · `write-error` · `corrupt` · `digest-mismatch` · `needs-sink` · `paused` · `remote-canceled`
+
+`paused` only appears on the wire, as the reason the sender is told; the paused item itself carries no error.
 
 Each failure notice also carries an English `message`. Use the `code` to show your own wording.
 
@@ -184,6 +188,7 @@ Newer peers negotiate optional features through fields that v1 peers never send 
 - `file-offer.caps` lists what the sender supports, and `file-request.caps` lists what the receiver supports. A feature is used only when both lists include it.
 - With `blocks`, the sender follows every `BLOCK_BYTES` (1 MiB) of data with the string `{"t":"block","i":<index>,"h":"<sha256 hex>"}`. The receiver checks each block before writing it to the sink.
 - With `resume` (which requires `blocks`), `file-request.offset` asks the sender to start at a block boundary.
+- With `flow` (which also requires `blocks`), the receiver answers each verified block with `{"t":"credit","b":<bytes committed>}`, and the sender stops once it is `windowBytes` ahead of that. Peers without it ignore the message and rely on `bufferedAmount` alone.
 
 `file-offer` can also carry `path`, `batchId` and `digest`. These aren't capabilities: older peers drop them on receipt, showing loose files and skipping the whole-file check.
 

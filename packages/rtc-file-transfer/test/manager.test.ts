@@ -474,7 +474,10 @@ describe("verified blocks and resume", () => {
     const { bob } = await offerAndRequest(source);
     await waitFor(() => bob.notices.some((notice) => notice.type === "received"));
     assert.deepEqual(new Uint8Array(await incoming(bob)[0].blob!.arrayBuffer()), source);
-    assert.equal(bus.net.strings.filter((message) => message.startsWith("{")).length, 3);
+    const inBand = (kind: string) =>
+      bus.net.strings.filter((message) => message.includes(`"t":"${kind}"`)).length;
+    assert.equal(inBand("block"), 3);
+    assert.equal(inBand("credit"), 3, "each committed block credits the sender");
   });
 
   for (const [label, aliceCaps, bobCaps] of [
@@ -594,6 +597,119 @@ describe("verified blocks and resume", () => {
     assert.equal(bob.manager.request(incoming(bob)[0].id), true);
     await waitFor(() => bob.notices.some((notice) => notice.type === "received"));
     assert.deepEqual(new Uint8Array(await incoming(bob)[0].blob!.arrayBuffer()), source);
+  });
+
+  it("holds the sender within windowBytes of what the receiver has committed", async () => {
+    const limits = { windowBytes: MB, chunkBytes: 64 * 1024 };
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice", { limits });
+    const bob = bus.addPeer("peer-bob00", { limits });
+    const source = randomBytes(5 * MB);
+
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let written = 0;
+    alice.manager.offerFiles([new File([source], "slow-disk.bin")]);
+    await waitFor(() => incoming(bob).length === 1);
+    bob.manager.request(incoming(bob)[0].id, {
+      sink: {
+        async write(chunk: Uint8Array<ArrayBuffer>) {
+          // The first block lands; the rest of the disk is "busy" until released.
+          if (written > 0) {
+            await held;
+          }
+          written += chunk.byteLength;
+        },
+        close() {},
+        abort() {},
+      },
+    });
+
+    // The sender runs ahead by at most the window plus the block in flight.
+    await waitFor(() => bus.net.deliveredBytes > 2 * MB);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.ok(
+      bus.net.deliveredBytes <= 3 * MB + limits.chunkBytes,
+      `sender ran ${bus.net.deliveredBytes} bytes ahead of a stuck sink`,
+    );
+
+    release();
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 5000);
+    assert.equal(written, source.byteLength);
+  });
+
+  it("falls back to buffer-only flow control when the other peer has no flow", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice", { capabilities: ["blocks", "resume"] });
+    bus.addPeer("peer-bob00");
+    const source = randomBytes(2 * MB);
+
+    const { bob } = await offerAndRequest(source, "no-flow.bin");
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"));
+    assert.deepEqual(new Uint8Array(await incoming(bob)[0].blob!.arrayBuffer()), source);
+    assert.equal(
+      bus.net.strings.filter((message) => message.includes('"t":"credit"')).length,
+      0,
+      "a peer without flow is never credited",
+    );
+  });
+
+  it("pauses a download and resumes it from the block it reached", async () => {
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00");
+    const source = randomBytes(3 * MB);
+    const written: Uint8Array<ArrayBuffer>[] = [];
+    const sink = {
+      write: (chunk: Uint8Array<ArrayBuffer>) => void written.push(chunk.slice()),
+      close: () => {},
+      abort: () => {},
+    };
+
+    alice.manager.offerFiles([new File([source], "pause.bin")]);
+    await waitFor(() => incoming(bob).length === 1);
+    const id = incoming(bob)[0].id;
+    // Hold the wire part way through, so the pause lands mid-transfer.
+    bus.net.pauseAfterBytes = MB + 64 * 1024;
+    bob.manager.request(id, { sink });
+
+    await waitFor(() => (incoming(bob)[0].bytes ?? 0) > MB);
+    assert.equal(bob.manager.pause(id), true);
+    await waitFor(() => incoming(bob)[0].status === "paused");
+    const paused = incoming(bob)[0];
+    assert.ok((paused.resumableBytes ?? 0) >= MB);
+    assert.equal(paused.error, undefined, "pausing is not a failure");
+    assert.equal(paused.errorCode, undefined);
+    assert.equal(
+      bob.notices.some((notice) => notice.type === "failed"),
+      false,
+      "pausing raises no failure notice",
+    );
+
+    const kept = paused.resumableBytes!;
+    bus.net.setFlowing(true);
+    assert.equal(bob.manager.resume(id), true);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 5000);
+    assert.equal(incoming(bob)[0].status, "done");
+    assert.deepEqual(new Uint8Array(await new Blob(written).arrayBuffer()), source);
+    assert.ok(kept > 0 && kept < source.byteLength, "resumed part way, not from zero");
+  });
+
+  it("refuses to pause a transfer with a v1 sender", async () => {
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice", { capabilities: [] });
+    const bob = bus.addPeer("peer-bob00");
+    alice.manager.offerFiles([new File([randomBytes(2 * MB)], "v1.bin")]);
+    await waitFor(() => incoming(bob).length === 1);
+    const id = incoming(bob)[0].id;
+    bus.net.pauseAfterBytes = 64 * 1024;
+    bob.manager.request(id);
+    await waitFor(() => (incoming(bob)[0].bytes ?? 0) > 0);
+    assert.equal(bob.manager.pause(id), false, "a v1 sender cannot resume, so it cannot pause");
+    bus.net.setFlowing(true);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"));
   });
 
   it("resumes a stalled download from its last verified block, into the same sink", async () => {
