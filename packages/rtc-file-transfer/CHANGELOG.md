@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.0.0
+
+1.0.0 is the commitment that what is there now stays there:
+
+- **The API follows semver.** Exported functions and types, option names, `FileItem` fields, notice types and failure codes change only in a major. New failure codes and new `FileItem` fields can still appear in a minor.
+- **Wire protocol v1 is permanent.** A peer on any version interoperates with a peer on any other, in both directions, and the test suite now pins that with a pair of transfers against a manager created as `capabilities: []` — a 0.1.0 peer, as far as the wire is concerned. Future features arrive as capabilities and optional fields, never as changes to existing messages.
+- README: a "Compared with" table checked against each package's own source, a browser support matrix, an honest list of what this doesn't solve (TURN, tab lifetime, mobile backgrounding, SCTP throughput, integrity vs. authenticity), quick-starts for simple-peer, PeerJS and Trystero, and a stability section spelling the above out.
+- Fixed: a manager disposed mid-block no longer checkpoints that block into a `ResumeProvider`. Its sink has already been aborted, so those bytes were never there to resume from, and a store that recorded them sent the next load back to an offset its file did not reach. This was reachable from 0.10.0 whenever a page tore a manager down mid-transfer.
+- New `examples/two-tabs.html`: a complete client — offer, download, pause, resume across a reload — in one static file, not published to npm.
+- CONTRIBUTING documents how a capability is added.
+
+## 0.10.0
+
+- New `resume` option: a `ResumeProvider` keeps partial downloads across page loads, so a reload or a crash no longer starts a file over. Offers need a `digest` (`offerFiles(entries, { digest: true })`), which is what identifies a file across loads.
+- `opfsResume()` in `/sinks` is a provider built on the Origin Private File System. It writes fixed-size part files and closes each as it fills, so at most one segment is refetched; `close` returns the file as a disk-backed Blob, and finished, revoked or dismissed files are deleted.
+- Incoming items show `resumableBytes` from the store before anything is requested, and the store supplies the sink for fresh downloads of files that carry a digest.
+
+## 0.9.0
+
+- New capability `flow`: the receiver credits the sender with what its sink has committed, and the sender stops once it is `windowBytes` (16 MB) ahead. Memory is now bounded at both ends, so a slow disk can't pile up in the receiver's. Requires `blocks`; peers without it fall back to `bufferedAmount` alone.
+- `pause(id)` and `resume(id)`: pause an incoming download and keep every verified block. The item's status becomes `paused`, with no failure notice, and resuming continues into the same sink. Needs `blocks` and `resume` on both sides; `pause` returns false otherwise.
+- New limit `windowBytes`, new status `paused`, new failure code `paused` (sent to the sender as the reason; the paused item carries no error).
+
+## 0.8.0
+
+- `offerFiles(entries, { digest: true })` hashes each file in the background and re-announces the offer with a `digest`: the SHA-256 of its block digests joined together. `FileItem.hashedBytes` reports progress.
+- Receivers check that digest once every block has arrived, and fail with the new code `digest-mismatch` if it doesn't match. Since the digest travels over signaling and the bytes over the data channel, it catches a sender that lies on one path.
+- The digest is an optional `file-offer` field, so v1 peers drop it and behave exactly as before. An offer keeps the first digest it arrives with.
+
 ## 0.7.0
 
 - `@thebkht/rtc-file-transfer/adapters`: signaling adapters for transports you already have — `webSocketSignaling`, `broadcastChannelSignaling`, `supabaseSignaling`, `trysteroSignaling`, `peerJsSignaling` and `simplePeerSignaling`. Each validates inbound signals with `parseFileSignal`, drops signals meant for another peer, reports departures where the transport knows about them, and announces once it is ready. The library types are structural, so there are still no dependencies.

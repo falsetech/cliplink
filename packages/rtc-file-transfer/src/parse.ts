@@ -20,6 +20,8 @@ export const DEFAULT_PARSE_LIMITS: ParseLimits = {
   maxPathChars: 1024,
 };
 
+const HASH_PATTERN = /^[0-9a-f]{64}$/;
+
 const MIN_ID_CHARS = 8;
 const MAX_ID_CHARS = 64;
 const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -106,6 +108,9 @@ export function parseFileSignal(
         ...(caps && { caps }),
         ...(path && { path }),
         ...(isValidId(input.batchId) && { batchId: input.batchId }),
+        ...(typeof input.digest === "string" && HASH_PATTERN.test(input.digest)
+          ? { digest: input.digest }
+          : {}),
       };
     }
 

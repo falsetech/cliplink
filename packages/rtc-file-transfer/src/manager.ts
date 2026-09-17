@@ -21,6 +21,7 @@ export type FileItemStatus =
   | "transferring"
   | "done"
   | "failed"
+  | "paused"
   | "revoked";
 
 export type FailureCode =
@@ -50,6 +51,10 @@ export type FailureCode =
   | "corrupt"
   /** The file is over `limits.maxMemoryBytes` and `request` was given no sink. */
   | "needs-sink"
+  /** Every block passed, but the file as a whole didn't match the offer's `digest`. */
+  | "digest-mismatch"
+  /** `pause` was called; the download keeps what it has verified. */
+  | "paused"
   /** The other peer canceled; `message` is the reason it sent. */
   | "remote-canceled";
 
@@ -81,6 +86,11 @@ export type FileItem = FileOffer & {
   bytesPerSecond?: number;
   /** Estimated time left at `bytesPerSecond` (incoming, while transferring). */
   etaMs?: number;
+  /**
+   * Bytes hashed so far while preparing an offer's `digest` (outgoing only).
+   * Reaches `size` when the digest is ready and the offer is re-announced.
+   */
+  hashedBytes?: number;
   /** Devices currently pulling / that finished pulling this file (outgoing only). */
   activeTransfers: number;
   completedTransfers: number;
@@ -114,6 +124,50 @@ export type OfferEntry = {
 export type OfferOptions = {
   /** Give every file in this call one `batchId`. */
   batch?: boolean;
+  /**
+   * Hash each file up front and re-announce the offer with a `digest`, so
+   * receivers can check the whole file once it has arrived. Hashing runs in the
+   * background and reports progress as `hashedBytes`; the file is offered
+   * straight away either way.
+   */
+  digest?: boolean;
+};
+
+/**
+ * What a paused or dropped download kept, enough to carry on after a reload:
+ * how much is safely on disk, and the hash of every block behind it.
+ */
+export type ResumeState = {
+  verifiedBytes: number;
+  blockHashes: string[];
+};
+
+/** Identifies a file across page loads: its digest, plus what it is. */
+export type ResumeKey = {
+  /** The offer's `digest`; a file with the same content always has the same one. */
+  digest: string;
+  size: number;
+  name: string;
+};
+
+/**
+ * Storage for partial downloads, so they survive a reload rather than only a
+ * dropped connection. `opfsResume()` in `@thebkht/rtc-file-transfer/sinks` is a
+ * ready-made one.
+ *
+ * Only offers that carry a `digest` can be resumed this way, since that is what
+ * identifies the file across page loads. `checkpoint` must report only what is
+ * durably written: whatever it records is what the next load resumes from.
+ */
+export type ResumeProvider = {
+  /** What is on disk for this file, or null. */
+  load(key: ResumeKey): Promise<ResumeState | null>;
+  /** Reopen the file at `state.verifiedBytes` to append to it. Null if it can't be. */
+  open(key: ResumeKey, state: ResumeState): Promise<FileSink | null>;
+  /** Record progress. Called as blocks are committed, and may be throttled. */
+  checkpoint(key: ResumeKey, state: ResumeState): void | Promise<void>;
+  /** Drop everything kept for this file. */
+  forget(key: ResumeKey): void | Promise<void>;
 };
 
 export type RequestOptions = {
@@ -156,6 +210,11 @@ export type FileTransferOptions = {
    * behave exactly like a v1 peer.
    */
   capabilities?: Capability[];
+  /**
+   * Keeps partial downloads across page loads. Used only for offers that carry
+   * a `digest` and peers that support `resume`.
+   */
+  resume?: ResumeProvider;
 };
 
 type Timer = ReturnType<typeof setTimeout>;
@@ -171,6 +230,10 @@ type Download = {
   writes: Promise<void>;
   /** Bytes written after passing their block check (blocks mode). */
   verifiedBytes: number;
+  /** Hash of every block kept so far, in order; checked against the offer's digest. */
+  blockHashes: string[];
+  /** Set when this download is being kept across page loads. */
+  key: ResumeKey | null;
   /** Queued sink work that hasn't finished yet. */
   pending: number;
   /** `close` has been called and hasn't resolved yet. */
@@ -212,9 +275,18 @@ type Transfer = {
   rate: number;
   doneSent: boolean;
   closed: boolean;
+  /** Send side, flow mode: bytes handed to the channel, and bytes the receiver has committed. */
+  sentBytes: number;
+  creditedBytes: number;
+  /** Both peers negotiated `flow` for this transfer. */
+  flow: boolean;
+  /** Resolves when a credit arrives, while the sender is waiting for room. */
+  onCredit: (() => void) | null;
 };
 
 const DONE_MESSAGE = "done";
+/** Receiver → sender, in blocks+flow mode: how many bytes are safely committed. */
+const CREDIT_PREFIX = '{"t":"credit"';
 const ACK_MESSAGE = "ack";
 const PROGRESS_EMIT_MS = 100;
 const RECEIVER_CLOSE_GRACE_MS = 5_000;
@@ -241,10 +313,13 @@ const MESSAGES: Record<Exclude<FailureCode, "remote-canceled">, string> = {
   "write-error": "Couldn't save the file on this device.",
   corrupt: "Part of the file arrived damaged. Try again.",
   "needs-sink": "This file is too large to download into memory.",
+  "digest-mismatch": "The file that arrived isn't the one that was offered.",
+  paused: "Download paused.",
 };
 
 /** Failures worth resuming after: the data so far is good, the link wasn't. */
 const RESUMABLE = new Set<FailureCode>([
+  "paused",
   "stalled",
   "nat",
   "negotiation",
@@ -260,9 +335,33 @@ function hasSubtleCrypto() {
   return typeof crypto !== "undefined" && typeof crypto.subtle?.digest === "function";
 }
 
+function toHex(bytes: Uint8Array<ArrayBuffer>) {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function fromHex(hex: string) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
+  }
+  return bytes;
+}
+
 async function sha256Hex(data: Uint8Array<ArrayBuffer>) {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", data));
-  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return toHex(new Uint8Array(await crypto.subtle.digest("SHA-256", data)));
+}
+
+/**
+ * The file's digest: SHA-256 over its block digests, joined as raw bytes. It
+ * covers the whole file without the receiver having to hold it, since the
+ * block hashes are all it keeps.
+ */
+async function digestOfBlocks(blockHashes: string[]) {
+  const joined = new Uint8Array(blockHashes.length * 32);
+  for (const [index, hash] of blockHashes.entries()) {
+    joined.set(fromHex(hash), index * 32);
+  }
+  return sha256Hex(joined);
 }
 
 function joinParts(parts: Uint8Array<ArrayBuffer>[], length: number) {
@@ -273,6 +372,27 @@ function joinParts(parts: Uint8Array<ArrayBuffer>[], length: number) {
     offset += part.byteLength;
   }
   return joined;
+}
+
+/** The in-band credit from a receiver: `{"t":"credit","b":1048576}`. */
+function parseCreditMessage(raw: string) {
+  try {
+    const message: unknown = JSON.parse(raw);
+    if (
+      typeof message === "object" &&
+      message !== null &&
+      "t" in message &&
+      message.t === "credit" &&
+      "b" in message &&
+      Number.isSafeInteger(message.b) &&
+      (message.b as number) >= 0
+    ) {
+      return message.b as number;
+    }
+  } catch {
+    // not JSON
+  }
+  return null;
 }
 
 /** The in-band message that follows each block: `{"t":"block","i":0,"h":"…"}`. */
@@ -346,6 +466,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
   const createId = options.createId ?? createRandomId;
   const newPeerConnection =
     options.createPeerConnection ?? ((config) => new RTCPeerConnection(config));
+  const resumeStore = options.resume;
   const advertised = new Set(
     options.capabilities ?? (hasSubtleCrypto() ? CAPABILITIES : []),
   );
@@ -355,9 +476,13 @@ export function createFileTransferManager(options: FileTransferOptions) {
 
   const items = new Map<string, FileItem>();
   const outgoingFiles = new Map<string, File>();
+  /** Offer id → its file's block hashes, once hashed for a `digest`. */
+  const offerBlockHashes = new Map<string, string[]>();
   const transfers = new Map<string, Transfer>();
   /** Incoming item id → its download, while one is running or can resume. */
   const downloads = new Map<string, Download>();
+  /** Incoming item id → what a previous page load left on disk. */
+  const stored = new Map<string, ResumeState>();
   let emitTimer: Timer | null = null;
   let disposed = false;
 
@@ -422,6 +547,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       ...(selfCaps.length > 0 && { caps: selfCaps }),
       ...(item.path && { path: item.path }),
       ...(item.batchId && { batchId: item.batchId }),
+      ...(item.digest && { digest: item.digest }),
     };
   }
 
@@ -434,6 +560,8 @@ export function createFileTransferManager(options: FileTransferOptions) {
       sink,
       writes: Promise.resolve(),
       verifiedBytes: 0,
+      blockHashes: [],
+      key: null,
       pending: 0,
       closing: false,
       settled: false,
@@ -581,13 +709,16 @@ export function createFileTransferManager(options: FileTransferOptions) {
         releaseDownload(item.id);
         item.resumableBytes = undefined;
       }
-      item.status = "failed";
-      item.error = message;
-      item.errorCode = code;
+      const paused = code === "paused" && item.resumableBytes !== undefined;
+      item.status = paused ? "paused" : "failed";
+      item.error = paused ? undefined : message;
+      item.errorCode = paused ? undefined : code;
       item.bytes = item.resumableBytes ?? 0;
       clearRate(item);
       emit();
-      onNotice({ type: "failed", item: { ...item }, code, message });
+      if (!paused) {
+        onNotice({ type: "failed", item: { ...item }, code, message });
+      }
     };
 
     if (retain && download.pending > 0) {
@@ -656,17 +787,36 @@ export function createFileTransferManager(options: FileTransferOptions) {
     });
   }
 
-  /** Sends one chunk once the channel has room. False if the transfer ended. */
+  /** Resolves when the receiver credits more bytes, or the transfer ends. */
+  function waitForCredit(transfer: Transfer) {
+    return new Promise<void>((resolve) => {
+      transfer.onCredit = () => {
+        transfer.onCredit = null;
+        resolve();
+      };
+    });
+  }
+
+  /**
+   * Sends one chunk once the channel has room, and — in flow mode — once the
+   * receiver is no longer `windowBytes` behind. False if the transfer ended.
+   */
   async function sendChunk(
     transfer: Transfer,
     channel: RTCDataChannel,
     chunk: ArrayBuffer | string,
   ) {
-    while (channel.bufferedAmount > limits.bufferHighBytes) {
+    while (
+      channel.bufferedAmount > limits.bufferHighBytes ||
+      (transfer.flow && transfer.sentBytes - transfer.creditedBytes > limits.windowBytes)
+    ) {
       if (transfer.closed || channel.readyState !== "open") {
         return false;
       }
-      await waitForDrain(channel);
+      await (channel.bufferedAmount > limits.bufferHighBytes
+        ? waitForDrain(channel)
+        : // The stall timer is running: a receiver that never credits fails it.
+          waitForCredit(transfer));
     }
     if (transfer.closed || channel.readyState !== "open") {
       return false;
@@ -675,12 +825,15 @@ export function createFileTransferManager(options: FileTransferOptions) {
       channel.send(chunk);
     } else {
       channel.send(chunk);
+      transfer.sentBytes += chunk.byteLength;
     }
     touch(transfer);
     return true;
   }
 
   async function pumpFile(transfer: Transfer, channel: RTCDataChannel, file: File) {
+    const item = items.get(transfer.itemId);
+    const cachedHashes = item && offerBlockHashes.get(item.offerId);
     const maxMessage = transfer.pc.sctp?.maxMessageSize;
     const chunkSize =
       maxMessage && maxMessage > 0
@@ -693,14 +846,16 @@ export function createFileTransferManager(options: FileTransferOptions) {
           const block = new Uint8Array(
             await file.slice(start, start + BLOCK_BYTES).arrayBuffer(),
           );
-          const hash = await sha256Hex(block);
+          const index = start / BLOCK_BYTES;
+          // Hashed already if this offer carries a digest.
+          const hash =
+            cachedHashes?.[index] ?? (await sha256Hex(block));
           for (let offset = 0; offset < block.byteLength; offset += chunkSize) {
             const chunk = block.buffer.slice(offset, offset + chunkSize);
             if (!(await sendChunk(transfer, channel, chunk))) {
               return;
             }
           }
-          const index = start / BLOCK_BYTES;
           const message = JSON.stringify({ t: "block", i: index, h: hash });
           if (!(await sendChunk(transfer, channel, message))) {
             return;
@@ -739,7 +894,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
     role: Transfer["role"],
     remotePeer: PeerId,
     itemId: string,
-    setup: Pick<Transfer, "download" | "blocks" | "offset">,
+    setup: Pick<Transfer, "download" | "blocks" | "offset" | "flow">,
   ): Transfer {
     const base = {
       id,
@@ -761,8 +916,197 @@ export function createFileTransferManager(options: FileTransferOptions) {
       rate: 0,
       doneSent: false,
       closed: false,
+      sentBytes: setup.offset,
+      creditedBytes: setup.offset,
+      flow: setup.flow,
+      onCredit: null,
     };
     return { ...base, pc: createPeerConnection(base) };
+  }
+
+  /**
+   * Opens the connection for a download that already has its sink, and tells
+   * the sender where to start. `keepOnFailure` is set when the sink holds a
+   * prefix worth keeping if signaling turns out to be down.
+   */
+  function beginReceive(item: FileItem, download: Download, keepOnFailure: boolean) {
+    const blocks = hasCap("blocks", item.caps);
+    const flow = blocks && hasCap("flow", item.caps);
+    const offset = download.verifiedBytes;
+
+    const transferId = createId();
+    const transfer = newTransfer(transferId, "receive", item.peerId, item.id, {
+      download,
+      blocks,
+      flow,
+      offset,
+    });
+    transfer.pc.addEventListener("datachannel", (event) => {
+      attachReceiveChannel(transfer, event.channel);
+    });
+
+    const signal: FileSignal = {
+      type: "file-request",
+      offerId: item.offerId,
+      transferId,
+      ...(selfCaps.length > 0 && { caps: selfCaps }),
+      ...(offset > 0 && { offset }),
+    };
+    if (!sendSignal(signal, item.peerId)) {
+      closeTransfer(transfer);
+      if (!keepOnFailure) {
+        releaseDownload(item.id);
+      }
+      return false;
+    }
+
+    transfers.set(transferId, transfer);
+    item.status = "connecting";
+    item.bytes = offset;
+    item.error = undefined;
+    item.errorCode = undefined;
+    item.blob = undefined;
+    item.savedToSink = undefined;
+    item.resumableBytes = undefined;
+    clearRate(item);
+    touch(transfer);
+    emit();
+    return true;
+  }
+
+  /**
+   * Picks a download back up from the store after a reload: reopens the file
+   * where it left off, or starts it over if the store can no longer supply it.
+   */
+  async function beginStoredReceive(item: FileItem, key: ResumeKey, state: ResumeState) {
+    let sink: FileSink | null = null;
+    try {
+      sink = await resumeStore!.open(key, state);
+    } catch {
+      sink = null;
+    }
+    if (items.get(item.id) !== item || item.status !== "connecting") {
+      if (sink) {
+        abortSink(sink);
+      }
+      return;
+    }
+    stored.delete(item.id);
+    const download = createDownload(sink ?? createMemorySink(item.mime));
+    if (sink) {
+      download.verifiedBytes = state.verifiedBytes;
+      download.blockHashes = state.blockHashes.slice();
+      download.key = key;
+    } else if (item.size > limits.maxMemoryBytes) {
+      item.status = "failed";
+      item.resumableBytes = undefined;
+      item.bytes = 0;
+      emit();
+      onNotice({
+        type: "failed",
+        item: { ...item },
+        code: "needs-sink",
+        message: MESSAGES["needs-sink"],
+      });
+      return;
+    }
+    releaseDownload(item.id);
+    downloads.set(item.id, download);
+    if (!beginReceive(item, download, false)) {
+      item.status = "offered";
+      item.bytes = 0;
+      emit();
+    }
+  }
+
+  function resumeKeyFor(item: FileItem): ResumeKey | null {
+    return item.digest ? { digest: item.digest, size: item.size, name: item.name } : null;
+  }
+
+  /** Whether this item could be picked up again after a reload. */
+  function canStore(item: FileItem) {
+    return (
+      resumeStore !== undefined &&
+      item.direction === "incoming" &&
+      item.digest !== undefined &&
+      hasCap("blocks", item.caps) &&
+      hasCap("resume", item.caps)
+    );
+  }
+
+  /** Ask the store what is already on disk for a freshly offered file. */
+  async function loadStored(item: FileItem) {
+    const key = resumeKeyFor(item);
+    if (!resumeStore || !key) {
+      return;
+    }
+    let state: ResumeState | null = null;
+    try {
+      state = await resumeStore.load(key);
+    } catch {
+      return;
+    }
+    const current = items.get(item.id);
+    if (
+      !state ||
+      state.verifiedBytes <= 0 ||
+      state.verifiedBytes >= item.size ||
+      current !== item ||
+      item.status !== "offered" ||
+      downloads.has(item.id)
+    ) {
+      return;
+    }
+    stored.set(item.id, state);
+    item.resumableBytes = state.verifiedBytes;
+    item.bytes = state.verifiedBytes;
+    emit();
+  }
+
+  function forgetStored(item: FileItem) {
+    stored.delete(item.id);
+    const key = resumeKeyFor(item);
+    if (resumeStore && key && canStore(item)) {
+      void Promise.resolve(resumeStore.forget(key)).catch(() => {});
+    }
+  }
+
+  /**
+   * Hashes an offered file block by block, then re-announces the offer with a
+   * `digest` over it. Old peers drop the field, and a receiver that already has
+   * the offer keeps the one it has. Hashing a large file takes a while, so the
+   * file is offered first and this catches up.
+   */
+  async function hashOffer(item: FileItem, file: File) {
+    const hashes: string[] = [];
+    try {
+      for (let start = 0; start < file.size; start += BLOCK_BYTES) {
+        const block = new Uint8Array(
+          await file.slice(start, start + BLOCK_BYTES).arrayBuffer(),
+        );
+        hashes.push(await sha256Hex(block));
+        if (disposed || items.get(item.id) !== item) {
+          return;
+        }
+        item.hashedBytes = Math.min(start + BLOCK_BYTES, file.size);
+        emitSoon();
+      }
+    } catch {
+      // Unreadable now; the transfer itself will report it if it is requested.
+      item.hashedBytes = undefined;
+      emitSoon();
+      return;
+    }
+    if (disposed || items.get(item.id) !== item) {
+      return;
+    }
+    offerBlockHashes.set(item.offerId, hashes);
+    item.digest = await digestOfBlocks(hashes);
+    if (disposed || items.get(item.id) !== item) {
+      return;
+    }
+    sendSignal(toOffer(item));
+    emit();
   }
 
   async function startSend(
@@ -785,6 +1129,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
     }
 
     const blocks = hasCap("blocks", request.caps);
+    const flow = blocks && hasCap("flow", request.caps);
     const offset = blocks && selfCaps.includes("resume") ? (request.offset ?? 0) : 0;
     if (offset > file.size || (offset % BLOCK_BYTES !== 0 && offset !== file.size)) {
       sendSignal(
@@ -797,6 +1142,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
     const transfer = newTransfer(transferId, "send", from, id, {
       download: null,
       blocks,
+      flow,
       offset,
     });
     transfers.set(transferId, transfer);
@@ -815,6 +1161,21 @@ export function createFileTransferManager(options: FileTransferOptions) {
     channel.addEventListener("message", (event) => {
       if (event.data === ACK_MESSAGE) {
         finishSend(transfer, true);
+        return;
+      }
+      if (typeof event.data !== "string" || !event.data.startsWith(CREDIT_PREFIX)) {
+        return;
+      }
+      const credited = parseCreditMessage(event.data);
+      if (credited !== null && credited > transfer.creditedBytes) {
+        transfer.creditedBytes = credited;
+        // Progress the sender can see, so a slow sink isn't read as a stall.
+        // Not once everything is sent: the ack timer has the slot then, and a
+        // trailing credit must not shorten it back to a stall.
+        if (!transfer.doneSent) {
+          touch(transfer);
+        }
+        transfer.onCredit?.();
       }
     });
     channel.addEventListener("close", () => {
@@ -854,7 +1215,12 @@ export function createFileTransferManager(options: FileTransferOptions) {
     }
     download.pending += 1;
     download.writes = download.writes
-      .then(() => (transfer.discard || download.settled ? undefined : work(download)))
+      // `disposed` matters as much as the other two: work queued before dispose
+      // would otherwise write into a sink that has already been aborted, and
+      // checkpoint bytes past the point the manager stopped owning them.
+      .then(() =>
+        transfer.discard || download.settled || disposed ? undefined : work(download),
+      )
       .catch((error: unknown) => {
         transfer.discard = true;
         failTransfer(
@@ -895,7 +1261,27 @@ export function createFileTransferManager(options: FileTransferOptions) {
         throw new CorruptBlockError();
       }
       await download.sink.write(block);
+      download.blockHashes[message.index] = message.hash;
       download.verifiedBytes += block.byteLength;
+      if (download.key && resumeStore && !disposed) {
+        // The store decides how much of this is durable; a reload resumes from
+        // whatever it recorded, never from what merely arrived. A manager that
+        // was disposed mid-block records nothing: its sink is already aborted,
+        // so those bytes are not there to resume from.
+        void Promise.resolve(
+          resumeStore.checkpoint(download.key, {
+            verifiedBytes: download.verifiedBytes,
+            blockHashes: download.blockHashes,
+          }),
+        ).catch(() => {});
+      }
+      if (transfer.flow && transfer.channel?.readyState === "open") {
+        // Only what the sink has taken, so the sender's window bounds this
+        // device's memory rather than trailing it.
+        transfer.channel.send(
+          JSON.stringify({ t: "credit", b: download.verifiedBytes }),
+        );
+      }
     });
   }
 
@@ -919,6 +1305,18 @@ export function createFileTransferManager(options: FileTransferOptions) {
       failTransfer(transfer, "corrupt", true);
       return;
     }
+    // Every block matched the hash sent beside it; this checks those hashes
+    // against the digest that came over signaling, a different path entirely.
+    if (transfer.blocks && item.digest) {
+      const digest = await digestOfBlocks(download.blockHashes);
+      if (transfer.closed || download.settled) {
+        return;
+      }
+      if (digest !== item.digest) {
+        failTransfer(transfer, "digest-mismatch", true);
+        return;
+      }
+    }
 
     let result: void | Blob;
     download.closing = true;
@@ -939,6 +1337,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       return;
     }
 
+    forgetStored(item);
     item.blob = result instanceof Blob ? result : undefined;
     item.savedToSink = !(result instanceof Blob);
     item.status = "done";
@@ -1032,8 +1431,13 @@ export function createFileTransferManager(options: FileTransferOptions) {
     const id = itemKey(from, offer.offerId);
     const existing = items.get(id);
     if (existing) {
-      // Re-announced after the sender reconnected.
+      // Re-announced after the sender reconnected, or once its digest is ready.
       existing.caps = offer.caps;
+      if (offer.digest && !existing.digest) {
+        existing.digest = offer.digest;
+        emit();
+        void loadStored(existing);
+      }
       if (existing.status === "revoked") {
         existing.status = "offered";
         existing.error = undefined;
@@ -1050,6 +1454,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       size: offer.size,
       mime: offer.mime,
       caps: offer.caps,
+      ...(offer.digest !== undefined && { digest: offer.digest }),
       ...(offer.path !== undefined && { path: sanitizeRelativePath(offer.path) }),
       ...(offer.batchId !== undefined && { batchId: offer.batchId }),
       direction: "incoming",
@@ -1062,15 +1467,17 @@ export function createFileTransferManager(options: FileTransferOptions) {
     };
     addItem(item);
     emit();
+    void loadStored(item);
     onNotice({ type: "incoming-offer", item: { ...item } });
   }
 
   function revokeIncoming(item: FileItem, code: "revoked" | "sender-left") {
-    if (item.status === "offered" || item.status === "failed") {
+    if (item.status === "offered" || item.status === "failed" || item.status === "paused") {
       item.status = "revoked";
       item.error = undefined;
       item.errorCode = undefined;
       // Nothing left to resume from, so don't keep the partial file open.
+      forgetStored(item);
       item.resumableBytes = undefined;
       item.bytes = 0;
       releaseDownload(item.id);
@@ -1255,6 +1662,10 @@ export function createFileTransferManager(options: FileTransferOptions) {
         addItem(item);
         sendSignal(toOffer(item));
         offered += 1;
+        if (options.digest && selfCaps.includes("blocks")) {
+          item.hashedBytes = 0;
+          void hashOffer(item, file);
+        }
       }
 
       if (offered > 0) {
@@ -1270,6 +1681,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
         return;
       }
       outgoingFiles.delete(item.offerId);
+      offerBlockHashes.delete(item.offerId);
       items.delete(id);
       sendSignal({ type: "file-revoke", offerId: item.offerId });
       for (const transfer of [...transfers.values()]) {
@@ -1291,7 +1703,9 @@ export function createFileTransferManager(options: FileTransferOptions) {
       if (
         !item ||
         item.direction !== "incoming" ||
-        (item.status !== "offered" && item.status !== "failed")
+        (item.status !== "offered" &&
+          item.status !== "failed" &&
+          item.status !== "paused")
       ) {
         if (options.sink) {
           abortSink(options.sink);
@@ -1302,67 +1716,71 @@ export function createFileTransferManager(options: FileTransferOptions) {
       const retained = downloads.get(id);
       const resuming =
         retained !== undefined && hasCap("blocks", item.caps) && hasCap("resume", item.caps);
-      let download: Download;
       if (resuming) {
         // The retained sink already holds the verified prefix.
         if (options.sink) {
           abortSink(options.sink);
         }
-        download = retained;
-      } else {
-        if (!options.sink && item.size > limits.maxMemoryBytes) {
-          onNotice({
-            type: "failed",
-            item: { ...item },
-            code: "needs-sink",
-            message: MESSAGES["needs-sink"],
-          });
-          return false;
-        }
-        releaseDownload(id);
-        download = createDownload(options.sink ?? createMemorySink(item.mime));
-        downloads.set(id, download);
+        return beginReceive(item, retained, true);
       }
-      const blocks = hasCap("blocks", item.caps);
-      const offset = resuming ? download.verifiedBytes : 0;
 
-      const transferId = createId();
-      const transfer = newTransfer(transferId, "receive", item.peerId, id, {
-        download,
-        blocks,
-        offset,
-      });
-      transfer.pc.addEventListener("datachannel", (event) => {
-        attachReceiveChannel(transfer, event.channel);
-      });
+      // Nothing in memory, but the store may still have this file from an
+      // earlier page load — or can give it somewhere durable to start.
+      const key = resumeKeyFor(item);
+      if (resumeStore && key && canStore(item) && !options.sink) {
+        const state = stored.get(id) ?? { verifiedBytes: 0, blockHashes: [] };
+        item.status = "connecting";
+        item.error = undefined;
+        item.errorCode = undefined;
+        emit();
+        void beginStoredReceive(item, key, state);
+        return true;
+      }
 
-      const signal: FileSignal = {
-        type: "file-request",
-        offerId: item.offerId,
-        transferId,
-        ...(selfCaps.length > 0 && { caps: selfCaps }),
-        ...(offset > 0 && { offset }),
-      };
-      if (!sendSignal(signal, item.peerId)) {
-        closeTransfer(transfer);
-        if (!resuming) {
-          releaseDownload(id);
-        }
+      if (!options.sink && item.size > limits.maxMemoryBytes) {
+        onNotice({
+          type: "failed",
+          item: { ...item },
+          code: "needs-sink",
+          message: MESSAGES["needs-sink"],
+        });
         return false;
       }
+      releaseDownload(id);
+      const download = createDownload(options.sink ?? createMemorySink(item.mime));
+      downloads.set(id, download);
+      const keepOnFailure = false;
+      return beginReceive(item, download, keepOnFailure);
+    },
 
-      transfers.set(transferId, transfer);
-      item.status = "connecting";
-      item.bytes = offset;
-      item.error = undefined;
-      item.errorCode = undefined;
-      item.blob = undefined;
-      item.savedToSink = undefined;
-      item.resumableBytes = undefined;
-      clearRate(item);
-      touch(transfer);
-      emit();
-      return true;
+    /**
+     * Pause an incoming download, keeping every verified block. `resume` (or
+     * `request`) picks it up from there, into the same sink. Only possible when
+     * both peers support `resume`; returns false otherwise, and the caller can
+     * offer `cancel` instead.
+     */
+    pause(id: string) {
+      const item = items.get(id);
+      if (
+        !item ||
+        item.status === "done" ||
+        !hasCap("blocks", item.caps) ||
+        !hasCap("resume", item.caps)
+      ) {
+        return false;
+      }
+      for (const transfer of [...transfers.values()]) {
+        if (transfer.itemId === id && transfer.role === "receive" && !transfer.finishing) {
+          failTransfer(transfer, "paused", true);
+          return true;
+        }
+      }
+      return false;
+    },
+
+    /** Continue a paused or failed download. The same as calling `request` again. */
+    resume(id: string, options: RequestOptions = {}) {
+      return this.request(id, options);
     },
 
     /** Abort an in-progress incoming download. */
@@ -1378,6 +1796,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
     dismiss(id: string) {
       const item = items.get(id);
       if (item?.direction === "incoming" && !hasActiveTransfer(id)) {
+        forgetStored(item);
         items.delete(id);
         releaseDownload(id);
         emit();
@@ -1393,6 +1812,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       }
       items.clear();
       outgoingFiles.clear();
+      offerBlockHashes.clear();
       emit();
       disposed = true;
     },

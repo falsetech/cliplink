@@ -8,11 +8,11 @@
 
 Send files peer-to-peer over WebRTC data channels, with the parts that are easy to get wrong already done:
 
-- **Backpressure.** Stops sending at a high-water mark on `bufferedAmount` and resumes on `bufferedamountlow`, so large files don't fill the send queue and kill the channel.
+- **Backpressure, both ends.** Stops sending at a high-water mark on `bufferedAmount` and resumes on `bufferedamountlow`, so large files don't fill the send queue and kill the channel. The receiver can hold the sender back too, so a slow disk doesn't pile up in its memory.
 - **Chunking.** Chunks are capped at the SCTP `maxMessageSize` the connection actually negotiated.
 - **Stall detection.** A transfer that makes no progress fails with a code instead of hanging forever.
-- **Integrity checks.** Every 1 MiB is verified against a SHA-256 digest before it's kept.
-- **Resume.** A download that drops part way picks up from its last verified block instead of starting over.
+- **Integrity checks.** Every 1 MiB is verified against a SHA-256 digest before it's kept, and an offer can carry a digest of the whole file that the receiver checks at the end.
+- **Resume and pause.** A download that drops part way — or that the user paused — picks up from its last verified block instead of starting over, and with a resume store it survives a reload or a crash too.
 - **Stream to disk.** Downloads can write into any sink, so large files never have to fit in memory. Ready-made sinks cover a file the user picks, a folder, and the Origin Private File System, which works in every current browser.
 - **Progress.** Incoming items report bytes, a smoothed transfer rate, and time left.
 - **Offer / request / revoke.** Senders announce metadata and hold only a `File` reference. Receivers pull the file when they choose, and senders can withdraw an offer mid-download.
@@ -21,6 +21,8 @@ Send files peer-to-peer over WebRTC data channels, with the parts that are easy 
 It has zero dependencies, is framework-agnostic ESM, and works with your own signaling: WebSocket, Socket.IO, Supabase Realtime, `BroadcastChannel`, or anything else that moves JSON between peers — with [adapters](#signaling-adapters) ready for most of them. File bytes never pass through your server.
 
 Extracted from [CLIPLINK](https://cliplink.thebkht.com) ([source](https://github.com/thebkht/cliplink)), where it runs in production. Try a transfer there between two devices to see it working.
+
+For a page you can read end to end, [`examples/two-tabs.html`](https://github.com/thebkht/cliplink/blob/main/packages/rtc-file-transfer/examples/two-tabs.html) is a whole client — offers, downloads, pause, resume across a reload — in one static file with no build step. Serve the folder and open it in two tabs.
 
 ## Install
 
@@ -94,6 +96,40 @@ const detach = signaling.connect(files);
 
 They work next to simple-peer and PeerJS rather than replacing them: those give you a connection, this gives you file semantics on top.
 
+```ts
+// simple-peer: one connection you already have
+import SimplePeer from "simple-peer";
+import { simplePeerSignaling } from "@thebkht/rtc-file-transfer/adapters";
+
+const peer = new SimplePeer({ initiator, trickle: true });
+const signaling = simplePeerSignaling(peer, "the-other-peer");
+const files = createFileTransferManager({ peerId: myId, sendSignal: signaling.sendSignal, ... });
+signaling.connect(files);
+```
+
+```ts
+// PeerJS: many connections, tracked for you
+import Peer from "peerjs";
+import { peerJsSignaling } from "@thebkht/rtc-file-transfer/adapters";
+
+const peer = new Peer(myId);
+const signaling = peerJsSignaling(peer);
+const files = createFileTransferManager({ peerId: myId, sendSignal: signaling.sendSignal, ... });
+signaling.connect(files);
+signaling.connectTo("their-id"); // or let them connect to you
+```
+
+```ts
+// Trystero: a room, with its own joins and leaves
+import { joinRoom } from "trystero";
+import { trysteroSignaling } from "@thebkht/rtc-file-transfer/adapters";
+
+const room = joinRoom({ appId: "my-app" }, "room-code");
+const signaling = trysteroSignaling(room, myId);
+const files = createFileTransferManager({ peerId: myId, sendSignal: signaling.sendSignal, ... });
+signaling.connect(files);
+```
+
 Anything else still works the way the example above does — an adapter is a convenience, not a requirement.
 
 ## API
@@ -107,14 +143,17 @@ Anything else still works the way the example above does — an adapter is a con
 | `onItemsChange(items)` | Called with a fresh snapshot whenever state changes. Progress updates are coalesced to every 100 ms. |
 | `onNotice(notice)` | `incoming-offer`, `received`, or `failed` with a `code`. |
 | `iceServers` | Defaults to public Google and Cloudflare STUN servers. Add a TURN server for restrictive networks. |
-| `limits` | Any of `maxFileBytes` (64 GiB), `maxMemoryBytes` (500 MB), `chunkBytes` (64 KB), `bufferHighBytes` (4 MB), `bufferLowBytes` (1 MB), `stallMs` (20 s), `maxItems` (20). |
+| `limits` | Any of `maxFileBytes` (64 GiB), `maxMemoryBytes` (500 MB), `chunkBytes` (64 KB), `bufferHighBytes` (4 MB), `bufferLowBytes` (1 MB), `windowBytes` (16 MB), `stallMs` (20 s), `maxItems` (20). |
 | `createId` | Id generator for offers and transfers. |
-| `capabilities` | Protocol features to advertise: `blocks` and `resume`. Defaults to both where `crypto.subtle` exists. Pass `[]` to behave exactly like a v1 peer. |
+| `capabilities` | Protocol features to advertise: `blocks`, `resume` and `flow`. Defaults to all of them where `crypto.subtle` exists. Pass `[]` to behave exactly like a v1 peer. |
 | `createPeerConnection` | For environments without a global `RTCPeerConnection`, such as Node with a WebRTC polyfill. |
+| `resume` | A `ResumeProvider` that keeps partial downloads across page loads. `opfsResume()` from `/sinks` is one. |
 
-The manager returns `handleSignal`, `announce`, `offerFiles`, `request`, `cancel`, `revoke`, `dismiss` and `dispose`.
+The manager returns `handleSignal`, `announce`, `offerFiles`, `request`, `pause`, `resume`, `cancel`, `revoke`, `dismiss` and `dispose`.
 
-`offerFiles(entries, { batch? })` takes `File`s or `{ file, path }` entries, where `path` is the folder a file sits in (`photos/2024`). With `batch: true`, every file in the call shares one `batchId`, so a receiver can show them as a group. Incoming items carry `path` (sanitized, and dropped if it tries to climb out with `..`) and `batchId`.
+`offerFiles(entries, { batch?, digest? })` takes `File`s or `{ file, path }` entries, where `path` is the folder a file sits in (`photos/2024`). With `batch: true`, every file in the call shares one `batchId`, so a receiver can show them as a group.
+
+With `digest: true`, each file is hashed in the background and the offer is re-announced carrying a `digest` of the whole file. The file is offered straight away either way, and `item.hashedBytes` reports how far the hashing has got. See [Verifying the whole file](#verifying-the-whole-file). Incoming items carry `path` (sanitized, and dropped if it tries to climb out with `..`) and `batchId`.
 
 `offerFiles` returns `{ offered, rejected }`. Each rejection is `{ file, code: "empty" | "too-large", limit }`.
 
@@ -145,15 +184,47 @@ button.addEventListener("click", async () => {
 
 `bestSink(item)` tries the picker, then OPFS, and resolves `undefined` when neither exists. OPFS files stay until `clearOpfs()` removes them; remove them only after the user has saved the Blob, since it stops being readable once its file is gone. `canPickFile`, `canPickDirectory` and `hasOpfs` report what the browser supports.
 
-To write your own, implement `write`, `close` and `abort`. Writes are serialized. `close` runs once every byte has arrived; return a `Blob` from it to expose one as `item.blob`, or return nothing and the item gets `savedToSink: true`. `abort` runs if the download fails or never starts, and a sink that throws fails the transfer with `write-error`. The receiver can't slow the sender down, so bytes that arrive faster than the sink writes them queue in memory.
+To write your own, implement `write`, `close` and `abort`. Writes are serialized. `close` runs once every byte has arrived; return a `Blob` from it to expose one as `item.blob`, or return nothing and the item gets `savedToSink: true`. `abort` runs if the download fails or never starts, and a sink that throws fails the transfer with `write-error`. With `flow` on both sides the sink sets the pace, so a slow disk can't pile up in memory; against a peer without it, bytes that arrive faster than the sink writes them still queue.
 
-### Resuming
+### Verifying the whole file
+
+Block hashes ride the data channel next to the bytes they cover, so they catch corruption but not a sender that lies about both. An offer's `digest` closes that: it is the SHA-256 of the file's block digests joined together, it travels over your signaling layer rather than the data channel, and the receiver checks it once every block has arrived. A mismatch fails with `digest-mismatch` and keeps nothing, since the bytes aren't the ones that were offered.
+
+```ts
+files.offerFiles([...input.files!], { digest: true });
+```
+
+It needs `blocks` on both sides. Only trust it as far as you trust your signaling: a sender that controls both paths can still make them agree. The first digest an offer arrives with is the one that is kept, so a later re-announce can't swap it.
+
+### Surviving a reload
+
+A dropped connection is one thing; a closed tab is another. Pass a `ResumeProvider` and a partial download outlives the page:
+
+```ts
+import { opfsResume } from "@thebkht/rtc-file-transfer/sinks";
+
+const files = createFileTransferManager({ ..., resume: opfsResume() });
+// The sender has to hash, so the offer carries an identity to resume against.
+files.offerFiles([...input.files!], { digest: true });
+```
+
+On the next load the offer comes back, the manager asks the store what it has, and the item shows `resumableBytes` before anything is requested. `request` then continues into the same file. The store also supplies the sink for a fresh download, so nothing else is needed for a file with a digest.
+
+`opfsResume()` writes fixed-size part files, closing each as it fills, because that is when bytes actually reach disk — so a reload replays at most one segment (64 MB by default; `segmentBytes` changes it). `close` returns the finished file as a Blob made of those parts, still backed by disk. A completed, revoked or dismissed file is deleted.
+
+Write your own by implementing `load`, `open`, `checkpoint` and `forget`. The one rule: `checkpoint` must report only what is durably written, because that is exactly what the next load resumes from.
+
+### Pausing and resuming
+
+`pause(id)` stops an incoming download and keeps every verified block; the item goes to `paused` with no failure notice, and `resume(id)` — the same thing as calling `request` again — continues from there into the same sink. It needs `blocks` and `resume` on both sides, and returns false otherwise, so the UI can offer `cancel` instead.
 
 When both peers support `resume`, a download that fails part way (`stalled`, `nat`, `negotiation`, `closed`, `corrupt`, `sender-left`, or `remote-canceled`) keeps what it has verified. The item shows `resumableBytes`, and calling `request(id)` again picks up from there, writing into the same sink. A new sink passed then is aborted. The kept sink is released when the item is dismissed, or when the sender revokes the offer or leaves.
 
 ### Failure codes
 
-`stalled` · `nat` · `read-error` · `negotiation` · `incomplete` · `overflow` · `canceled` · `revoked` · `sender-left` · `closed` · `write-error` · `corrupt` · `needs-sink` · `remote-canceled`
+`stalled` · `nat` · `read-error` · `negotiation` · `incomplete` · `overflow` · `canceled` · `revoked` · `sender-left` · `closed` · `write-error` · `corrupt` · `digest-mismatch` · `needs-sink` · `paused` · `remote-canceled`
+
+`paused` only appears on the wire, as the reason the sender is told; the paused item itself carries no error.
 
 Each failure notice also carries an English `message`. Use the `code` to show your own wording.
 
@@ -172,12 +243,76 @@ Newer peers negotiate optional features through fields that v1 peers never send 
 - `file-offer.caps` lists what the sender supports, and `file-request.caps` lists what the receiver supports. A feature is used only when both lists include it.
 - With `blocks`, the sender follows every `BLOCK_BYTES` (1 MiB) of data with the string `{"t":"block","i":<index>,"h":"<sha256 hex>"}`. The receiver checks each block before writing it to the sink.
 - With `resume` (which requires `blocks`), `file-request.offset` asks the sender to start at a block boundary.
+- With `flow` (which also requires `blocks`), the receiver answers each verified block with `{"t":"credit","b":<bytes committed>}`, and the sender stops once it is `windowBytes` ahead of that. Peers without it ignore the message and rely on `bufferedAmount` alone.
 
-`file-offer` can also carry `path` and `batchId`. These aren't capabilities: they're display metadata, and an older receiver simply shows loose files.
+`file-offer` can also carry `path`, `batchId` and `digest`. These aren't capabilities: older peers drop them on receipt, showing loose files and skipping the whole-file check.
 
-## Why not simple-peer or PeerJS?
+## Browser support
 
-Both give you a connection and a channel. Neither gives you file semantics: you still have to write chunking, flow control against `bufferedAmount`, completion and integrity checks, resume, stall handling, and offer/withdraw state. This package covers only that layer, and you can use it next to either library.
+The transfer path itself works wherever data channels do. What changes between browsers is where received bytes can go.
+
+| What it needs | Chrome / Edge | Firefox | Safari |
+| --- | --- | --- | --- |
+| Data channels, `bufferedAmount`, `bufferedamountlow` | 57 | 44 | 11 |
+| `RTCSctpTransport.maxMessageSize` (chunk sizing) | 76 | 113 | 15.4 |
+| Block hashes, whole-file digest (`crypto.subtle`) | yes, secure contexts | yes | yes |
+| OPFS sink and `opfsResume()` (`FileSystemWritableFileStream`) | 86 | 111 | 26 |
+| Save picker (`showSaveFilePicker`) | 86 | no | no |
+
+Where `maxMessageSize` is missing, chunks stay at `limits.chunkBytes` (64 KB), which every implementation accepts; without a picker, `bestSink` uses OPFS; without either, downloads are assembled in memory and files over `maxMemoryBytes` are refused. Support data: [MDN browser-compat-data](https://github.com/mdn/browser-compat-data), checked 2026-09-15.
+
+## Limits
+
+Worth knowing before you pick this:
+
+- **NAT traversal.** The defaults are STUN only. Behind symmetric NAT a connection needs a TURN relay, which you supply through `iceServers` and pay bandwidth for.
+- **The tab has to stay open.** Closing or reloading a page closes its peer connections. Resume survives that only with a `ResumeProvider`, and only on the receiving side; the sender has to still be there, holding the same file.
+- **Mobile backgrounding.** A hidden page can be frozen or discarded, which stops a transfer. Desktop Chrome exempts pages with an open data channel from intensive throttling, so the stall timer keeps working there.
+- **Throughput is SCTP's.** One congestion window per association, and a user-space stack on both ends. This package can't make a data channel faster than the browser makes it.
+- **Integrity is not authenticity.** Block hashes ride the same channel as the bytes. A `digest` moves the check onto your signaling path, so it is only as good as your trust in that path. See [Verifying the whole file](#verifying-the-whole-file).
+- **No room auth or encryption beyond DTLS.** Who may join, and who may offer what, belongs to your signaling layer.
+- **Node** needs a WebRTC implementation passed through `createPeerConnection`.
+
+The threat model and how to report a vulnerability are in [SECURITY.md](https://github.com/thebkht/cliplink/blob/main/packages/rtc-file-transfer/SECURITY.md), which ships inside the package too.
+
+## Compared with
+
+Every cell was checked against that package's README or its published source on 2026-09-15; the full workings are in [the market research note](https://github.com/thebkht/cliplink/blob/main/docs/research/2026-09-15-rtc-file-transfer-market.md). ✅ yes · ⚠️ partial · ❌ no.
+
+| | **this** | openrtc-file-transfer | simple-peer-files | filetransfer (otalk) | filepizza-client | trystero | peerjs | simple-peer |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Offer / request / revoke | ✅ | ✅ | ⚠️ | ⚠️ | ✅ | ❌ | ❌ | ❌ |
+| Backpressure on `bufferedAmount` | ✅ | — | ⚠️ | ✅ | ⚠️ | ✅ | ✅ | ⚠️ |
+| Receiver can slow the sender | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Chunk capped at negotiated `maxMessageSize` | ✅ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Stall detection | ✅ | ✅ | ❌ | ❌ | ⚠️ | ❌ | ❌ | ❌ |
+| Integrity check | ✅ per 1 MiB | ✅ optional | ❌ | ⚠️ whole-file SHA-1 | ❌ | ❌ | ❌ | ❌ |
+| Resume after a drop | ✅ verified | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Resume after a reload | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Stream into a sink | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Folders and batches | ✅ | ❌ | ⚠️ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Validates untrusted peers | ✅ | ✅ | ❌ | ❌ | ⚠️ | ⚠️ | ❌ | ❌ |
+| Bring your own signaling | ✅ | ❌ | ⚠️ | ✅ | ❌ | ❌ | ❌ | ✅ |
+| Runtime dependencies | 0 | 0 (peer: openrtc) | 4 | 3 | 0 | 1 | 4 | 7 |
+| License | MIT | PolyForm Shield | MPL-2.0 | MIT | MIT | MIT | MIT | MIT |
+
+The short version: **simple-peer and PeerJS aren't competitors**, they're the layer underneath. They give you a connection and a channel; chunking, flow control, completion, integrity, resume, stall handling and offer state are still yours to write. Use this on top of either — see the [adapters](#signaling-adapters).
+
+The one library that matches on resume, integrity and streaming to disk together is `openrtc-file-transfer`, which is PolyForm Shield licensed and requires the OpenRTC runtime.
+
+## Stability
+
+1.0.0 is a commitment, in two parts.
+
+**The API follows semver.** Anything documented here — exported functions and types, option names, `FileItem` fields, notice types, failure codes — changes only in a major. New failure codes and new `FileItem` fields can appear in a minor, so handle unknown `code` values by falling back to a generic message rather than asserting exhaustively.
+
+**The wire protocol is versioned separately, and v1 is permanent.** Every release speaks v1, so a peer on any version can send to and receive from a peer on any other — a case the test suite covers by pairing a fully featured manager with one created as `capabilities: []`. Features are added as capabilities, never as changes to existing messages:
+
+- A new feature gets a `Capability` name, advertised in `file-offer.caps` and `file-request.caps`, and is used only when both peers list it.
+- New message fields are optional, and peers that don't know them drop them on receipt (`parseFileSignal` keeps known fields only).
+- An existing field never changes meaning, and no message becomes mandatory.
+
+A protocol v2 would be a different `hello`, negotiated, with v1 still spoken. There are no plans for one.
 
 ## Contributing
 

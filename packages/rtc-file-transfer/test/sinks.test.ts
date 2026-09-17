@@ -11,6 +11,7 @@ import {
   hasOpfs,
   opfsSink,
   pickFileSink,
+  opfsResume,
   writableSink,
 } from "../src/sinks.ts";
 import { randomBytes } from "./fake-rtc.ts";
@@ -19,15 +20,27 @@ import { randomBytes } from "./fake-rtc.ts";
 class FakeWritable {
   chunks: Uint8Array[] = [];
   aborted = false;
+  closed = false;
   private readonly file: FakeFile;
-  constructor(file: FakeFile) {
+  private at = 0;
+  constructor(file: FakeFile, keepExistingData = false) {
     this.file = file;
+    this.keep = keepExistingData;
+  }
+  readonly keep: boolean;
+  async seek(offset: number) {
+    this.at = offset;
   }
   async write(chunk: Uint8Array) {
     this.chunks.push(chunk.slice());
   }
   async close() {
-    this.file.data = new Blob(this.chunks as BlobPart[]);
+    // Only a closed writable reaches "disk", which is the whole point of parts.
+    const existing = this.keep
+      ? [(await this.file.data.slice(0, this.at)) as BlobPart]
+      : [];
+    this.file.data = new Blob([...existing, ...(this.chunks as BlobPart[])]);
+    this.closed = true;
   }
   async abort() {
     this.aborted = true;
@@ -41,8 +54,8 @@ class FakeFile {
   constructor(name: string) {
     this.name = name;
   }
-  async createWritable() {
-    const writable = new FakeWritable(this);
+  async createWritable(options?: { keepExistingData?: boolean }) {
+    const writable = new FakeWritable(this, options?.keepExistingData === true);
     this.writables.push(writable);
     return writable;
   }
@@ -68,6 +81,11 @@ class FakeDirectory {
     }
     this.entries.set(name, entry);
     return entry;
+  }
+  async *keys() {
+    for (const name of [...this.entries.keys()]) {
+      yield name;
+    }
   }
   async removeEntry(name: string) {
     if (!this.entries.delete(name)) {
@@ -153,6 +171,37 @@ describe("sinks", () => {
 
     await clearOpfs({ root: asDirectory(root) });
     assert.equal(root.entries.has(OPFS_DIRECTORY), false);
+  });
+
+  it("commits in segments, resumes from the last one, and forgets when told", async () => {
+    const root = new FakeDirectory();
+    const segmentBytes = 4096;
+    const store = opfsResume({ root: asDirectory(root), segmentBytes });
+    const key = { digest: "a".repeat(64), size: 10_000, name: "big.bin" };
+    const source = randomBytes(key.size);
+
+    assert.equal(await store.load(key), null, "nothing stored yet");
+
+    const sink = await store.open(key, { verifiedBytes: 0, blockHashes: [] });
+    assert.ok(sink);
+    // Two full segments plus part of a third; only the closed ones are on disk.
+    await sink.write(source.slice(0, 9000));
+    await store.checkpoint(key, { verifiedBytes: 9000, blockHashes: ["b".repeat(64)] });
+
+    const stored = await store.load(key);
+    assert.equal(stored?.verifiedBytes, 2 * segmentBytes, "only closed parts count");
+
+    // A reload: reopen where the store says, and finish the file.
+    const resumed = await store.open(key, stored!);
+    assert.ok(resumed);
+    await resumed.write(source.slice(stored!.verifiedBytes));
+    const blob = await resumed.close();
+    assert.ok(blob instanceof Blob);
+    assert.deepEqual(new Uint8Array(await blob.arrayBuffer()), source);
+
+    await store.forget(key);
+    assert.equal(root.entries.has(OPFS_DIRECTORY), true);
+    assert.equal(await store.load(key), null);
   });
 
   it("reports nothing available outside a browser", async () => {
