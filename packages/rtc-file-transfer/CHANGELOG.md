@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.0
+
+1.0.0 is the commitment that what is there now stays there:
+
+- **The API follows semver.** Exported functions and types, option names, `FileItem` fields, notice types and failure codes change only in a major. New failure codes and new `FileItem` fields can still appear in a minor.
+- **Wire protocol v1 is permanent.** A peer on any version interoperates with a peer on any other, in both directions, and the test suite now pins that with a pair of transfers against a manager created as `capabilities: []` — a 0.1.0 peer, as far as the wire is concerned. Future features arrive as capabilities and optional fields, never as changes to existing messages.
+- README: a "Compared with" table checked against each package's own source, a browser support matrix, an honest list of what this doesn't solve (TURN, tab lifetime, mobile backgrounding, SCTP throughput, integrity vs. authenticity), quick-starts for simple-peer, PeerJS and Trystero, and a stability section spelling the above out.
+- Fixed: a manager disposed mid-block no longer checkpoints that block into a `ResumeProvider`. Its sink has already been aborted, so those bytes were never there to resume from, and a store that recorded them sent the next load back to an offset its file did not reach. This was reachable from 0.10.0 whenever a page tore a manager down mid-transfer.
+- New `examples/two-tabs.html`: a complete client — offer, download, pause, resume across a reload — in one static file, not published to npm.
+- CONTRIBUTING documents how a capability is added.
+
 ## 0.10.0
 
 - New `resume` option: a `ResumeProvider` keeps partial downloads across page loads, so a reload or a crash no longer starts a file over. Offers need a `digest` (`offerFiles(entries, { digest: true })`), which is what identifies a file across loads.

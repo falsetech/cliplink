@@ -45,6 +45,22 @@ Worth checking depending on what you touched:
 - **File transfer** — file transfer requires the WebSocket transport; Attach and Download are disabled on the polling fallback. Test an offer, a download, a withdrawal, and a late joiner seeing an open offer.
 - **Room lifecycle** — TTL is refreshed on write, not on read. A passively polling tab must not keep a room alive forever.
 
+## The file-transfer package
+
+`packages/rtc-file-transfer` is published to npm as `@thebkht/rtc-file-transfer`, so two rules bind it that don't bind the app:
+
+- **No runtime dependencies, and nothing cliplink-specific.** No env vars, no room concepts, no toast copy. If a change needs something from the app, the app passes it in.
+- **Wire protocol v1 is permanent.** Every version has to interoperate with every other, in both directions. `test/manager.test.ts` pins that with a pair of tests against a manager created as `capabilities: []`, which is what a 0.1.0 peer looks like on the wire. Keep them passing.
+
+Adding a protocol feature therefore looks like this:
+
+1. Add a name to `Capability` in `src/protocol.ts`. Senders advertise it in `file-offer.caps` and receivers in `file-request.caps`; the feature runs only when it appears in both.
+2. Carry anything new in optional fields, and validate them in `src/parse.ts`. `parseFileSignal` rebuilds signals from known fields only, so a peer that doesn't know a field drops it — which is exactly how old peers stay compatible.
+3. Never change what an existing field means, and never make one required.
+4. Cover the mixed pairing: the new feature on one side and not the other has to degrade, not fail.
+
+The package's public API follows semver, so renaming an export or an option is a major. New failure codes and new `FileItem` fields are minors.
+
 ## Code style
 
 - TypeScript throughout; no new `any`.

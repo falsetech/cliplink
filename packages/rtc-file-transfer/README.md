@@ -22,6 +22,8 @@ It has zero dependencies, is framework-agnostic ESM, and works with your own sig
 
 Extracted from [CLIPLINK](https://cliplink.thebkht.com) ([source](https://github.com/thebkht/cliplink)), where it runs in production. Try a transfer there between two devices to see it working.
 
+For a page you can read end to end, [`examples/two-tabs.html`](https://github.com/thebkht/cliplink/blob/main/packages/rtc-file-transfer/examples/two-tabs.html) is a whole client — offers, downloads, pause, resume across a reload — in one static file with no build step. Serve the folder and open it in two tabs.
+
 ## Install
 
 ```sh
@@ -93,6 +95,40 @@ const detach = signaling.connect(files);
 | `simplePeerSignaling(peer, remoteId)` | One connection, alongside your own messages on it. |
 
 They work next to simple-peer and PeerJS rather than replacing them: those give you a connection, this gives you file semantics on top.
+
+```ts
+// simple-peer: one connection you already have
+import SimplePeer from "simple-peer";
+import { simplePeerSignaling } from "@thebkht/rtc-file-transfer/adapters";
+
+const peer = new SimplePeer({ initiator, trickle: true });
+const signaling = simplePeerSignaling(peer, "the-other-peer");
+const files = createFileTransferManager({ peerId: myId, sendSignal: signaling.sendSignal, ... });
+signaling.connect(files);
+```
+
+```ts
+// PeerJS: many connections, tracked for you
+import Peer from "peerjs";
+import { peerJsSignaling } from "@thebkht/rtc-file-transfer/adapters";
+
+const peer = new Peer(myId);
+const signaling = peerJsSignaling(peer);
+const files = createFileTransferManager({ peerId: myId, sendSignal: signaling.sendSignal, ... });
+signaling.connect(files);
+signaling.connectTo("their-id"); // or let them connect to you
+```
+
+```ts
+// Trystero: a room, with its own joins and leaves
+import { joinRoom } from "trystero";
+import { trysteroSignaling } from "@thebkht/rtc-file-transfer/adapters";
+
+const room = joinRoom({ appId: "my-app" }, "room-code");
+const signaling = trysteroSignaling(room, myId);
+const files = createFileTransferManager({ peerId: myId, sendSignal: signaling.sendSignal, ... });
+signaling.connect(files);
+```
 
 Anything else still works the way the example above does — an adapter is a convenience, not a requirement.
 
@@ -211,9 +247,72 @@ Newer peers negotiate optional features through fields that v1 peers never send 
 
 `file-offer` can also carry `path`, `batchId` and `digest`. These aren't capabilities: older peers drop them on receipt, showing loose files and skipping the whole-file check.
 
-## Why not simple-peer or PeerJS?
+## Browser support
 
-Both give you a connection and a channel. Neither gives you file semantics: you still have to write chunking, flow control against `bufferedAmount`, completion and integrity checks, resume, stall handling, and offer/withdraw state. This package covers only that layer, and you can use it next to either library.
+The transfer path itself works wherever data channels do. What changes between browsers is where received bytes can go.
+
+| What it needs | Chrome / Edge | Firefox | Safari |
+| --- | --- | --- | --- |
+| Data channels, `bufferedAmount`, `bufferedamountlow` | 57 | 44 | 11 |
+| `RTCSctpTransport.maxMessageSize` (chunk sizing) | 76 | 113 | 15.4 |
+| Block hashes, whole-file digest (`crypto.subtle`) | yes, secure contexts | yes | yes |
+| OPFS sink and `opfsResume()` (`FileSystemWritableFileStream`) | 86 | 111 | 26 |
+| Save picker (`showSaveFilePicker`) | 86 | no | no |
+
+Where `maxMessageSize` is missing, chunks stay at `limits.chunkBytes` (64 KB), which every implementation accepts; without a picker, `bestSink` uses OPFS; without either, downloads are assembled in memory and files over `maxMemoryBytes` are refused. Support data: [MDN browser-compat-data](https://github.com/mdn/browser-compat-data), checked 2026-09-15.
+
+## Limits
+
+Worth knowing before you pick this:
+
+- **NAT traversal.** The defaults are STUN only. Behind symmetric NAT a connection needs a TURN relay, which you supply through `iceServers` and pay bandwidth for.
+- **The tab has to stay open.** Closing or reloading a page closes its peer connections. Resume survives that only with a `ResumeProvider`, and only on the receiving side; the sender has to still be there, holding the same file.
+- **Mobile backgrounding.** A hidden page can be frozen or discarded, which stops a transfer. Desktop Chrome exempts pages with an open data channel from intensive throttling, so the stall timer keeps working there.
+- **Throughput is SCTP's.** One congestion window per association, and a user-space stack on both ends. This package can't make a data channel faster than the browser makes it.
+- **Integrity is not authenticity.** Block hashes ride the same channel as the bytes. A `digest` moves the check onto your signaling path, so it is only as good as your trust in that path. See [Verifying the whole file](#verifying-the-whole-file).
+- **No room auth or encryption beyond DTLS.** Who may join, and who may offer what, belongs to your signaling layer.
+- **Node** needs a WebRTC implementation passed through `createPeerConnection`.
+
+The threat model and how to report a vulnerability are in [SECURITY.md](https://github.com/thebkht/cliplink/blob/main/packages/rtc-file-transfer/SECURITY.md), which ships inside the package too.
+
+## Compared with
+
+Every cell was checked against that package's README or its published source on 2026-09-15; the full workings are in [the market research note](https://github.com/thebkht/cliplink/blob/main/docs/research/2026-09-15-rtc-file-transfer-market.md). ✅ yes · ⚠️ partial · ❌ no.
+
+| | **this** | openrtc-file-transfer | simple-peer-files | filetransfer (otalk) | filepizza-client | trystero | peerjs | simple-peer |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Offer / request / revoke | ✅ | ✅ | ⚠️ | ⚠️ | ✅ | ❌ | ❌ | ❌ |
+| Backpressure on `bufferedAmount` | ✅ | — | ⚠️ | ✅ | ⚠️ | ✅ | ✅ | ⚠️ |
+| Receiver can slow the sender | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Chunk capped at negotiated `maxMessageSize` | ✅ | — | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Stall detection | ✅ | ✅ | ❌ | ❌ | ⚠️ | ❌ | ❌ | ❌ |
+| Integrity check | ✅ per 1 MiB | ✅ optional | ❌ | ⚠️ whole-file SHA-1 | ❌ | ❌ | ❌ | ❌ |
+| Resume after a drop | ✅ verified | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Resume after a reload | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Stream into a sink | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Folders and batches | ✅ | ❌ | ⚠️ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Validates untrusted peers | ✅ | ✅ | ❌ | ❌ | ⚠️ | ⚠️ | ❌ | ❌ |
+| Bring your own signaling | ✅ | ❌ | ⚠️ | ✅ | ❌ | ❌ | ❌ | ✅ |
+| Runtime dependencies | 0 | 0 (peer: openrtc) | 4 | 3 | 0 | 1 | 4 | 7 |
+| License | MIT | PolyForm Shield | MPL-2.0 | MIT | MIT | MIT | MIT | MIT |
+
+The short version: **simple-peer and PeerJS aren't competitors**, they're the layer underneath. They give you a connection and a channel; chunking, flow control, completion, integrity, resume, stall handling and offer state are still yours to write. Use this on top of either — see the [adapters](#signaling-adapters).
+
+The one library that matches on resume, integrity and streaming to disk together is `openrtc-file-transfer`, which is PolyForm Shield licensed and requires the OpenRTC runtime.
+
+## Stability
+
+1.0.0 is a commitment, in two parts.
+
+**The API follows semver.** Anything documented here — exported functions and types, option names, `FileItem` fields, notice types, failure codes — changes only in a major. New failure codes and new `FileItem` fields can appear in a minor, so handle unknown `code` values by falling back to a generic message rather than asserting exhaustively.
+
+**The wire protocol is versioned separately, and v1 is permanent.** Every release speaks v1, so a peer on any version can send to and receive from a peer on any other — a case the test suite covers by pairing a fully featured manager with one created as `capabilities: []`. Features are added as capabilities, never as changes to existing messages:
+
+- A new feature gets a `Capability` name, advertised in `file-offer.caps` and `file-request.caps`, and is used only when both peers list it.
+- New message fields are optional, and peers that don't know them drop them on receipt (`parseFileSignal` keeps known fields only).
+- An existing field never changes meaning, and no message becomes mandatory.
+
+A protocol v2 would be a different `hello`, negotiated, with v1 still spoken. There are no plans for one.
 
 ## Contributing
 

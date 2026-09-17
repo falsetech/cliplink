@@ -761,12 +761,15 @@ describe("verified blocks and resume", () => {
     await waitFor(() => incoming(bob)[0]?.digest !== undefined);
     bus.net.pauseAfterBytes = 2 * MB + 64 * 1024;
     assert.equal(bob.manager.request(incoming(bob)[0].id), true);
-    await waitFor(() => (store.states.get(incoming(bob)[0].digest!)?.verifiedBytes ?? 0) >= MB);
-    const committed = store.states.get(incoming(bob)[0].digest!)!.verifiedBytes;
+    const digest = incoming(bob)[0].digest!;
+    await waitFor(() => (store.states.get(digest)?.verifiedBytes ?? 0) >= MB);
 
     // The tab goes away mid-transfer: no dispose, no pause, nothing tidy.
     bob.manager.dispose();
     bus.peers.delete("peer-bob00");
+    // Read the store only now: until the manager is gone, a second block can
+    // land and checkpoint, which would leave any earlier reading stale.
+    const committed = store.states.get(digest)!.verifiedBytes;
     bus.net.setFlowing(true);
 
     // A new page load, same store. The offer comes back with its digest.
@@ -945,6 +948,36 @@ describe("verified blocks and resume", () => {
     bob.manager.dismiss(incoming(bob)[0].id);
     await waitFor(() => aborted);
   });
+});
+
+describe("protocol v1 compatibility", () => {
+  // `capabilities: []` is exactly what a 0.1.0 peer looks like on the wire:
+  // no `caps`, so no block hashes, no offsets and no credits.
+  for (const v1 of ["sender", "receiver"] as const) {
+    it(`transfers between a v1 ${v1} and a peer with every capability`, async () => {
+      bus = new FakeSignaling();
+      bus.addPeer("peer-alice", v1 === "sender" ? { capabilities: [] } : {});
+      bus.addPeer("peer-bob00", v1 === "receiver" ? { capabilities: [] } : {});
+      const source = randomBytes(2 * BLOCK_BYTES + 11);
+
+      // The digest and the batch are fields a v1 peer never sends and drops.
+      const [alice, bob] = [bus.peers.get("peer-alice")!, bus.peers.get("peer-bob00")!];
+      alice.manager.offerFiles([{ file: new File([source], "a.bin"), path: "docs" }], {
+        batch: true,
+        digest: true,
+      });
+      await waitFor(() => incoming(bob).length === 1);
+      assert.equal(bob.manager.request(incoming(bob)[0].id), true);
+      await waitFor(() => incoming(bob)[0].status === "done", 5_000);
+
+      assert.deepEqual(new Uint8Array(await incoming(bob)[0].blob!.arrayBuffer()), source);
+      // Neither side negotiated blocks, so nothing resumable is kept.
+      assert.equal(incoming(bob)[0].resumableBytes, undefined);
+      assert.equal(bus.net.strings.some((message) => message.includes('"t":"block"')), false);
+      assert.equal(bus.net.strings.some((message) => message.includes('"t":"credit"')), false);
+      assert.equal(bob.manager.pause(incoming(bob)[0].id), false);
+    });
+  }
 });
 
 describe("sanitizeFileName", () => {

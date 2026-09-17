@@ -10,6 +10,7 @@ import {
   type OfferRejection,
   type TransferNotice,
 } from "@thebkht/rtc-file-transfer";
+import { opfsResume } from "@thebkht/rtc-file-transfer/sinks";
 
 import {
   DISK_SINK_MIN_BYTES,
@@ -116,7 +117,11 @@ function saveFile(url: string, name: string) {
  * its items as React state. Returned callbacks are stable across renders so
  * they can be captured by the realtime transport handlers.
  */
-export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransferOptions) {
+export function useFileTransfer({
+  peerId,
+  sendSignal,
+  pushToast,
+}: UseFileTransferOptions) {
   const [items, setItems] = useState<FileListItem[]>([]);
 
   const managerRef = useRef<FileTransferManager | null>(null);
@@ -178,7 +183,9 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
       const toast = toastRef.current;
       const ready = latestRef.current.filter(
         (item) =>
-          item.batchId === batchId && item.direction === "incoming" && item.blob,
+          item.batchId === batchId &&
+          item.direction === "incoming" &&
+          item.blob,
       );
       if (ready.length === 0) {
         toast("Nothing to zip yet.", "info");
@@ -196,14 +203,20 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
         saveFile(url, `${name}.zip`);
         // The download has taken its own reference to the bytes by now.
         setTimeout(() => URL.revokeObjectURL(url), 60_000);
-        toast(`Saved ${name}.zip (${ready.length} file${ready.length === 1 ? "" : "s"}).`, "success");
+        toast(
+          `Saved ${name}.zip (${ready.length} file${ready.length === 1 ? "" : "s"}).`,
+          "success",
+        );
       } catch {
         toast("Could not build the zip.", "error");
       }
     }
 
     function pumpQueue() {
-      while (queue.active.size < BATCH_CONCURRENCY && queue.waiting.length > 0) {
+      while (
+        queue.active.size < BATCH_CONCURRENCY &&
+        queue.waiting.length > 0
+      ) {
         const next = queue.waiting.shift()!;
         queue.active.set(next.id, next);
         if (!startDownload(next.id, next.target)) {
@@ -234,9 +247,15 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
             }
             void saveZip(entry.batchId, run.target.name);
           } else if (run.failed === 0) {
-            toast(`Saved ${run.saved} file${run.saved === 1 ? "" : "s"}.`, "success");
+            toast(
+              `Saved ${run.saved} file${run.saved === 1 ? "" : "s"}.`,
+              "success",
+            );
           } else {
-            toast(`Saved ${run.saved}, ${run.failed} failed. Retry them from the list.`, "error");
+            toast(
+              `Saved ${run.saved}, ${run.failed} failed. Retry them from the list.`,
+              "error",
+            );
           }
         }
       }
@@ -258,7 +277,12 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
     }
 
     function enqueue(batchId: string, ids: string[], target: BatchTarget) {
-      const run = queue.runs.get(batchId) ?? { target, remaining: 0, saved: 0, failed: 0 };
+      const run = queue.runs.get(batchId) ?? {
+        target,
+        remaining: 0,
+        saved: 0,
+        failed: 0,
+      };
       run.target = target;
       run.remaining += ids.length;
       queue.runs.set(batchId, run);
@@ -278,7 +302,9 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
             announced.add(batchId);
             const folder = notice.item.path?.split("/")[0];
             toast(
-              folder ? `The ${folder} folder is being shared.` : "Files are being shared.",
+              folder
+                ? `The ${folder} folder is being shared.`
+                : "Files are being shared.",
               "info",
             );
           }
@@ -329,6 +355,9 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
           onNotice: handleNotice,
           iceServers: resolveIceServers(),
           limits: { maxFileBytes: MAX_FILE_BYTES, maxItems: MAX_FILE_ITEMS },
+          // Lets a refreshed tab pick a download back up: keyed by digest+size,
+          // not by room, so it survives leaving and re-entering a room too.
+          resume: opfsResume({ directory: "cliplink-resume" }),
         });
       }
       return managerRef.current;
@@ -361,7 +390,10 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
         });
         // Each rejection is its own toast only while there are few of them.
         if (rejected.length > 3) {
-          toastRef.current(`${rejected.length} files are empty or too large to share.`, "error");
+          toastRef.current(
+            `${rejected.length} files are empty or too large to share.`,
+            "error",
+          );
         } else {
           for (const rejection of rejected) {
             toastRef.current(rejectionText(rejection), "error");
@@ -389,7 +421,12 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
         // The picker opens synchronously inside this click, while it still
         // counts as user activation.
         pickDirectory().then(
-          (root) => enqueue(batchId, ids, root ? { kind: "folder", root } : { kind: "files" }),
+          (root) =>
+            enqueue(
+              batchId,
+              ids,
+              root ? { kind: "folder", root } : { kind: "files" },
+            ),
           () => {
             // Dismissed the folder dialog: no download.
           },
@@ -478,6 +515,10 @@ export function useFileTransfer({ peerId, sendSignal, pushToast }: UseFileTransf
           return;
         }
         managerRef.current?.cancel(id);
+      },
+
+      pause(id: string) {
+        managerRef.current?.pause(id);
       },
 
       revoke(id: string) {
