@@ -27,13 +27,19 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # The package is tested and built on its own first: it is published, and
-      # the tarball must not depend on the app compiling.
+      # The packages are tested and built on their own first: they are
+      # published, and a tarball must not depend on the app compiling.
       - name: Test rtc-file-transfer
         run: pnpm -F @thebkht/rtc-file-transfer test
 
       - name: Build rtc-file-transfer
         run: pnpm -F @thebkht/rtc-file-transfer build
+
+      - name: Test cliplink
+        run: pnpm -F @thebkht/cliplink test
+
+      - name: Build cliplink
+        run: pnpm -F @thebkht/cliplink build
 
       - name: Lint
         run: pnpm lint
