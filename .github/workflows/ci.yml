@@ -41,12 +41,6 @@ jobs:
       - name: Build cliplink
         run: pnpm -F @thebkht/cliplink build
 
-      - name: Test cliplink-cli
-        run: pnpm -F @thebkht/cliplink-cli test
-
-      - name: Build cliplink-cli
-        run: pnpm -F @thebkht/cliplink-cli build
-
       - name: Lint
         run: pnpm lint
 

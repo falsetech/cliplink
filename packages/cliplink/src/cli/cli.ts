@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 
-import { RoomKeyMismatchError } from "@thebkht/cliplink";
+import { RoomKeyMismatchError } from "../index.ts";
 
 import { parseArgs } from "./args.ts";
 import { HELP } from "./help.ts";
@@ -11,7 +11,8 @@ import { recv } from "./recv.ts";
 import { send } from "./send.ts";
 
 async function version() {
-  const manifest = new URL("../package.json", import.meta.url);
+  // dist/cli/cli.js → the package root.
+  const manifest = new URL("../../package.json", import.meta.url);
   const { version: value } = JSON.parse(await readFile(manifest, "utf8"));
   return value as string;
 }

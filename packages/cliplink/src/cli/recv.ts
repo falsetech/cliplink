@@ -1,4 +1,4 @@
-import { POLL_INTERVAL_MS, type Clip } from "@thebkht/cliplink";
+import { POLL_INTERVAL_MS, type Clip } from "../index.ts";
 
 import type { ParsedArgs } from "./args.ts";
 import { createRandomPeerId } from "./identity.ts";

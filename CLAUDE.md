@@ -17,7 +17,7 @@ pnpm lint:fix     # eslint --fix
 pnpm type-check   # tsc --noEmit
 ```
 
-pnpm is the package manager — do not create a `package-lock.json`. The app has **no test suite**; do not invent a root `pnpm test` or `pnpm format`. The workspace package does: `pnpm -F @thebkht/rtc-file-transfer test` (Node test runner, no dependencies). CI runs the package tests and build, then lint, type-check, and build.
+pnpm is the package manager — do not create a `package-lock.json`. The app has **no test suite**; do not invent a root `pnpm test` or `pnpm format`. The workspace packages do: `pnpm -F @thebkht/rtc-file-transfer test` and `pnpm -F @thebkht/cliplink test` (Node test runner). CI runs the package tests and builds, then lint, type-check, and build.
 
 ## Architecture
 
@@ -38,29 +38,38 @@ lib/cliplink/             All domain logic
 lib/utils.ts              cn() — clsx + tailwind-merge
 packages/
   rtc-file-transfer/      @thebkht/rtc-file-transfer — published to npm
+  cliplink/               @thebkht/cliplink — the room protocol, plus src/cli/
 ```
 
 There is **no** `src/`, `hooks/`, `store/`, or `server/` directory.
 
 ### `lib/cliplink/`
 
+Several files here are now thin re-exports of `@thebkht/cliplink`, which holds
+everything the CLI shares with the app — `crypto.ts`, `types.ts`,
+`validation.ts`, `room-code.ts`, `qr.ts`, `http.ts`, `ws.ts` and
+`encrypted-transport.ts`. Edit the package, not the shim. The app keeps
+importing from `@/lib/cliplink/...` either way.
+
 | File | Responsibility |
 | --- | --- |
-| `types.ts` | Shared types, including the `TransportClient` interface |
-| `constants.ts` | App limits and timing — TTLs, caps, rate limits. File-transfer tuning lives in the package |
+| `types.ts` | Re-export: shared types, including the `TransportClient` interface |
+| `constants.ts` | App limits and timing — caps, rate limits. Wire limits re-export from the package; file-transfer tuning lives in `rtc-file-transfer` |
+| `origin.ts` | Where this tab's room API lives, as a function so SSR can evaluate the module |
 | `storage.ts` | Room/clip persistence behind a `StorageAdapter`; Redis or in-memory |
 | `redis.ts` | Upstash REST client, returns `null` when unconfigured |
 | `pubsub.ts` | `ioredis` pub/sub fan-out, with a process-local `EventEmitter` fallback |
-| `ws.ts` | WebSocket transport implementation |
-| `http.ts` | Polling transport implementation and the shared fetch helpers |
+| `ws.ts` | Re-export: the WebSocket transport, bound to this tab's origin |
+| `http.ts` | Re-export: the room REST API, bound to this tab's origin |
 | `rate-limit.ts` | Atomic per-IP limiting via `@upstash/ratelimit`; fails open |
-| `validation.ts` | Input validation — hand-written, **not** Zod |
+| `validation.ts` | Re-export: input validation — hand-written, **not** Zod |
 | `room-code.ts`, `session.ts`, `clipboard.ts`, `format.ts`, `errors.ts` | Focused helpers |
 
 ### Things that are easy to get wrong
 
 - **Two transports, one interface.** WebSocket is primary, polling is the fallback; both implement `TransportClient` so the UI's retry/backoff state machine is written once. Changes to connection behavior belong behind that interface, not in the component.
 - **Everything degrades without credentials.** `getRedis()` returns `null` and storage falls back to memory; pub/sub falls back to a process-local bus. The app must always boot and work single-process with no env file — this is the documented contributor path. Never introduce a hard requirement on an env var.
+- **The protocol is a published package.** Encryption, wire types, validation and both transports live in `packages/cliplink` (`@thebkht/cliplink`), consumed via `workspace:*`, with `lib/cliplink/` re-exporting them. The `cliplink` CLI is `src/cli/` in that same package, which is why the protocol may not assume a browser: transports take their origin as a parameter, and `window` appears nowhere in it. Wire protocol v1 is fixed — the tests pin ciphertexts from earlier builds, because a tab loaded before a deploy keeps talking to one loaded after it.
 - **File transfer is a published package.** WebRTC offer/accept, chunking, backpressure, and stall detection live in `packages/rtc-file-transfer`, consumed via `workspace:*`. Keep it free of cliplink specifics (env vars, toast copy, rooms) and runtime dependencies; the wire protocol is v1 and must stay compatible with deployed clients. Its `exports` point at `src/` in the workspace and are rewritten to `dist/` by `publishConfig` at publish time.
 - **Files never reach the server.** The socket route relays signaling envelopes only. Any change that buffers or proxies file bytes server-side is a design violation.
 - **TTL is refreshed on write, not on read.** `appendClip` and `touchRoom` extend a room's life; polling must not. This was a deliberate fix — do not reintroduce read-side refresh.

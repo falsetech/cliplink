@@ -12,7 +12,8 @@
     "declarationMap": true,
     "sourceMap": true,
     "skipLibCheck": true,
-    "types": [],
+    // Node types are for `src/cli` only; the library half touches none of them.
+    "types": ["node"],
     "rootDir": "src",
     "outDir": "dist"
   },

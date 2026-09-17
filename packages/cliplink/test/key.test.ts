@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { formatRoomKey, generateRoomKey } from "@thebkht/cliplink";
+import { formatRoomKey, generateRoomKey } from "../src/index.ts";
 
-import { extractKey, extractRoomCode, KeyError, resolveKey } from "../src/key.ts";
+import { extractKey, extractRoomCode, KeyError, resolveKey } from "../src/cli/key.ts";
 
 const ROOM = "X7KP2M";
 

@@ -1,4 +1,4 @@
-import { encodeQr } from "@thebkht/cliplink";
+import { encodeQr } from "../index.ts";
 
 /**
  * A QR rendered with half-block characters, two module rows per text row, so a

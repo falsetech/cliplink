@@ -1,4 +1,4 @@
-import { MAX_CLIP_CHARS, validateClipText } from "@thebkht/cliplink";
+import { MAX_CLIP_CHARS, validateClipText } from "../index.ts";
 
 import type { ParsedArgs } from "./args.ts";
 import { createRandomSenderId } from "./identity.ts";

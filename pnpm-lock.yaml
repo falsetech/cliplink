@@ -99,16 +99,6 @@ importers:
       '@thebkht/rtc-file-transfer':
         specifier: workspace:*
         version: link:../rtc-file-transfer
-    devDependencies:
-      typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
-
-  packages/cliplink-cli:
-    dependencies:
-      '@thebkht/cliplink':
-        specifier: workspace:*
-        version: link:../cliplink
       ws:
         specifier: ^8.18.0
         version: 8.21.3

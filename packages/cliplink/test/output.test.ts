@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { createReporter } from "../src/output.ts";
-import { renderQr } from "../src/qr.ts";
-import { readStdin } from "../src/send.ts";
+import { createReporter } from "../src/cli/output.ts";
+import { renderQr } from "../src/cli/qr.ts";
+import { readStdin } from "../src/cli/send.ts";
 
 function streams({ isTTY = false } = {}) {
   const out: string[] = [];

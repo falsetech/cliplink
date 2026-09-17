@@ -5,7 +5,7 @@ import {
   normalizeRoomKey,
   parseRoomKeyFromHash,
   type RoomKey,
-} from "@thebkht/cliplink";
+} from "../index.ts";
 
 /**
  * Where a room key may come from, in the order it is looked for.

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { DEFAULT_BASE_URL, parseArgs } from "../src/args.ts";
-import type { Env } from "../src/env.ts";
+import { DEFAULT_BASE_URL, parseArgs } from "../src/cli/args.ts";
+import type { Env } from "../src/cli/env.ts";
 
 /** The parsed args, or a thrown assertion naming why parsing failed. */
 function parse(argv: string[], env: Env = {}) {

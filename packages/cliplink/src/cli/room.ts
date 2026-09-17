@@ -10,7 +10,7 @@ import {
   normalizeRoomCode,
   type EncryptedTransport,
   type RoomKey,
-} from "@thebkht/cliplink";
+} from "../index.ts";
 
 import type { ParsedArgs } from "./args.ts";
 import { findSavedRoom, saveRoom } from "./config.ts";

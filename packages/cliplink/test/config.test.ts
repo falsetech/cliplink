@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 
-import type { Env } from "../src/env.ts";
-import { configPath, findSavedRoom, readSavedRooms, saveRoom } from "../src/config.ts";
+import type { Env } from "../src/cli/env.ts";
+import { configPath, findSavedRoom, readSavedRooms, saveRoom } from "../src/cli/config.ts";
 
 const dirs: string[] = [];
 
