@@ -1,0 +1,53 @@
+{
+  "name": "@thebkht/cliplink-cli",
+  "version": "0.1.0",
+  "description": "Send and receive CLIPLINK clips from the terminal. End-to-end encrypted, no account, no install on the other device.",
+  "license": "MIT",
+  "author": "Bakhtiyor Ganijon",
+  "homepage": "https://github.com/thebkht/cliplink/tree/main/packages/cliplink-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thebkht/cliplink.git",
+    "directory": "packages/cliplink-cli"
+  },
+  "bugs": {
+    "url": "https://github.com/thebkht/cliplink/issues"
+  },
+  "keywords": [
+    "cliplink",
+    "cli",
+    "clipboard",
+    "cross-device",
+    "end-to-end-encryption",
+    "pipe",
+    "stdin"
+  ],
+  "type": "module",
+  "bin": {
+    "cliplink": "./dist/cli.js"
+  },
+  "engines": {
+    "node": ">=20.9"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "type-check": "tsc -p tsconfig.build.json --noEmit",
+    "prepublishOnly": "pnpm build && pnpm test"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@thebkht/cliplink": "workspace:*",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/ws": "^8.5.13",
+    "typescript": "^6.0.3"
+  }
+}

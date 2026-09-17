@@ -17,6 +17,7 @@ export {
   type EncryptedTransport,
 } from "./encrypted-transport.ts";
 export { createHttpClient, type HttpClient } from "./http.ts";
+export { encodeQr, type QrMatrix } from "./qr.ts";
 export {
   buildRoomUrl,
   generateRoomCode,
