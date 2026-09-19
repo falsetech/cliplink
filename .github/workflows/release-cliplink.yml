@@ -55,9 +55,25 @@ jobs:
       - name: Build
         run: pnpm -F @thebkht/cliplink build
 
+      # The pre-check can be wrong: for a version published moments earlier the
+      # registry's read path lags its write path, so `npm view` 404s on a
+      # version that is already there. The registry itself is the authority, and
+      # its answer for that case is E403 "cannot publish over" — which means the
+      # version is on npm, the state this job wants. Anything else is a failure.
       - name: Publish
         if: steps.version.outputs.published != 'true'
-        run: pnpm -F @thebkht/cliplink publish --provenance --access public --no-git-checks
+        run: |
+          set +e
+          output=$(pnpm -F @thebkht/cliplink publish --provenance --access public --no-git-checks 2>&1)
+          status=$?
+          printf '%s\n' "${output}"
+          if [ "${status}" -ne 0 ]; then
+            if printf '%s' "${output}" | grep -q "cannot publish over"; then
+              echo "::notice::@thebkht/cliplink is already on npm at this version; continuing to the release."
+            else
+              exit "${status}"
+            fi
+          fi
 
       # Runs after a skipped publish too, so re-running an old tag backfills a
       # missing release. An existing release is left as it is.
