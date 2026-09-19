@@ -23,6 +23,10 @@ npm install -g @thebkht/cliplink     # the `cliplink` command
 The CLI ships in this package as the `cliplink` binary — see [CLI.md](./CLI.md).
 Importing the library never loads it, so a browser bundle pays nothing for it.
 
+Needs Node 22 or newer, for the `WebSocket` and Web Crypto globals. There are no
+third-party dependencies: in a browser the library runs on the platform, and in
+the terminal it runs on Node's own globals.
+
 ## Usage
 
 ```ts

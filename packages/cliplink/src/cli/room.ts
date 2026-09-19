@@ -1,5 +1,3 @@
-import WebSocket from "ws";
-
 import {
   buildRoomUrl,
   createEncryptedTransport,
@@ -27,12 +25,13 @@ export type Session = {
   created: boolean;
 };
 
-/** `ws` in place of the browser's global; everything else the package handles. */
+/**
+ * Node's own `WebSocket` global, which is why this package has no `ws`
+ * dependency: the transport falls through to `globalThis.WebSocket` on its own,
+ * and Node has had one since 22. Everything else the package handles.
+ */
 function transportOptions(baseUrl: string) {
-  return {
-    baseUrl,
-    WebSocket: WebSocket as unknown as typeof globalThis.WebSocket,
-  };
+  return { baseUrl };
 }
 
 /**

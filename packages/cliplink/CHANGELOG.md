@@ -18,4 +18,6 @@ each.
   creates a room and prints a link and QR code for the other device;
   `cliplink recv` prints clips as they arrive. Importing the library never
   loads it, so a browser bundle pays nothing for the CLI.
-- Requires Node 20.9 or newer for the library's use of Web Crypto.
+- Requires Node 22 or newer, and has no third-party dependencies. The CLI talks
+  to a room over Node's own `WebSocket` global rather than carrying `ws`, and
+  the library uses Web Crypto, which is global from the same versions.

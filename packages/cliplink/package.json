@@ -49,7 +49,7 @@
     "CLI.md"
   ],
   "engines": {
-    "node": ">=20.9"
+    "node": ">=22"
   },
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
@@ -58,12 +58,10 @@
     "prepublishOnly": "pnpm build && pnpm test"
   },
   "dependencies": {
-    "@thebkht/rtc-file-transfer": "workspace:*",
-    "ws": "^8.18.0"
+    "@thebkht/rtc-file-transfer": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22",
-    "@types/ws": "^8.5.13",
     "typescript": "^6.0.3"
   }
 }
