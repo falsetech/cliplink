@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
+    "@thebkht/cliplink": "workspace:*",
     "@thebkht/rtc-file-transfer": "workspace:*",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.38.2",

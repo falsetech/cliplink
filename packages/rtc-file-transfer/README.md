@@ -1,10 +1,12 @@
 # @thebkht/rtc-file-transfer
 
-[![npm version](https://img.shields.io/npm/v/@thebkht/rtc-file-transfer.svg)](https://www.npmjs.com/package/@thebkht/rtc-file-transfer)
-[![npm downloads](https://img.shields.io/npm/dm/@thebkht/rtc-file-transfer.svg)](https://www.npmjs.com/package/@thebkht/rtc-file-transfer)
-[![types](https://img.shields.io/npm/types/@thebkht/rtc-file-transfer.svg)](https://www.npmjs.com/package/@thebkht/rtc-file-transfer)
-[![license](https://img.shields.io/npm/l/@thebkht/rtc-file-transfer.svg)](https://github.com/thebkht/cliplink/blob/main/packages/rtc-file-transfer/LICENSE)
-[![CI](https://github.com/thebkht/cliplink/actions/workflows/ci.yml/badge.svg)](https://github.com/thebkht/cliplink/actions/workflows/ci.yml)
+<p>
+  <a href="https://www.npmjs.com/package/@thebkht/rtc-file-transfer"><img alt="npm version: @thebkht/rtc-file-transfer" src="https://img.shields.io/npm/v/@thebkht/rtc-file-transfer.svg?style=for-the-badge&amp;labelColor=000000" height="28"></a>
+  <a href="https://www.npmjs.com/package/@thebkht/rtc-file-transfer"><img alt="npm downloads per month: @thebkht/rtc-file-transfer" src="https://img.shields.io/npm/dm/@thebkht/rtc-file-transfer.svg?style=for-the-badge&amp;labelColor=000000&amp;label=npm%20downloads" height="28"></a>
+  <a href="https://www.npmjs.com/package/@thebkht/rtc-file-transfer"><img alt="TypeScript types included" src="https://img.shields.io/npm/types/@thebkht/rtc-file-transfer.svg?style=for-the-badge&amp;logo=typescript&amp;labelColor=000000" height="28"></a>
+  <a href="https://github.com/thebkht/cliplink/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/thebkht/cliplink/ci.yml?style=for-the-badge&amp;labelColor=000000&amp;label=ci" height="28"></a>
+  <a href="https://github.com/thebkht/cliplink/blob/main/packages/rtc-file-transfer/LICENSE"><img alt="License: MIT" src="https://img.shields.io/npm/l/@thebkht/rtc-file-transfer.svg?style=for-the-badge&amp;labelColor=000000" height="28"></a>
+</p>
 
 Send files peer-to-peer over WebRTC data channels, with the parts that are easy to get wrong already done:
 

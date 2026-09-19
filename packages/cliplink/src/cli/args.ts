@@ -1,0 +1,181 @@
+/**
+ * Argument parsing, kept apart from anything that touches the network or the
+ * filesystem so the whole surface can be tested as a pure function.
+ */
+
+import type { Env } from "./env.ts";
+
+export const COMMANDS = ["send", "recv", "help", "version"] as const;
+export type Command = (typeof COMMANDS)[number];
+
+export const DEFAULT_BASE_URL = "https://cliplink.thebkht.com";
+
+export type ParsedArgs = {
+  command: Command;
+  /** Positional text for `send`. Empty means stdin. */
+  text: string;
+  room: string | null;
+  key: string | null;
+  /** Derive the key from the room code: no key to share, and not end-to-end. */
+  open: boolean;
+  /** Write the room and key to the config file. The one path that persists a key. */
+  save: boolean;
+  /** `recv` only: print the next clip and exit. */
+  one: boolean;
+  /** Suppress the human-facing commentary on stderr. */
+  quiet: boolean;
+  ttlSeconds: number | null;
+  baseUrl: string;
+};
+
+export type ParseResult =
+  | { ok: true; args: ParsedArgs }
+  | { ok: false; message: string };
+
+const FLAGS_WITH_VALUES = new Set(["--room", "--key", "--ttl", "--url"]);
+
+const ALIASES: Record<string, string> = {
+  "-r": "--room",
+  "-k": "--key",
+  "-1": "--one",
+  "-q": "--quiet",
+  "-h": "--help",
+  "-v": "--version",
+};
+
+function isCommand(value: string): value is Command {
+  return (COMMANDS as readonly string[]).includes(value);
+}
+
+/**
+ * Parses `argv` as the CLI sees it, without the node and script entries.
+ *
+ * Unknown flags are an error rather than positional text: a mistyped `--quite`
+ * silently becoming the clip you send is the kind of thing you only notice on
+ * the other device.
+ */
+export function parseArgs(argv: string[], env: Env = {}): ParseResult {
+  const args: ParsedArgs = {
+    command: "help",
+    text: "",
+    room: env.CLIPLINK_ROOM ?? null,
+    key: env.CLIPLINK_ROOM_KEY ?? null,
+    open: false,
+    save: false,
+    one: false,
+    quiet: false,
+    ttlSeconds: null,
+    baseUrl: env.CLIPLINK_URL ?? DEFAULT_BASE_URL,
+  };
+
+  const positional: string[] = [];
+  let command: Command | null = null;
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const raw = argv[index];
+    const token = ALIASES[raw] ?? raw;
+
+    // `--` ends flag parsing, so a clip may begin with a dash.
+    if (token === "--") {
+      positional.push(...argv.slice(index + 1));
+      break;
+    }
+
+    if (token.startsWith("-") && token !== "-") {
+      const eq = token.indexOf("=");
+      const name = eq === -1 ? token : token.slice(0, eq);
+      const inline = eq === -1 ? null : token.slice(eq + 1);
+
+      if (FLAGS_WITH_VALUES.has(name)) {
+        const value = inline ?? argv[++index];
+        if (value === undefined) {
+          return { ok: false, message: `${name} needs a value.` };
+        }
+        if (name === "--room") {
+          args.room = value;
+        } else if (name === "--key") {
+          args.key = value;
+        } else if (name === "--url") {
+          args.baseUrl = value;
+        } else {
+          const ttl = Number(value);
+          if (!Number.isFinite(ttl) || ttl <= 0) {
+            return { ok: false, message: "--ttl must be a positive number of seconds." };
+          }
+          args.ttlSeconds = Math.floor(ttl);
+        }
+        continue;
+      }
+
+      if (inline !== null) {
+        return { ok: false, message: `${name} does not take a value.` };
+      }
+
+      switch (name) {
+        case "--open":
+          args.open = true;
+          break;
+        case "--save":
+          args.save = true;
+          break;
+        case "--one":
+          args.one = true;
+          break;
+        case "--quiet":
+          args.quiet = true;
+          break;
+        case "--help":
+          return { ok: true, args: { ...args, command: "help" } };
+        case "--version":
+          return { ok: true, args: { ...args, command: "version" } };
+        default:
+          return { ok: false, message: `Unknown option ${name}.` };
+      }
+      continue;
+    }
+
+    if (command === null && isCommand(token)) {
+      command = token;
+      continue;
+    }
+
+    positional.push(raw);
+  }
+
+  if (command === null) {
+    return { ok: false, message: "Expected a command: send, recv, help or version." };
+  }
+
+  args.command = command;
+  args.text = positional.join(" ");
+
+  if (args.open && args.key) {
+    return {
+      ok: false,
+      message: "--open derives the key from the room code, so --key cannot be given too.",
+    };
+  }
+  if (args.open && args.save) {
+    return {
+      ok: false,
+      message: "--open rooms have no key to save; the room code alone opens them.",
+    };
+  }
+  if (command === "send" && args.one) {
+    return { ok: false, message: "--one applies to recv, not send." };
+  }
+  if (command === "recv" && args.text) {
+    return { ok: false, message: "recv takes no text to send." };
+  }
+  if (command === "recv" && !args.room) {
+    return { ok: false, message: "recv needs a room: pass --room, or CLIPLINK_ROOM." };
+  }
+  if (args.ttlSeconds !== null && args.room) {
+    return {
+      ok: false,
+      message: "--ttl sets the lifetime of a room being created, and this run joins one.",
+    };
+  }
+
+  return { ok: true, args };
+}
