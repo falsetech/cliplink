@@ -4,11 +4,13 @@
 
 **Copy here. Paste anywhere.** Fast cross-device clipboard sync — no account, no install.
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/thebkht/cliplink/actions/workflows/ci.yml/badge.svg)](https://github.com/thebkht/cliplink/actions/workflows/ci.yml)
-[![Next.js 16](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org)
-[![GitHub stars](https://img.shields.io/github/stars/thebkht/cliplink?style=flat)](https://github.com/thebkht/cliplink/stargazers)
-[![npm: @thebkht/rtc-file-transfer](https://img.shields.io/npm/v/@thebkht/rtc-file-transfer.svg?label=rtc-file-transfer)](https://www.npmjs.com/package/@thebkht/rtc-file-transfer)
+<p>
+  <a href="https://nextjs.org"><img alt="Built with Next.js 16" src="https://img.shields.io/badge/NEXT.JS-16-0a0a0a.svg?style=for-the-badge&amp;logo=next.js&amp;labelColor=000000" height="28"></a>
+  <a href="https://github.com/thebkht/cliplink/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/thebkht/cliplink/ci.yml?style=for-the-badge&amp;labelColor=000000&amp;label=ci" height="28"></a>
+  <a href="https://www.npmjs.com/package/@thebkht/cliplink"><img alt="npm version: @thebkht/cliplink" src="https://img.shields.io/npm/v/@thebkht/cliplink.svg?style=for-the-badge&amp;labelColor=000000&amp;label=cliplink" height="28"></a>
+  <a href="https://www.npmjs.com/package/@thebkht/rtc-file-transfer"><img alt="npm version: @thebkht/rtc-file-transfer" src="https://img.shields.io/npm/v/@thebkht/rtc-file-transfer.svg?style=for-the-badge&amp;labelColor=000000&amp;label=rtc-file-transfer" height="28"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/LICENSE-MIT-0a0a0a.svg?style=for-the-badge&amp;labelColor=000000" height="28"></a>
+</p>
 
 [**Live demo → cliplink.thebkht.com**](https://cliplink.thebkht.com)
 

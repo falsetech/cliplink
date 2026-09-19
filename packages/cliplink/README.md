@@ -1,5 +1,13 @@
 # @thebkht/cliplink
 
+<p>
+  <a href="https://www.npmjs.com/package/@thebkht/cliplink"><img alt="npm version: @thebkht/cliplink" src="https://img.shields.io/npm/v/@thebkht/cliplink.svg?style=for-the-badge&amp;labelColor=000000" height="28"></a>
+  <a href="https://www.npmjs.com/package/@thebkht/cliplink"><img alt="npm downloads per month: @thebkht/cliplink" src="https://img.shields.io/npm/dm/@thebkht/cliplink.svg?style=for-the-badge&amp;labelColor=000000&amp;label=npm%20downloads" height="28"></a>
+  <a href="https://www.npmjs.com/package/@thebkht/cliplink"><img alt="TypeScript types included" src="https://img.shields.io/npm/types/@thebkht/cliplink.svg?style=for-the-badge&amp;logo=typescript&amp;labelColor=000000" height="28"></a>
+  <a href="https://github.com/thebkht/cliplink/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/thebkht/cliplink/ci.yml?style=for-the-badge&amp;labelColor=000000&amp;label=ci" height="28"></a>
+  <a href="https://github.com/thebkht/cliplink/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/npm/l/@thebkht/cliplink.svg?style=for-the-badge&amp;labelColor=000000" height="28"></a>
+</p>
+
 The CLIPLINK room protocol: end-to-end encryption, the room wire types, and the
 HTTP and WebSocket transports. Everything a client needs to talk to a CLIPLINK
 room, with no framework and nothing browser-specific.
