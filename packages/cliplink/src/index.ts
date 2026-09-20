@@ -16,7 +16,13 @@ export {
   UNDECRYPTABLE_TEXT,
   type EncryptedTransport,
 } from "./encrypted-transport.ts";
-export { createHttpClient, type HttpClient } from "./http.ts";
+export {
+  createHttpClient,
+  // Anyone implementing TransportClient against a lazy origin needs the same
+  // one-line resolution the built-in transports use.
+  resolveBaseUrl,
+  type HttpClient,
+} from "./http.ts";
 export { encodeQr, type QrMatrix } from "./qr.ts";
 export {
   buildRoomUrl,
