@@ -28,12 +28,16 @@ CI runs exactly these, so run them locally first:
 ```bash
 pnpm -F @thebkht/rtc-file-transfer test
 pnpm -F @thebkht/rtc-file-transfer build
+pnpm -F @thebkht/cliplink test
+pnpm -F @thebkht/cliplink build
 pnpm lint
 pnpm type-check
 pnpm build
 ```
 
-The file-transfer package in `packages/rtc-file-transfer` has tests; the app has **no test suite yet**. Adding one is on the roadmap and PRs that start it are very welcome. In the meantime, describe how you verified your change by hand.
+The packages are tested and built first, and on their own: they are published, and a tarball must not depend on the app compiling. Running them needs Node 22, which is what `.nvmrc` pins.
+
+Both workspace packages have test suites. The app itself has **no test suite yet** — adding one is on the roadmap and PRs that start it are very welcome. In the meantime, describe how you verified your change by hand.
 
 ## Manual verification
 
