@@ -101,4 +101,4 @@ the browser does.
 
 ## License
 
-[MIT](../../LICENSE) © Bakhtiyor Ganijon
+[MIT](./LICENSE) © Bakhtiyor Ganijon

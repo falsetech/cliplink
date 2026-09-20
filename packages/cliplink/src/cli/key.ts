@@ -4,6 +4,7 @@ import {
   importRoomKey,
   normalizeRoomKey,
   parseRoomKeyFromHash,
+  ROOM_CODE_LENGTH,
   type RoomKey,
 } from "../index.ts";
 
@@ -54,7 +55,9 @@ export function extractKey(input: string): string | null {
 
 /** The room code in a room URL, so a pasted link names both halves. */
 export function extractRoomCode(input: string): string | null {
-  const match = input.trim().match(/\/room\/([A-Za-z0-9]{6})/);
+  const match = input
+    .trim()
+    .match(new RegExp(`/room/([A-Za-z0-9]{${ROOM_CODE_LENGTH}})`));
   return match ? match[1].toUpperCase() : null;
 }
 

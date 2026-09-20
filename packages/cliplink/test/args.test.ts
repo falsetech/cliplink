@@ -78,6 +78,14 @@ describe("flags", () => {
     assert.match(reject(["send", "hi", "--ttl", "-5"]), /--ttl must be/);
   });
 
+  it("rejects a --ttl outside the range the server accepts", () => {
+    // The bounds the help text advertises, enforced here rather than learned
+    // from a rejected request.
+    assert.match(reject(["send", "hi", "--ttl", "60"]), /between 3600 and 86400/);
+    assert.match(reject(["send", "hi", "--ttl", "86401"]), /between 3600 and 86400/);
+    assert.equal(parse(["send", "hi", "--ttl", "86400"]).ttlSeconds, 86400);
+  });
+
   it("stops parsing flags after --, so a clip may start with a dash", () => {
     const args = parse(["send", "--", "--not-a-flag", "-x"]);
     assert.equal(args.text, "--not-a-flag -x");
@@ -127,6 +135,15 @@ describe("combinations that cannot mean anything", () => {
     assert.match(
       reject(["send", "hi", "--room", "X7KP2M", "--ttl", "3600"]),
       /sets the lifetime of a room being created/,
+    );
+  });
+
+  it("names CLIPLINK_ROOM when that is what --ttl collided with", () => {
+    // The command line shows no room at all in this case, so "this run joins
+    // one" would leave the person looking for a --room they never typed.
+    assert.match(
+      reject(["send", "hi", "--ttl", "3600"], { CLIPLINK_ROOM: "X7KP2M" }),
+      /CLIPLINK_ROOM already names one/,
     );
   });
 });

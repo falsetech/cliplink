@@ -3,6 +3,12 @@
  * filesystem so the whole surface can be tested as a pure function.
  */
 
+import {
+  MAX_ROOM_TTL_SECONDS,
+  MIN_ROOM_TTL_SECONDS,
+  validateRoomTtl,
+} from "../index.ts";
+
 import type { Env } from "./env.ts";
 
 export const COMMANDS = ["send", "recv", "help", "version"] as const;
@@ -70,6 +76,8 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
 
   const positional: string[] = [];
   let command: Command | null = null;
+  /** Whether the room was named on the command line or came from the environment. */
+  let roomFromFlag = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const raw = argv[index];
@@ -93,16 +101,26 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
         }
         if (name === "--room") {
           args.room = value;
+          roomFromFlag = true;
         } else if (name === "--key") {
           args.key = value;
         } else if (name === "--url") {
           args.baseUrl = value;
         } else {
-          const ttl = Number(value);
-          if (!Number.isFinite(ttl) || ttl <= 0) {
-            return { ok: false, message: "--ttl must be a positive number of seconds." };
+          // validateRoomTtl is the same check the server applies, so the
+          // bounds the help text advertises are enforced before a round trip
+          // rather than learned from a rejection. Its messages name the wire
+          // field, though, and the person typed a flag.
+          const ttl = validateRoomTtl(Number(value));
+          if (!ttl.ok) {
+            return {
+              ok: false,
+              message: Number.isFinite(Number(value))
+                ? `--ttl must be between ${MIN_ROOM_TTL_SECONDS} and ${MAX_ROOM_TTL_SECONDS} seconds.`
+                : "--ttl must be a number of seconds.",
+            };
           }
-          args.ttlSeconds = Math.floor(ttl);
+          args.ttlSeconds = ttl.ttlSeconds;
         }
         continue;
       }
@@ -171,9 +189,13 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
     return { ok: false, message: "recv needs a room: pass --room, or CLIPLINK_ROOM." };
   }
   if (args.ttlSeconds !== null && args.room) {
+    // Saying "this run joins one" explains nothing when the room came from the
+    // environment and the command line shows no room at all.
     return {
       ok: false,
-      message: "--ttl sets the lifetime of a room being created, and this run joins one.",
+      message: roomFromFlag
+        ? "--ttl sets the lifetime of a room being created, and this run joins one."
+        : "--ttl sets the lifetime of a room being created, and CLIPLINK_ROOM already names one to join. Unset it to create a room.",
     };
   }
 

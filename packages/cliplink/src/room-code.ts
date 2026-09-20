@@ -1,21 +1,32 @@
 import { ROOM_CODE_LENGTH } from "./protocol.ts";
 
-const ROOM_CODE_PATTERN = /^[A-Z0-9]{6}$/;
+const ROOM_CODE_PATTERN = new RegExp(`^[A-Z0-9]{${ROOM_CODE_LENGTH}}$`);
+/** 32 characters: no O/0 or I/1 to confuse, and a power of two so a byte maps without bias. */
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 export function normalizeRoomCode(value: string | null | undefined) {
-  return (value ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+  return (value ?? "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, ROOM_CODE_LENGTH);
 }
 
 export function isValidRoomCode(value: string) {
   return ROOM_CODE_PATTERN.test(value);
 }
 
+/**
+ * A room code is the room's only identifier, and for a room opened by its code
+ * alone — see `deriveOpenRoomKey` — it is the whole of the key material. So it
+ * comes from the CSPRNG, not `Math.random`, whose output is predictable from a
+ * handful of earlier draws.
+ *
+ * The alphabet is exactly 32 characters, so the low five bits of a random byte
+ * index it uniformly: no modulo bias, and no rejection loop to get there.
+ */
 export function generateRoomCode() {
-  return Array.from({ length: ROOM_CODE_LENGTH }, () => {
-    const index = Math.floor(Math.random() * CODE_ALPHABET.length);
-    return CODE_ALPHABET[index];
-  }).join("");
+  const bytes = crypto.getRandomValues(new Uint8Array(ROOM_CODE_LENGTH));
+  return Array.from(bytes, (byte) => CODE_ALPHABET[byte & 31]).join("");
 }
 
 /** The fragment key the room key travels under. */

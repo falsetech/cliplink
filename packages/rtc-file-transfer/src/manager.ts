@@ -1605,6 +1605,66 @@ export function createFileTransferManager(options: FileTransferOptions) {
     }
   }
 
+  /**
+   * The body of `request`, as a plain closure so that `resume` can reach it
+   * without going through `this` — the manager is a returned object literal,
+   * and destructuring one of its methods is the idiomatic way to use it.
+   */
+  function requestItem(id: string, options: RequestOptions = {}) {
+    const item = items.get(id);
+    if (
+      !item ||
+      item.direction !== "incoming" ||
+      (item.status !== "offered" &&
+        item.status !== "failed" &&
+        item.status !== "paused")
+    ) {
+      if (options.sink) {
+        abortSink(options.sink);
+      }
+      return false;
+    }
+
+    const retained = downloads.get(id);
+    const resuming =
+      retained !== undefined && hasCap("blocks", item.caps) && hasCap("resume", item.caps);
+    if (resuming) {
+      // The retained sink already holds the verified prefix.
+      if (options.sink) {
+        abortSink(options.sink);
+      }
+      return beginReceive(item, retained, true);
+    }
+
+    // Nothing in memory, but the store may still have this file from an
+    // earlier page load — or can give it somewhere durable to start.
+    const key = resumeKeyFor(item);
+    if (resumeStore && key && canStore(item) && !options.sink) {
+      const state = stored.get(id) ?? { verifiedBytes: 0, blockHashes: [] };
+      item.status = "connecting";
+      item.error = undefined;
+      item.errorCode = undefined;
+      emit();
+      void beginStoredReceive(item, key, state);
+      return true;
+    }
+
+    if (!options.sink && item.size > limits.maxMemoryBytes) {
+      onNotice({
+        type: "failed",
+        item: { ...item },
+        code: "needs-sink",
+        message: MESSAGES["needs-sink"],
+      });
+      return false;
+    }
+    releaseDownload(id);
+    const download = createDownload(options.sink ?? createMemorySink(item.mime));
+    downloads.set(id, download);
+    const keepOnFailure = false;
+    return beginReceive(item, download, keepOnFailure);
+  }
+
   // ---------------------------------------------------------------------------
   // Public API
 
@@ -1698,60 +1758,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
      * A file over `limits.maxMemoryBytes` with no sink also returns false, with
      * a `needs-sink` failure notice.
      */
-    request(id: string, options: RequestOptions = {}) {
-      const item = items.get(id);
-      if (
-        !item ||
-        item.direction !== "incoming" ||
-        (item.status !== "offered" &&
-          item.status !== "failed" &&
-          item.status !== "paused")
-      ) {
-        if (options.sink) {
-          abortSink(options.sink);
-        }
-        return false;
-      }
-
-      const retained = downloads.get(id);
-      const resuming =
-        retained !== undefined && hasCap("blocks", item.caps) && hasCap("resume", item.caps);
-      if (resuming) {
-        // The retained sink already holds the verified prefix.
-        if (options.sink) {
-          abortSink(options.sink);
-        }
-        return beginReceive(item, retained, true);
-      }
-
-      // Nothing in memory, but the store may still have this file from an
-      // earlier page load — or can give it somewhere durable to start.
-      const key = resumeKeyFor(item);
-      if (resumeStore && key && canStore(item) && !options.sink) {
-        const state = stored.get(id) ?? { verifiedBytes: 0, blockHashes: [] };
-        item.status = "connecting";
-        item.error = undefined;
-        item.errorCode = undefined;
-        emit();
-        void beginStoredReceive(item, key, state);
-        return true;
-      }
-
-      if (!options.sink && item.size > limits.maxMemoryBytes) {
-        onNotice({
-          type: "failed",
-          item: { ...item },
-          code: "needs-sink",
-          message: MESSAGES["needs-sink"],
-        });
-        return false;
-      }
-      releaseDownload(id);
-      const download = createDownload(options.sink ?? createMemorySink(item.mime));
-      downloads.set(id, download);
-      const keepOnFailure = false;
-      return beginReceive(item, download, keepOnFailure);
-    },
+    request: requestItem,
 
     /**
      * Pause an incoming download, keeping every verified block. `resume` (or
@@ -1778,9 +1785,14 @@ export function createFileTransferManager(options: FileTransferOptions) {
       return false;
     },
 
-    /** Continue a paused or failed download. The same as calling `request` again. */
+    /**
+     * Continue a paused or failed download. The same as calling `request`
+     * again — and it calls the function, not `this.request`, so that a
+     * destructured `const { resume } = createFileTransferManager(…)` works
+     * like every other method here.
+     */
     resume(id: string, options: RequestOptions = {}) {
-      return this.request(id, options);
+      return requestItem(id, options);
     },
 
     /** Abort an in-progress incoming download. */

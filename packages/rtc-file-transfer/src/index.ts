@@ -10,6 +10,11 @@ export {
   type OfferOptions,
   type OfferRejection,
   type RequestOptions,
+  // The README tells consumers to write their own store; without these three
+  // they could not type one.
+  type ResumeKey,
+  type ResumeProvider,
+  type ResumeState,
   type TransferNotice,
 } from "./manager.ts";
 export { sanitizeFileName, sanitizeRelativePath } from "./names.ts";
