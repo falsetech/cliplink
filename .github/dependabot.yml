@@ -5,6 +5,12 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Hold every bump until the release is three days old, matching
+    # `minimumReleaseAge` in pnpm-workspace.yaml. Without this Dependabot would
+    # keep proposing versions that pnpm then refuses to install, and a
+    # compromised release would sit in an open PR waiting to be merged.
+    cooldown:
+      default-days: 3
     ignore:
       # Types must match the runtime in .nvmrc; bump both together by hand.
       - dependency-name: "@types/node"
@@ -15,10 +21,15 @@ updates:
           - minor
           - patch
 
+  # Actions are pinned to commit SHAs with a trailing version comment.
+  # Dependabot reads that comment, so it still bumps them and rewrites both the
+  # SHA and the comment together.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 3
     groups:
       actions:
         update-types:
