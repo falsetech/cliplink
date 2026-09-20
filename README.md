@@ -4,11 +4,14 @@
 
 **Copy here. Paste anywhere.** Fast cross-device clipboard sync — no account, no install.
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/thebkht/cliplink/actions/workflows/ci.yml/badge.svg)](https://github.com/thebkht/cliplink/actions/workflows/ci.yml)
-[![Next.js 16](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org)
-[![GitHub stars](https://img.shields.io/github/stars/thebkht/cliplink?style=flat)](https://github.com/thebkht/cliplink/stargazers)
-[![npm: @thebkht/rtc-file-transfer](https://img.shields.io/npm/v/@thebkht/rtc-file-transfer.svg?label=rtc-file-transfer)](https://www.npmjs.com/package/@thebkht/rtc-file-transfer)
+<p>
+  <a href="https://nextjs.org"><img alt="Built with Next.js 16" src="https://img.shields.io/badge/NEXT.JS-16-0a0a0a.svg?style=for-the-badge&amp;logo=next.js&amp;labelColor=000000" height="28"></a>
+  <a href="https://github.com/thebkht/cliplink/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/thebkht/cliplink/ci.yml?style=for-the-badge&amp;labelColor=000000&amp;label=ci" height="28"></a>
+  <a href="https://www.npmjs.com/package/@thebkht/cliplink"><img alt="npm version: @thebkht/cliplink" src="https://img.shields.io/npm/v/@thebkht/cliplink.svg?style=for-the-badge&amp;labelColor=000000&amp;label=cliplink" height="28"></a>
+  <a href="https://www.npmjs.com/package/@thebkht/rtc-file-transfer"><img alt="npm version: @thebkht/rtc-file-transfer" src="https://img.shields.io/npm/v/@thebkht/rtc-file-transfer.svg?style=for-the-badge&amp;labelColor=000000&amp;label=rtc-file-transfer" height="28"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/thebkht/cliplink"><img alt="OpenSSF Scorecard" src="https://img.shields.io/ossf-scorecard/github.com/thebkht/cliplink?style=for-the-badge&amp;labelColor=000000&amp;label=scorecard" height="28"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/LICENSE-MIT-0a0a0a.svg?style=for-the-badge&amp;labelColor=000000" height="28"></a>
+</p>
 
 [**Live demo → cliplink.thebkht.com**](https://cliplink.thebkht.com)
 
@@ -38,6 +41,7 @@ Nothing persists. Rooms expire on a timer, history is session-local, and files n
 - **Know the state** — device count, a live expiry countdown, and a badge that says when you have dropped to the polling fallback
 - **Peer-to-peer file transfer** — up to 500 MB per file over WebRTC data channels, via attach, drag-and-drop, or paste. Drop or attach a whole folder (up to 50 files) and it arrives as one group, with Download all saving it into a folder of your choice where the browser allows it, or as a single zip (up to 1 GB, held in memory until it's saved). Bytes flow browser-to-browser; the server only relays signaling. Every block is SHA-256 verified and the whole file is checked against a digest that travelled over signaling rather than the data channel. A download can be paused and picked back up, survives a dropped connection, and now survives a reload as well — a refreshed tab resumes from what is already on disk. Large files (64 MB+) stream straight to disk in every current browser, and progress shows speed and time left. The transfer engine is published on its own as [`@thebkht/rtc-file-transfer`](https://www.npmjs.com/package/@thebkht/rtc-file-transfer)
 - **Share sheet target** — install CLIPLINK as an app and it appears in the OS share sheet. Shared text lands in the editor of a room open in another tab, or in one you create or join; shared files are offered to the room. The service worker keeps them on the device, so they never reach the server. Works on Android Chrome and installed desktop Chromium; iOS has no share targets for web apps
+- **A CLI** — `git log -1 | cliplink send` creates a room, sends it, and prints a QR code for the phone. `cliplink recv --one | pbcopy` waits for the next clip and copies it. Same rooms, same encryption; `npm i -g @thebkht/cliplink`, documented in [CLI.md](packages/cliplink/CLI.md)
 - **Ephemeral by design** — per-room TTL configurable from 1h to 24h (6h default), max 50 clips retained per room
 - **Rate limited** — token buckets shared across instances through Redis: a burst of 60 clips refilling at 1/second, and 10 room creations refilling at 1 per 10 seconds
 
@@ -87,7 +91,9 @@ Typing any other character with nothing focused starts a clip.
 
 Two things here are worth reading even if you never run CLIPLINK:
 
-**The transport abstraction.** Both realtime transports implement one `TransportClient` interface ([`lib/cliplink/types.ts`](lib/cliplink/types.ts)), so the room UI's retry/backoff/fallback state machine is written once. WebSockets ([`lib/cliplink/ws.ts`](lib/cliplink/ws.ts)) replaced an earlier SSE implementation without the UI changing at all; polling ([`lib/cliplink/http.ts`](lib/cliplink/http.ts)) remains the fallback. Running WebSockets on Vercel Functions is documented thinly elsewhere — this is a complete working example.
+**The transport abstraction.** Both realtime transports implement one `TransportClient` interface ([`packages/cliplink/src/types.ts`](packages/cliplink/src/types.ts)), so the room UI's retry/backoff/fallback state machine is written once. WebSockets ([`ws.ts`](packages/cliplink/src/ws.ts)) replaced an earlier SSE implementation without the UI changing at all; polling ([`http.ts`](packages/cliplink/src/http.ts)) remains the fallback. The same interface is what let a CLI reuse the whole stack: it supplies `ws` in place of the browser's global and gets the same encryption, the same backoff and the same fallback. Running WebSockets on Vercel Functions is documented thinly elsewhere — this is a complete working example.
+
+**One implementation of the encryption.** The crypto, wire types and transports live in [`@thebkht/cliplink`](packages/cliplink), consumed by the app through thin re-exports in `lib/cliplink/`. A second implementation is the expensive part of every non-browser surface and the one most likely to drift, so there is exactly one — and its tests pin ciphertexts from earlier builds, since tabs opened before a deploy keep talking to ones opened after it.
 
 **Server-free file transfer.** [`@thebkht/rtc-file-transfer`](packages/rtc-file-transfer) implements offer/accept, chunking with backpressure in both directions, stall detection, block-level integrity checks and a whole-file digest, pause, resume — across a dropped connection or a reload — streaming to disk, and withdrawal over raw WebRTC data channels, with no TURN-dependent SaaS in the middle. It is 1.0.0: the API follows semver and wire protocol v1 is permanent, so any two versions interoperate. It lives in this repo as a workspace package, is [published to npm](https://www.npmjs.com/package/@thebkht/rtc-file-transfer) with provenance, and works with any signaling channel — with adapters ready for WebSocket, `BroadcastChannel`, Supabase Realtime, Trystero, PeerJS and simple-peer:
 
@@ -141,6 +147,7 @@ It is a stock Next.js App Router build, so anywhere that runs Next.js 16 with We
 | Package | Version | Description |
 | --- | --- | --- |
 | [`@thebkht/rtc-file-transfer`](packages/rtc-file-transfer) | [![npm](https://img.shields.io/npm/v/@thebkht/rtc-file-transfer.svg)](https://www.npmjs.com/package/@thebkht/rtc-file-transfer) | Peer-to-peer file transfer over WebRTC data channels, with backpressure, integrity checks, pause and resume (including across a reload), streaming to disk, and offer/revoke. Zero dependencies. Bring your own signaling. |
+| [`@thebkht/cliplink`](packages/cliplink) | — | The room protocol — end-to-end encryption, the wire types, and the HTTP and WebSocket transports — plus the [`cliplink` CLI](packages/cliplink/CLI.md) built on it. |
 
 Packages release independently. To publish one, bump its version and changelog, merge to `main`, then push a tag like `rtc-file-transfer@v1.0.0`. The [release workflow](.github/workflows/release-rtc-file-transfer.yml) tests and builds the package, publishes it to npm with provenance through trusted publishing (so no npm token is stored in the repo), and creates the GitHub release from the changelog.
 

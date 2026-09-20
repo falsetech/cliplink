@@ -10,16 +10,24 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# The repository default is already read-only; saying so here keeps it that way
+# if that default is ever widened.
+permissions:
+  contents: read
+
 jobs:
   verify:
     name: Lint, type-check, build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      # Third-party actions are pinned to a commit, not a tag: a tag can be
+      # moved onto new code, and this repository publishes to npm. The trailing
+      # comment is the version Dependabot keeps in step with the SHA.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -27,13 +35,19 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # The package is tested and built on its own first: it is published, and
-      # the tarball must not depend on the app compiling.
+      # The packages are tested and built on their own first: they are
+      # published, and a tarball must not depend on the app compiling.
       - name: Test rtc-file-transfer
         run: pnpm -F @thebkht/rtc-file-transfer test
 
       - name: Build rtc-file-transfer
         run: pnpm -F @thebkht/rtc-file-transfer build
+
+      - name: Test cliplink
+        run: pnpm -F @thebkht/cliplink test
+
+      - name: Build cliplink
+        run: pnpm -F @thebkht/cliplink build
 
       - name: Lint
         run: pnpm lint
@@ -45,3 +59,26 @@ jobs:
       # store, which is enough to compile and prerender.
       - name: Build
         run: pnpm build
+
+  # Dependabot rewrites pnpm-lock.yaml unattended and the group covers every
+  # minor and patch. Nothing else in CI looks at what actually entered the tree,
+  # so this job reads the lockfile diff and fails on a known-vulnerable or
+  # non-permissive addition before it can be merged.
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Writing the findings as a comment on the pull request.
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          comment-summary-in-pr: on-failure
+          # Everything shipped here is MIT. A copyleft or unlicensed dependency
+          # arriving in a grouped bump is worth stopping to look at.
+          deny-licenses: AGPL-1.0-or-later, AGPL-3.0-or-later, GPL-2.0-or-later, GPL-3.0-or-later, LGPL-2.0-or-later

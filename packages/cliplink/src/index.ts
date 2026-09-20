@@ -1,0 +1,89 @@
+export {
+  decryptClipText,
+  deriveOpenRoomKey,
+  encryptClipText,
+  formatRoomKey,
+  generateRoomKey,
+  importRoomKey,
+  normalizeRoomKey,
+  openSignal,
+  sealSignal,
+  type RoomKey,
+} from "./crypto.ts";
+export {
+  createEncryptedTransport,
+  RoomKeyMismatchError,
+  UNDECRYPTABLE_TEXT,
+  type EncryptedTransport,
+} from "./encrypted-transport.ts";
+export {
+  createHttpClient,
+  // Anyone implementing TransportClient against a lazy origin needs the same
+  // one-line resolution the built-in transports use.
+  resolveBaseUrl,
+  type HttpClient,
+} from "./http.ts";
+export { encodeQr, type QrMatrix } from "./qr.ts";
+export {
+  buildRoomUrl,
+  generateRoomCode,
+  isValidRoomCode,
+  normalizeRoomCode,
+  parseRoomKeyFromHash,
+  roomKeyFragment,
+  ROOM_KEY_FRAGMENT_PARAM,
+} from "./room-code.ts";
+export {
+  CIPHERTEXT_PATTERN,
+  MAX_CLIP_CHARS,
+  MAX_CLIP_CIPHERTEXT_CHARS,
+  MAX_FILE_BYTES,
+  MAX_FILE_NAME_CHARS,
+  MAX_ROOM_TTL_SECONDS,
+  MAX_SIGNAL_BYTES,
+  MIN_ROOM_TTL_SECONDS,
+  POLL_INTERVAL_MS,
+  ROOM_CODE_LENGTH,
+  ROOM_KEY_CHARS,
+  ROOM_KEY_CHECK_CHARS,
+  ROOM_TTL_SECONDS,
+} from "./protocol.ts";
+export {
+  parseClientMessage,
+  parseSignalPayload,
+  validateClipCiphertext,
+  validateClipText,
+  validateKeyCheck,
+  validatePeerId,
+  validateRoomCode,
+  validateRoomTtl,
+  validateSenderId,
+} from "./validation.ts";
+export { createWebSocketTransport } from "./ws.ts";
+export type {
+  ApiError,
+  Clip,
+  CreateClipRequest,
+  CreateClipResponse,
+  CreateRoomRequest,
+  CreateRoomResponse,
+  FileOffer,
+  GetRoomResponse,
+  PeerId,
+  PollClipsResponse,
+  Room,
+  RoomCode,
+  RoomStatus,
+  RtcCandidate,
+  RtcDescription,
+  SealedTransport,
+  SessionClip,
+  SessionClipDirection,
+  SignalEnvelope,
+  SignalPayload,
+  StreamDisconnectReason,
+  TransportClient,
+  TransportOptions,
+  WsClientMessage,
+  WsServerMessage,
+} from "./types.ts";

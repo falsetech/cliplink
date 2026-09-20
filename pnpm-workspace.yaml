@@ -3,3 +3,11 @@ packages:
 
 allowBuilds:
   unrs-resolver: true
+
+# Refuse to install a registry version published less than three days ago.
+# Compromised releases — the npm token-stealing worms of 2025 — are almost
+# always yanked within hours, so the wait is what keeps one out of the
+# lockfile. Dependabot's `cooldown` holds its PRs for the same window, so the
+# two do not fight. Raise it, never lower it, and prefer excluding a single
+# package over turning it off.
+minimumReleaseAge: 4320

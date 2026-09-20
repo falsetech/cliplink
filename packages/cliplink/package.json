@@ -1,0 +1,68 @@
+{
+  "name": "@thebkht/cliplink",
+  "version": "0.1.1",
+  "description": "The CLIPLINK room protocol — end-to-end encrypted clips, room codes, and the HTTP and WebSocket transports — plus the `cliplink` CLI built on it.",
+  "license": "MIT",
+  "author": "Bakhtiyor Ganijon",
+  "homepage": "https://github.com/thebkht/cliplink/tree/main/packages/cliplink#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thebkht/cliplink.git",
+    "directory": "packages/cliplink"
+  },
+  "bugs": {
+    "url": "https://github.com/thebkht/cliplink/issues"
+  },
+  "keywords": [
+    "cliplink",
+    "clipboard",
+    "cli",
+    "end-to-end-encryption",
+    "aes-gcm",
+    "hkdf",
+    "webcrypto",
+    "websocket",
+    "cross-device",
+    "protocol"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "bin": {
+    "cliplink": "./dist/cli/cli.js"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "types": "./dist/index.d.ts"
+  },
+  "files": [
+    "dist",
+    "src",
+    "CLI.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "type-check": "tsc -p tsconfig.build.json --noEmit",
+    "prepublishOnly": "pnpm build && pnpm test"
+  },
+  "dependencies": {
+    "@thebkht/rtc-file-transfer": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^6.0.3"
+  }
+}

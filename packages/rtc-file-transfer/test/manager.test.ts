@@ -948,6 +948,36 @@ describe("verified blocks and resume", () => {
     bob.manager.dismiss(incoming(bob)[0].id);
     await waitFor(() => aborted);
   });
+
+  it("pauses and resumes a download through destructured methods", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice");
+    bus.addPeer("peer-bob00");
+    const source = randomBytes(3 * MB);
+    bus.net.pauseAfterBytes = MB + 1;
+
+    const [alice, bob] = [bus.peers.get("peer-alice")!, bus.peers.get("peer-bob00")!];
+    // The manager is a returned object literal, and pulling methods off it is
+    // the idiomatic way to use one. Every method has to work detached from it.
+    const { request, pause, resume } = bob.manager;
+
+    alice.manager.offerFiles([new File([source], "big.bin")]);
+    await waitFor(() => incoming(bob).length === 1);
+    assert.equal(request(incoming(bob)[0].id), true);
+
+    await waitFor(() => (incoming(bob)[0].bytes ?? 0) >= MB);
+    assert.equal(pause(incoming(bob)[0].id), true);
+    await waitFor(() => incoming(bob)[0].status === "paused");
+    // A pause is not a failure: the item keeps its bytes and carries no error.
+    assert.equal(incoming(bob)[0].error, undefined);
+    const held = incoming(bob)[0].resumableBytes ?? 0;
+    assert.ok(held >= MB, `expected the verified prefix to be kept, got ${held}`);
+
+    bus.net.setFlowing(true);
+    assert.equal(resume(incoming(bob)[0].id), true);
+    await waitFor(() => incoming(bob)[0].status === "done", 5_000);
+    assert.deepEqual(new Uint8Array(await incoming(bob)[0].blob!.arrayBuffer()), source);
+  });
 });
 
 describe("protocol v1 compatibility", () => {
@@ -983,7 +1013,7 @@ describe("protocol v1 compatibility", () => {
 describe("sanitizeFileName", () => {
   it("replaces separators and control characters", () => {
     assert.equal(sanitizeFileName("../etc/passwd"), ".._etc_passwd");
-    assert.equal(sanitizeFileName("a\\b c"), "a_b_c_");
+    assert.equal(sanitizeFileName("a\\b\u0000c"), "a_b_c_");
     assert.equal(sanitizeFileName("   "), "file");
     assert.equal(sanitizeFileName("résumé 📄.pdf"), "résumé 📄.pdf");
   });
