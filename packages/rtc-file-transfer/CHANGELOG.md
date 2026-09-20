@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1
+
+- Fixed: `resume` was implemented as `this.request(…)`, so pulling it off the manager — `const { resume } = createFileTransferManager(…)`, which is how every other method here is meant to be used — threw. No test had ever called `resume`, which is how it reached 1.0.0; there is now one that drives a pause and a resume entirely through destructured methods.
+- `ResumeProvider`, `ResumeState` and `ResumeKey` are exported. They were declared in `manager.ts` and re-exported by neither entrypoint, so the custom resume store the README describes could not be typed.
+
 ## 1.0.0
 
 1.0.0 is the commitment that what is there now stays there:

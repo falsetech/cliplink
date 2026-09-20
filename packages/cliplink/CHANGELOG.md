@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+- **Room codes now come from the CSPRNG.** `generateRoomCode` drew from `Math.random`, whose output is predictable from a handful of earlier draws. A room code is the room's only identifier, and for a room opened by its code alone it is the whole of the key material, since `deriveOpenRoomKey` takes nothing else. The format is unchanged, so this is not a wire change and existing codes still resolve.
+- `--ttl` is checked against the 3600–86400 the help text advertises before the request goes out, through the `validateRoomTtl` the server already uses. `--ttl` alongside a room named by `CLIPLINK_ROOM` now says so, rather than reporting that "this run joins one" when the command line shows no room at all.
+- `resolveBaseUrl` is exported, for anyone implementing `TransportClient` against a lazy origin.
+- The package ships its own `LICENSE`. There was none, so the tarball carried no licence text and both `README.md` and `CLI.md` linked above the package root to a file that was not there.
+
 ## 0.1.0
 
 First release. The CLIPLINK room protocol, extracted from the web app so the

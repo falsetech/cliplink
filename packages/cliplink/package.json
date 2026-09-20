@@ -1,6 +1,6 @@
 {
   "name": "@thebkht/cliplink",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The CLIPLINK room protocol — end-to-end encrypted clips, room codes, and the HTTP and WebSocket transports — plus the `cliplink` CLI built on it.",
   "license": "MIT",
   "author": "Bakhtiyor Ganijon",
