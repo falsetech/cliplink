@@ -46,6 +46,7 @@
   },
   "files": [
     "dist",
+    "src",
     "CLI.md"
   ],
   "engines": {
