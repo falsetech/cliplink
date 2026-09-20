@@ -95,7 +95,7 @@ Two things here are worth reading even if you never run CLIPLINK:
 
 **One implementation of the encryption.** The crypto, wire types and transports live in [`@thebkht/cliplink`](packages/cliplink), consumed by the app through thin re-exports in `lib/cliplink/`. A second implementation is the expensive part of every non-browser surface and the one most likely to drift, so there is exactly one — and its tests pin ciphertexts from earlier builds, since tabs opened before a deploy keep talking to ones opened after it.
 
-**Server-free file transfer.** [`@thebkht/rtc-file-transfer`](packages/rtc-file-transfer) implements offer/accept, chunking with backpressure in both directions, stall detection, block-level integrity checks and a whole-file digest, pause, resume — across a dropped connection or a reload — streaming to disk, and withdrawal over raw WebRTC data channels, with no TURN-dependent SaaS in the middle. It is 1.0.0: the API follows semver and wire protocol v1 is permanent, so any two versions interoperate. It lives in this repo as a workspace package, is [published to npm](https://www.npmjs.com/package/@thebkht/rtc-file-transfer) with provenance, and works with any signaling channel — with adapters ready for WebSocket, `BroadcastChannel`, Supabase Realtime, Trystero, PeerJS and simple-peer:
+**Server-free file transfer.** [`@thebkht/rtc-file-transfer`](packages/rtc-file-transfer) implements offer/accept, chunking with backpressure in both directions, stall detection, block-level integrity checks and a whole-file digest, pause, resume — across a dropped connection or a reload — streaming to disk, and withdrawal over raw WebRTC data channels, with no TURN-dependent SaaS in the middle. It is stable at 1.x: the API follows semver and wire protocol v1 is permanent, so any two versions interoperate. It lives in this repo as a workspace package, is [published to npm](https://www.npmjs.com/package/@thebkht/rtc-file-transfer) with provenance, and works with any signaling channel — with adapters ready for WebSocket, `BroadcastChannel`, Supabase Realtime, Trystero, PeerJS and simple-peer:
 
 ```bash
 npm install @thebkht/rtc-file-transfer
@@ -116,7 +116,7 @@ pnpm dev
 
 Open <http://localhost:3000>.
 
-Requires Node.js >= 20.9 and [pnpm](https://pnpm.io). The fallback is single-process only — state is lost on restart and is not shared across instances, so for the full experience (cross-instance fan-out, atomic rate limiting) provision Redis as below.
+The app needs Node.js >= 20.9 and [pnpm](https://pnpm.io); the workspace packages need Node 22 — their test suites run TypeScript directly through `node --test`, which is what [`.nvmrc`](.nvmrc) pins and what CI uses. The fallback is single-process only — state is lost on restart and is not shared across instances, so for the full experience (cross-instance fan-out, atomic rate limiting) provision Redis as below.
 
 ## Environment variables
 
@@ -147,13 +147,13 @@ It is a stock Next.js App Router build, so anywhere that runs Next.js 16 with We
 | Package | Version | Description |
 | --- | --- | --- |
 | [`@thebkht/rtc-file-transfer`](packages/rtc-file-transfer) | [![npm](https://img.shields.io/npm/v/@thebkht/rtc-file-transfer.svg)](https://www.npmjs.com/package/@thebkht/rtc-file-transfer) | Peer-to-peer file transfer over WebRTC data channels, with backpressure, integrity checks, pause and resume (including across a reload), streaming to disk, and offer/revoke. Zero dependencies. Bring your own signaling. |
-| [`@thebkht/cliplink`](packages/cliplink) | — | The room protocol — end-to-end encryption, the wire types, and the HTTP and WebSocket transports — plus the [`cliplink` CLI](packages/cliplink/CLI.md) built on it. |
+| [`@thebkht/cliplink`](packages/cliplink) | [![npm](https://img.shields.io/npm/v/@thebkht/cliplink.svg)](https://www.npmjs.com/package/@thebkht/cliplink) | The room protocol — end-to-end encryption, the wire types, and the HTTP and WebSocket transports — plus the [`cliplink` CLI](packages/cliplink/CLI.md) built on it. |
 
 Packages release independently. To publish one, bump its version and changelog, merge to `main`, then push a tag like `rtc-file-transfer@v1.0.0`. The [release workflow](.github/workflows/release-rtc-file-transfer.yml) tests and builds the package, publishes it to npm with provenance through trusted publishing (so no npm token is stored in the repo), and creates the GitHub release from the changelog.
 
 ## Roadmap
 
-- **Test coverage** — the file-transfer package is tested; the app, starting with the transport state machine, is not yet
+- **Test coverage** — both packages are tested; the app itself, starting with the room UI's retry and fallback state machine, is not yet
 - **WebRTC reliability** across restrictive NATs
 
 Have an idea? [Open an issue](https://github.com/thebkht/cliplink/issues/new/choose).
