@@ -154,9 +154,39 @@ const memoryAdapter: StorageAdapter = {
   },
 };
 
-function parseClipMember(member: string): Clip | null {
+function isClip(value: unknown): value is Clip {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const clip = value as Partial<Clip>;
+  return (
+    typeof clip.id === "number" &&
+    typeof clip.text === "string" &&
+    typeof clip.senderId === "string" &&
+    typeof clip.ts === "number"
+  );
+}
+
+/**
+ * Members are stored as JSON strings, but `@upstash/redis` deserializes
+ * responses by default — so a member that parses as JSON comes back already
+ * an object, and `JSON.parse` on it would throw and drop the clip. Both shapes
+ * are accepted rather than the client's deserialization being switched off,
+ * because that setting is global to the client and this is the only caller
+ * that stores JSON.
+ */
+function parseClipMember(member: unknown): Clip | null {
+  if (isClip(member)) {
+    return member;
+  }
+
+  if (typeof member !== "string") {
+    return null;
+  }
+
   try {
-    return JSON.parse(member) as Clip;
+    const parsed: unknown = JSON.parse(member);
+    return isClip(parsed) ? parsed : null;
   } catch {
     return null;
   }
@@ -207,7 +237,7 @@ function createRedisAdapter(): StorageAdapter {
         return null;
       }
 
-      const members = await redis.zrange<string[]>(clipsKey(code), 0, -1);
+      const members = await redis.zrange<unknown[]>(clipsKey(code), 0, -1);
       const clips = members
         .map(parseClipMember)
         .filter((clip): clip is Clip => clip !== null)
@@ -255,7 +285,7 @@ function createRedisAdapter(): StorageAdapter {
         return null;
       }
 
-      const members = await redis.zrange<string[]>(clipsKey(code), `(${afterId}`, "+inf", {
+      const members = await redis.zrange<unknown[]>(clipsKey(code), `(${afterId}`, "+inf", {
         byScore: true,
       });
       return members
