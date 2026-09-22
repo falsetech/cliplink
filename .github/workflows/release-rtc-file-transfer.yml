@@ -8,15 +8,20 @@ on:
     tags:
       - "rtc-file-transfer@v*"
 
+# Read-only for the workflow as a whole. The writes below belong to the one
+# job that needs them, so a job added to this file later cannot inherit the
+# token that publishes to npm without saying so itself.
 permissions:
-  # Creating the GitHub release.
-  contents: write
-  # npm trusted publishing and provenance: no long-lived NPM_TOKEN.
-  id-token: write
+  contents: read
 
 jobs:
   publish:
     name: Publish to npm
+    permissions:
+      # Creating the GitHub release.
+      contents: write
+      # npm trusted publishing and provenance: no long-lived NPM_TOKEN.
+      id-token: write
     # A protected environment with a required reviewer. Pushing the tag no
     # longer publishes on its own — the run waits here until a human
     # approves it, so a stolen credential that can push a tag still cannot
