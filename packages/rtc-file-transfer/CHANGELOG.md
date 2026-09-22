@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.0
+
+- **Progress on files you are sending.** `FileItem.bytes` has always been the receiver's count, so a sender could see that a file was being pulled and by how many devices, but not how far along any of them was — there was no way to draw an upload bar. Outgoing items now carry `outgoingTransfers`, one entry per device pulling the file, with `bytes`, `bytesPerSecond` and `etaMs`. A single number would have to pick one receiver and be wrong about the rest. Each entry's `committed` says what its count means: with the `flow` capability it is what the receiver has written, and without it what the sender has handed to the channel, which can run ahead. A device joins the list when its transfer opens, before any byte moves, and leaves when it ends.
+- `getItems()` and `getItem(id)` read the current state back, for a caller that would otherwise mirror every `onItemsChange`. Both return copies.
+- `iceServers` also takes a function, called for each peer connection. TURN credentials are usually short-lived, and an array is read once at construction — a transfer started an hour later dialled with credentials that had expired. Synchronous, because `request` returns a boolean and awaiting would make it async.
+- `FileTransferManager` is a declared type rather than `ReturnType<typeof createFileTransferManager>`. The published surface no longer widens as a side effect of adding a property, the doc comments survive into the type, and it can be implemented or stubbed.
+- Fixed: `offerFiles` told an `{ file, path }` entry from a bare file with `instanceof File`, so a `File` from another realm — an iframe, a worker, a polyfill, Node's own — was destructured as an entry and its bytes went missing. The check is structural now.
+- New export: `OutgoingTransfer`.
+
+Everything here is additive. No wire messages change, and a 1.0.x peer interoperates in both directions exactly as before.
+
 ## 1.0.1
 
 - Fixed: `resume` was implemented as `this.request(…)`, so pulling it off the manager — `const { resume } = createFileTransferManager(…)`, which is how every other method here is meant to be used — threw. No test had ever called `resume`, which is how it reached 1.0.0; there is now one that drives a pause and a resume entirely through destructured methods.

@@ -217,7 +217,10 @@ export class FakePeerConnection extends EventTarget {
 
 type PeerOptions = Partial<
   Pick<FileTransferOptions, "limits" | "createId" | "iceServers" | "capabilities" | "resume">
->;
+> & {
+  /** Called with the config of every peer connection this peer opens. */
+  onPeerConfig?: (config: RTCConfiguration) => void;
+};
 
 export type TestPeer = {
   id: PeerId;
@@ -239,7 +242,7 @@ export class FakeSignaling {
   transform: (payload: FileSignal) => FileSignal = (payload) => payload;
   private owners = new Map<FakePeerConnection, PeerId>();
 
-  addPeer(id: PeerId, options: PeerOptions = {}): TestPeer {
+  addPeer(id: PeerId, { onPeerConfig, ...options }: PeerOptions = {}): TestPeer {
     const peer: TestPeer = {
       id,
       items: [],
@@ -257,7 +260,8 @@ export class FakeSignaling {
       onNotice: (notice) => {
         peer.notices.push(notice);
       },
-      createPeerConnection: () => {
+      createPeerConnection: (config) => {
+        onPeerConfig?.(config);
         const pc = new FakePeerConnection(this.net);
         this.owners.set(pc, id);
         return pc as unknown as RTCPeerConnection;
