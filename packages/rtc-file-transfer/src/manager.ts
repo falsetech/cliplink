@@ -228,7 +228,18 @@ export type FileTransferOptions = {
   sendSignal: (payload: FileSignal, to?: PeerId) => boolean;
   onItemsChange: (items: FileItem[]) => void;
   onNotice?: (notice: TransferNotice) => void;
-  iceServers?: RTCIceServer[];
+  /**
+   * ICE servers, or a function returning them. TURN credentials are usually
+   * short-lived, and a fixed array is read once when the manager is created —
+   * so a transfer started an hour later would dial TURN with credentials that
+   * expired. A function is called for each peer connection instead, letting
+   * the application hand over whatever is current.
+   *
+   * Synchronous on purpose: `request` returns a boolean, so there is nothing
+   * to await here without making it async, which would be a breaking change.
+   * Refresh credentials on your own schedule and return the latest.
+   */
+  iceServers?: RTCIceServer[] | (() => RTCIceServer[]);
   limits?: Partial<TransferLimits>;
   createId?: () => string;
   /** Override for environments without a global `RTCPeerConnection`. */
@@ -875,7 +886,11 @@ export function createFileTransferManager(
   }
 
   function createPeerConnection(transfer: Omit<Transfer, "pc">): RTCPeerConnection {
-    const pc = newPeerConnection({ iceServers });
+    // Resolved per connection, so a function can return credentials that were
+    // refreshed since the manager was created.
+    const pc = newPeerConnection({
+      iceServers: typeof iceServers === "function" ? iceServers() : iceServers,
+    });
 
     pc.addEventListener("icecandidate", (event) => {
       if (!event.candidate) {

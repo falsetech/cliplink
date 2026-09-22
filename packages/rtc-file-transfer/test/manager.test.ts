@@ -949,6 +949,38 @@ describe("verified blocks and resume", () => {
     await waitFor(() => aborted);
   });
 
+  it("asks for ICE servers per connection, so TURN credentials can be refreshed", async () => {
+    const seen: RTCConfiguration[] = [];
+    let generation = 0;
+
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice");
+    bus.addPeer("peer-bob00", {
+      // A TURN credential that changes between transfers, as a short-lived
+      // one does. A fixed array would be read once and go stale.
+      iceServers: () => [{ urls: "turn:example.test", username: `user-${++generation}` }],
+      onPeerConfig: (config) => seen.push(config),
+    });
+
+    const [alice, bob] = [bus.peers.get("peer-alice")!, bus.peers.get("peer-bob00")!];
+    assert.equal(seen.length, 0, "nothing is dialed before a transfer starts");
+
+    for (const name of ["one.bin", "two.bin"]) {
+      alice.manager.offerFiles([new File([randomBytes(512)], name)]);
+    }
+    await waitFor(() => incoming(bob).length === 2);
+    for (const item of incoming(bob)) {
+      bob.manager.request(item.id);
+    }
+    await waitFor(() => seen.length === 2, 5_000);
+
+    assert.deepEqual(
+      seen.map((config) => (config.iceServers as RTCIceServer[])[0].username),
+      ["user-1", "user-2"],
+      "each connection should get the credentials current at the time",
+    );
+  });
+
   it("offers a File from another realm, which fails instanceof", async () => {
     bus = new FakeSignaling();
     bus.addPeer("peer-alice");
