@@ -949,6 +949,197 @@ describe("verified blocks and resume", () => {
     await waitFor(() => aborted);
   });
 
+  it("asks for ICE servers per connection, so TURN credentials can be refreshed", async () => {
+    const seen: RTCConfiguration[] = [];
+    let generation = 0;
+
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice");
+    bus.addPeer("peer-bob00", {
+      // A TURN credential that changes between transfers, as a short-lived
+      // one does. A fixed array would be read once and go stale.
+      iceServers: () => [{ urls: "turn:example.test", username: `user-${++generation}` }],
+      onPeerConfig: (config) => seen.push(config),
+    });
+
+    const [alice, bob] = [bus.peers.get("peer-alice")!, bus.peers.get("peer-bob00")!];
+    assert.equal(seen.length, 0, "nothing is dialed before a transfer starts");
+
+    for (const name of ["one.bin", "two.bin"]) {
+      alice.manager.offerFiles([new File([randomBytes(512)], name)]);
+    }
+    await waitFor(() => incoming(bob).length === 2);
+    for (const item of incoming(bob)) {
+      bob.manager.request(item.id);
+    }
+    await waitFor(() => seen.length === 2, 5_000);
+
+    assert.deepEqual(
+      seen.map((config) => (config.iceServers as RTCIceServer[])[0].username),
+      ["user-1", "user-2"],
+      "each connection should get the credentials current at the time",
+    );
+  });
+
+  it("offers a File from another realm, which fails instanceof", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice");
+    bus.addPeer("peer-bob00");
+    const [alice, bob] = [bus.peers.get("peer-alice")!, bus.peers.get("peer-bob00")!];
+    const source = randomBytes(2048);
+
+    // A File-like object: what a polyfill, an iframe, or a worker hands over.
+    // `instanceof File` is false for it, but it is still a file to offer.
+    const real = new File([source], "foreign.bin", { type: "application/octet-stream" });
+    const foreign = {
+      name: real.name,
+      size: real.size,
+      type: real.type,
+      lastModified: real.lastModified,
+      slice: real.slice.bind(real),
+      arrayBuffer: real.arrayBuffer.bind(real),
+      stream: real.stream.bind(real),
+    } as unknown as File;
+    assert.equal(foreign instanceof File, false, "the premise of this test");
+
+    const { offered, rejected } = alice.manager.offerFiles([foreign]);
+    assert.equal(rejected.length, 0);
+    assert.equal(offered, 1);
+
+    await waitFor(() => incoming(bob).length === 1);
+    assert.equal(incoming(bob)[0].name, "foreign.bin");
+    assert.equal(bob.manager.request(incoming(bob)[0].id), true);
+    await waitFor(() => incoming(bob)[0].status === "done", 5_000);
+    assert.deepEqual(new Uint8Array(await incoming(bob)[0].blob!.arrayBuffer()), source);
+  });
+
+  it("reads current items back without waiting for the next change", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice");
+    bus.addPeer("peer-bob00");
+    const [alice, bob] = [bus.peers.get("peer-alice")!, bus.peers.get("peer-bob00")!];
+
+    assert.deepEqual(alice.manager.getItems(), []);
+    alice.manager.offerFiles([new File([randomBytes(1024)], "read.bin")]);
+
+    const items = alice.manager.getItems();
+    assert.equal(items.length, 1);
+    assert.equal(items[0].name, "read.bin");
+    assert.deepEqual(alice.manager.getItem(items[0].id), items[0]);
+    assert.equal(alice.manager.getItem("nope"), undefined);
+
+    // Copies, so a consumer cannot reach in and change the manager's state.
+    items[0].name = "mutated.bin";
+    assert.equal(alice.manager.getItem(items[0].id)!.name, "read.bin");
+
+    await waitFor(() => incoming(bob).length === 1);
+    assert.equal(bob.manager.getItems()[0].direction, "incoming");
+  });
+
+  it("reports per-device progress on an outgoing file, and clears it when done", async () => {
+    // A window well under the file size, so a blocked receiver forces the
+    // sender to stop with far more sent than credited — which is what makes
+    // the two numbers tell each other apart.
+    const limits = { windowBytes: 2 * MB };
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice", { limits });
+    bus.addPeer("peer-bob00", { limits });
+    const source = randomBytes(6 * MB);
+
+    // Hold the receiver's disk rather than the network: credits travel over
+    // the same link, so pausing the link would freeze the very messages that
+    // move `bytes` in flow mode.
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let written = 0;
+
+    const [alice, bob] = [bus.peers.get("peer-alice")!, bus.peers.get("peer-bob00")!];
+    alice.manager.offerFiles([new File([source], "big.bin")]);
+    await waitFor(() => incoming(bob).length === 1);
+    bob.manager.request(incoming(bob)[0].id, {
+      sink: {
+        async write(chunk: Uint8Array<ArrayBuffer>) {
+          // The first block commits and is credited; the disk is busy after.
+          if (written > 0) {
+            await held;
+          }
+          written += chunk.byteLength;
+        },
+        async close() {
+          return undefined;
+        },
+        abort() {},
+      },
+    });
+
+    await waitFor(() => (outgoing(alice).outgoingTransfers?.[0]?.bytes ?? 0) > 0, 5_000);
+    const sending = outgoing(alice).outgoingTransfers![0];
+    assert.equal(sending.peerId, "peer-bob00");
+    // Both peers negotiated flow, so the number is what the receiver committed
+    // rather than what the sender handed to the channel.
+    assert.equal(sending.committed, true);
+    // The point of crediting: the sender reports what the receiver has
+    // committed, not what it pushed into the channel. The sink is blocked
+    // after the first block, so exactly one block is credited while the
+    // sender has run a whole window further ahead.
+    assert.equal(sending.bytes, BLOCK_BYTES, "should report the one committed block");
+    assert.ok(sending.bytes < source.byteLength, "the sender is not finished");
+
+    release();
+    await waitFor(() => outgoing(alice).completedTransfers === 1, 5_000);
+    // Nobody is pulling any more, so there is nothing to report.
+    assert.deepEqual(outgoing(alice).outgoingTransfers, []);
+  });
+
+  it("falls back to sent bytes for an outgoing transfer without flow", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice");
+    // A receiver with no capabilities credits nothing, so the sender can only
+    // report what it has handed to the channel.
+    bus.addPeer("peer-bob00", { capabilities: [] });
+    bus.net.pauseAfterBytes = MB + 1;
+
+    const [alice, bob] = [bus.peers.get("peer-alice")!, bus.peers.get("peer-bob00")!];
+    alice.manager.offerFiles([new File([randomBytes(3 * MB)], "a.bin")]);
+    await waitFor(() => incoming(bob).length === 1);
+    bob.manager.request(incoming(bob)[0].id);
+
+    await waitFor(() => (outgoing(alice).outgoingTransfers?.[0]?.bytes ?? 0) > 0);
+    assert.equal(outgoing(alice).outgoingTransfers![0].committed, false);
+
+    bus.net.setFlowing(true);
+    await waitFor(() => incoming(bob)[0].status === "done", 5_000);
+  });
+
+  it("tracks two devices pulling one file independently", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice");
+    bus.addPeer("peer-bob00");
+    bus.addPeer("peer-carol");
+    // Nothing needs to move: a device that has asked for the file counts as
+    // pulling it from the moment the transfer opens.
+    bus.net.setFlowing(false);
+
+    const [alice, bob, carol] = [
+      bus.peers.get("peer-alice")!,
+      bus.peers.get("peer-bob00")!,
+      bus.peers.get("peer-carol")!,
+    ];
+    alice.manager.offerFiles([new File([randomBytes(2 * MB)], "shared.bin")]);
+    await waitFor(() => incoming(bob).length === 1 && incoming(carol).length === 1);
+    bob.manager.request(incoming(bob)[0].id);
+    carol.manager.request(incoming(carol)[0].id);
+
+    await waitFor(() => (outgoing(alice).outgoingTransfers?.length ?? 0) === 2);
+    const peers = outgoing(alice)
+      .outgoingTransfers!.map((entry) => entry.peerId)
+      .sort();
+    assert.deepEqual(peers, ["peer-bob00", "peer-carol"]);
+    assert.equal(outgoing(alice).activeTransfers, 2);
+  });
+
   it("pauses and resumes a download through destructured methods", async () => {
     bus = new FakeSignaling();
     bus.addPeer("peer-alice");

@@ -9,6 +9,7 @@ export {
   type OfferEntry,
   type OfferOptions,
   type OfferRejection,
+  type OutgoingTransfer,
   type RequestOptions,
   // The README tells consumers to write their own store; without these three
   // they could not type one.

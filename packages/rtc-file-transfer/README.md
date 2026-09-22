@@ -144,14 +144,16 @@ Anything else still works the way the example above does — an adapter is a con
 | `sendSignal(payload, to?)` | Deliver a signal. Return `false` if it can't be sent. |
 | `onItemsChange(items)` | Called with a fresh snapshot whenever state changes. Progress updates are coalesced to every 100 ms. |
 | `onNotice(notice)` | `incoming-offer`, `received`, or `failed` with a `code`. |
-| `iceServers` | Defaults to public Google and Cloudflare STUN servers. Add a TURN server for restrictive networks. |
+| `iceServers` | Defaults to public Google and Cloudflare STUN servers. Add a TURN server for restrictive networks. Pass a function instead of an array and it is called for each connection, so short-lived TURN credentials can be refreshed — see [ICE servers](#ice-servers). |
 | `limits` | Any of `maxFileBytes` (64 GiB), `maxMemoryBytes` (500 MB), `chunkBytes` (64 KB), `bufferHighBytes` (4 MB), `bufferLowBytes` (1 MB), `windowBytes` (16 MB), `stallMs` (20 s), `maxItems` (20). |
 | `createId` | Id generator for offers and transfers. |
 | `capabilities` | Protocol features to advertise: `blocks`, `resume` and `flow`. Defaults to all of them where `crypto.subtle` exists. Pass `[]` to behave exactly like a v1 peer. |
 | `createPeerConnection` | For environments without a global `RTCPeerConnection`, such as Node with a WebRTC polyfill. |
 | `resume` | A `ResumeProvider` that keeps partial downloads across page loads. `opfsResume()` from `/sinks` is one. |
 
-The manager returns `handleSignal`, `announce`, `offerFiles`, `request`, `pause`, `resume`, `cancel`, `revoke`, `dismiss` and `dispose`.
+The manager returns `handleSignal`, `announce`, `offerFiles`, `request`, `pause`, `resume`, `cancel`, `revoke`, `dismiss`, `getItems`, `getItem` and `dispose`.
+
+`getItems()` returns the same snapshot `onItemsChange` receives, newest first, and `getItem(id)` returns one of them. Both hand back copies, so reading cannot disturb the manager. They are there for a caller that needs to ask rather than keep its own mirror of every change.
 
 `offerFiles(entries, { batch?, digest? })` takes `File`s or `{ file, path }` entries, where `path` is the folder a file sits in (`photos/2024`). With `batch: true`, every file in the call shares one `batchId`, so a receiver can show them as a group.
 
@@ -160,6 +162,33 @@ With `digest: true`, each file is hashed in the background and the offer is re-a
 `offerFiles` returns `{ offered, rejected }`. Each rejection is `{ file, code: "empty" | "too-large", limit }`.
 
 While an incoming item is `transferring`, it also carries `bytesPerSecond` (a smoothed rate) and `etaMs`. Both are cleared when the transfer ends.
+
+### Progress on a file you are sending
+
+`item.bytes` is the receiver's count, so it is meaningless on an outgoing item: one offer can be pulled by several devices at once, each at its own pace. Outgoing items carry `outgoingTransfers` instead — one entry per device currently pulling the file:
+
+```ts
+for (const to of item.outgoingTransfers ?? []) {
+  console.log(to.peerId, to.bytes, to.bytesPerSecond, to.etaMs);
+}
+```
+
+A device appears as soon as its transfer opens, before any byte moves, and disappears when the transfer finishes or fails. `activeTransfers` and `completedTransfers` still count devices.
+
+`to.committed` says what `bytes` means. With the `flow` capability the receiver credits what it has written, so `bytes` is what it actually holds. Without it, the only thing the sender knows is what it handed to the data channel, which may still be buffered locally — so the number can run ahead of the far end.
+
+### ICE servers
+
+`iceServers` also takes a function, called once for each peer connection:
+
+```ts
+createFileTransferManager({
+  iceServers: () => [{ urls: "turn:turn.example.com", ...currentCredentials() }],
+  // …
+});
+```
+
+TURN credentials are usually short-lived, and an array is read once when the manager is created — so a transfer started an hour later would dial with credentials that have expired. The function is synchronous on purpose: `request` returns a boolean, and awaiting here would make it async. Refresh on your own schedule and return the latest.
 
 ### Where received bytes go
 
