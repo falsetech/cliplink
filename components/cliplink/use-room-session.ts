@@ -136,7 +136,11 @@ export function useRoomSession({
     const polling = pollingRef;
     const stream = streamCleanupRef;
 
+    const handlePageHide = () => transport.disconnect();
+    window.addEventListener("pagehide", handlePageHide);
+
     return () => {
+      window.removeEventListener("pagehide", handlePageHide);
       if (polling.current) {
         window.clearInterval(polling.current);
         polling.current = null;
