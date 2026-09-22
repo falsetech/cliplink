@@ -949,6 +949,38 @@ describe("verified blocks and resume", () => {
     await waitFor(() => aborted);
   });
 
+  it("offers a File from another realm, which fails instanceof", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice");
+    bus.addPeer("peer-bob00");
+    const [alice, bob] = [bus.peers.get("peer-alice")!, bus.peers.get("peer-bob00")!];
+    const source = randomBytes(2048);
+
+    // A File-like object: what a polyfill, an iframe, or a worker hands over.
+    // `instanceof File` is false for it, but it is still a file to offer.
+    const real = new File([source], "foreign.bin", { type: "application/octet-stream" });
+    const foreign = {
+      name: real.name,
+      size: real.size,
+      type: real.type,
+      lastModified: real.lastModified,
+      slice: real.slice.bind(real),
+      arrayBuffer: real.arrayBuffer.bind(real),
+      stream: real.stream.bind(real),
+    } as unknown as File;
+    assert.equal(foreign instanceof File, false, "the premise of this test");
+
+    const { offered, rejected } = alice.manager.offerFiles([foreign]);
+    assert.equal(rejected.length, 0);
+    assert.equal(offered, 1);
+
+    await waitFor(() => incoming(bob).length === 1);
+    assert.equal(incoming(bob)[0].name, "foreign.bin");
+    assert.equal(bob.manager.request(incoming(bob)[0].id), true);
+    await waitFor(() => incoming(bob)[0].status === "done", 5_000);
+    assert.deepEqual(new Uint8Array(await incoming(bob)[0].blob!.arrayBuffer()), source);
+  });
+
   it("reads current items back without waiting for the next change", async () => {
     bus = new FakeSignaling();
     bus.addPeer("peer-alice");

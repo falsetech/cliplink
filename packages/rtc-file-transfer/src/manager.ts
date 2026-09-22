@@ -1842,7 +1842,12 @@ export function createFileTransferManager(
       const batchId = options.batch ? createId() : undefined;
 
       for (const entry of entries) {
-        const { file, path } = entry instanceof File ? { file: entry, path: undefined } : entry;
+        // Structural, not `entry instanceof File`: a File from another realm
+        // — an iframe, a worker, a polyfill, Node's own — is still a file,
+        // and an OfferEntry is told apart by carrying one rather than being
+        // one. The library types its transports structurally for the same
+        // reason.
+        const { file, path } = "file" in entry ? entry : { file: entry, path: undefined };
         if (file.size === 0) {
           rejected.push({ file, code: "empty", limit: 0 });
           continue;
