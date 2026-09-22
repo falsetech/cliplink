@@ -447,7 +447,46 @@ function parseBlockMessage(raw: string) {
   return null;
 }
 
-export type FileTransferManager = ReturnType<typeof createFileTransferManager>;
+/**
+ * What `createFileTransferManager` returns.
+ *
+ * Declared rather than inferred from the implementation, so that this is the
+ * public surface: it can be implemented or stubbed, it carries its own
+ * documentation, and widening it is a deliberate edit here rather than a
+ * side effect of adding a property to an object literal.
+ */
+export type FileTransferManager = {
+  /** Feed in a signal from another peer, as delivered by your signaling channel. */
+  handleSignal(from: PeerId, payload: FileSignal): void;
+  /** Call once signaling is ready: asks peers for their offers and re-announces ours. */
+  announce(): void;
+  /** Announce files to every peer. */
+  offerFiles(
+    entries: Array<File | OfferEntry>,
+    options?: OfferOptions,
+  ): { offered: number; rejected: OfferRejection[] };
+  /** Stop sharing an outgoing file, cutting off any download in flight. */
+  revoke(id: string): void;
+  /** Ask the sender for an incoming file. False if it can't be downloaded. */
+  request(id: string, options?: RequestOptions): boolean;
+  /** Pause an incoming download, keeping every verified block. */
+  pause(id: string): boolean;
+  /** Continue a paused or failed download. The same as calling `request` again. */
+  resume(id: string, options?: RequestOptions): boolean;
+  /** Abort an in-progress incoming download. */
+  cancel(id: string): void;
+  /** Remove a finished, failed, or revoked incoming item from the list. */
+  dismiss(id: string): void;
+  /**
+   * Every item, newest first — the same snapshot `onItemsChange` receives, for
+   * a caller that needs to read the current state rather than mirror it.
+   */
+  getItems(): FileItem[];
+  /** One item by id, or undefined. A copy, like `getItems`. */
+  getItem(id: string): FileItem | undefined;
+  /** Tear everything down: close transfers, abort sinks, stop emitting. */
+  dispose(): void;
+};
 
 function createMemorySink(mime: string): FileSink {
   let parts: Uint8Array<ArrayBuffer>[] = [];
@@ -487,7 +526,9 @@ function itemKey(peerId: PeerId, offerId: string) {
  * RTCPeerConnection; bytes flow peer-to-peer and never pass through the
  * signaling server.
  */
-export function createFileTransferManager(options: FileTransferOptions) {
+export function createFileTransferManager(
+  options: FileTransferOptions,
+): FileTransferManager {
   const { peerId: selfId, sendSignal, onItemsChange } = options;
   const onNotice = options.onNotice ?? (() => {});
   const iceServers = options.iceServers ?? DEFAULT_ICE_SERVERS;
@@ -526,10 +567,14 @@ export function createFileTransferManager(options: FileTransferOptions) {
     if (disposed) {
       return;
     }
-    const snapshot = [...items.values()]
+    onItemsChange(snapshot());
+  }
+
+  /** Newest first, each item copied so a consumer cannot mutate our state. */
+  function snapshot() {
+    return [...items.values()]
       .sort((left, right) => right.ts - left.ts)
       .map((item) => ({ ...item }));
-    onItemsChange(snapshot);
   }
 
   /** Coalesces high-frequency progress updates. */
@@ -1919,6 +1964,13 @@ export function createFileTransferManager(options: FileTransferOptions) {
         releaseDownload(id);
         emit();
       }
+    },
+
+    getItems: snapshot,
+
+    getItem(id: string) {
+      const item = items.get(id);
+      return item ? { ...item } : undefined;
     },
 
     dispose() {

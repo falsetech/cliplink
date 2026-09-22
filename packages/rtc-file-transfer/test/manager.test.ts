@@ -949,6 +949,29 @@ describe("verified blocks and resume", () => {
     await waitFor(() => aborted);
   });
 
+  it("reads current items back without waiting for the next change", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice");
+    bus.addPeer("peer-bob00");
+    const [alice, bob] = [bus.peers.get("peer-alice")!, bus.peers.get("peer-bob00")!];
+
+    assert.deepEqual(alice.manager.getItems(), []);
+    alice.manager.offerFiles([new File([randomBytes(1024)], "read.bin")]);
+
+    const items = alice.manager.getItems();
+    assert.equal(items.length, 1);
+    assert.equal(items[0].name, "read.bin");
+    assert.deepEqual(alice.manager.getItem(items[0].id), items[0]);
+    assert.equal(alice.manager.getItem("nope"), undefined);
+
+    // Copies, so a consumer cannot reach in and change the manager's state.
+    items[0].name = "mutated.bin";
+    assert.equal(alice.manager.getItem(items[0].id)!.name, "read.bin");
+
+    await waitFor(() => incoming(bob).length === 1);
+    assert.equal(bob.manager.getItems()[0].direction, "incoming");
+  });
+
   it("reports per-device progress on an outgoing file, and clears it when done", async () => {
     // A window well under the file size, so a blocked receiver forces the
     // sender to stop with far more sent than credited — which is what makes
