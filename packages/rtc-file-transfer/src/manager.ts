@@ -58,6 +58,29 @@ export type FailureCode =
   /** The other peer canceled; `message` is the reason it sent. */
   | "remote-canceled";
 
+/**
+ * One device's progress pulling an outgoing file. An offer can be pulled by
+ * several receivers at once, each at its own pace, so a single number on the
+ * item would have to pick one of them and be wrong about the rest.
+ */
+export type OutgoingTransfer = {
+  /** The device pulling the file. */
+  peerId: PeerId;
+  /**
+   * Bytes this receiver has taken. Where both peers negotiated `flow` this is
+   * what the receiver has committed, which is what it actually has; otherwise
+   * it is what the sender has handed to the data channel, which may still be
+   * buffered locally.
+   */
+  bytes: number;
+  /** Whether `bytes` is the receiver's committed count or the sender's sent count. */
+  committed: boolean;
+  /** Smoothed send rate, while transferring. */
+  bytesPerSecond?: number;
+  /** Estimated time left at `bytesPerSecond`, while transferring. */
+  etaMs?: number;
+};
+
 export type FileItem = FileOffer & {
   /** Unique per sender: `${peerId}:${offerId}`. */
   id: string;
@@ -94,6 +117,12 @@ export type FileItem = FileOffer & {
   /** Devices currently pulling / that finished pulling this file (outgoing only). */
   activeTransfers: number;
   completedTransfers: number;
+  /**
+   * Per-device progress for an outgoing file, one entry per device currently
+   * pulling it, newest transfer last. Empty while nobody is pulling, and
+   * absent on incoming items — those report their own progress in `bytes`.
+   */
+  outgoingTransfers?: OutgoingTransfer[];
 };
 
 /**
@@ -619,6 +648,71 @@ export function createFileTransferManager(options: FileTransferOptions) {
         : undefined;
   }
 
+  /**
+   * What a send transfer has actually delivered. With `flow` the receiver
+   * credits what it has committed, which is the honest number; without it the
+   * best the sender knows is what it handed to the channel.
+   */
+  function deliveredBytes(transfer: Transfer) {
+    return transfer.flow ? transfer.creditedBytes : transfer.sentBytes;
+  }
+
+  /**
+   * The send-side counterpart of `sampleRate`, kept separate because it reads
+   * a different counter and writes onto the transfer rather than the item: an
+   * item can have several send transfers, each with its own rate.
+   */
+  function sampleSendRate(transfer: Transfer) {
+    const now = Date.now();
+    const delivered = deliveredBytes(transfer);
+    if (transfer.rateAt === 0) {
+      transfer.rateAt = now;
+      transfer.rateBytes = delivered;
+      return;
+    }
+    const elapsed = now - transfer.rateAt;
+    if (elapsed < RATE_SAMPLE_MS) {
+      return;
+    }
+    const instant = ((delivered - transfer.rateBytes) * 1000) / elapsed;
+    transfer.rate =
+      transfer.rate === 0
+        ? instant
+        : RATE_SMOOTHING * instant + (1 - RATE_SMOOTHING) * transfer.rate;
+    transfer.rateAt = now;
+    transfer.rateBytes = delivered;
+  }
+
+  /**
+   * Rebuilds an outgoing item's per-device progress from the transfers still
+   * running for it. Called wherever a counter moves; the emit it schedules is
+   * already coalesced, so this runs far more often than the UI sees it.
+   */
+  function refreshOutgoing(itemId: string) {
+    const item = items.get(itemId);
+    if (!item || item.direction !== "outgoing") {
+      return;
+    }
+    const progress: OutgoingTransfer[] = [];
+    for (const transfer of transfers.values()) {
+      if (transfer.itemId !== itemId || transfer.role !== "send" || transfer.closed) {
+        continue;
+      }
+      sampleSendRate(transfer);
+      const bytes = deliveredBytes(transfer);
+      const rate = Math.round(transfer.rate);
+      progress.push({
+        peerId: transfer.remotePeer,
+        bytes,
+        committed: transfer.flow,
+        ...(rate > 0 && { bytesPerSecond: rate }),
+        ...(rate > 0 && { etaMs: Math.round(((item.size - bytes) / rate) * 1000) }),
+      });
+    }
+    item.outgoingTransfers = progress;
+    emitSoon();
+  }
+
   function touch(transfer: Transfer) {
     if (transfer.stallTimer !== null) {
       clearTimeout(transfer.stallTimer);
@@ -657,6 +751,8 @@ export function createFileTransferManager(options: FileTransferOptions) {
       if (completed) {
         item.completedTransfers += 1;
       }
+      // The transfer is closed now, so this drops it from the per-device list.
+      refreshOutgoing(transfer.itemId);
       emit();
     }
   }
@@ -826,6 +922,11 @@ export function createFileTransferManager(options: FileTransferOptions) {
     } else {
       channel.send(chunk);
       transfer.sentBytes += chunk.byteLength;
+      // Without `flow` this is the only signal the sender has that bytes are
+      // moving, so it is what an upload bar has to be drawn from.
+      if (!transfer.flow) {
+        refreshOutgoing(transfer.itemId);
+      }
     }
     touch(transfer);
     return true;
@@ -1147,6 +1248,10 @@ export function createFileTransferManager(options: FileTransferOptions) {
     });
     transfers.set(transferId, transfer);
     item.activeTransfers += 1;
+    // A device that has asked for the file but not yet been sent a byte is
+    // still pulling it, so it belongs in the list from here rather than from
+    // the first chunk.
+    refreshOutgoing(transfer.itemId);
     emit();
 
     const channel = transfer.pc.createDataChannel("file", { ordered: true });
@@ -1169,6 +1274,7 @@ export function createFileTransferManager(options: FileTransferOptions) {
       const credited = parseCreditMessage(event.data);
       if (credited !== null && credited > transfer.creditedBytes) {
         transfer.creditedBytes = credited;
+        refreshOutgoing(transfer.itemId);
         // Progress the sender can see, so a slow sink isn't read as a stall.
         // Not once everything is sent: the ack timer has the slot then, and a
         // trailing credit must not shorten it back to a stall.
