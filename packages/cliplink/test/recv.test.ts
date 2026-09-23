@@ -215,6 +215,83 @@ describe("recv", () => {
       assert.deepEqual(notes, [`Listening on ${CODE}. Waiting for the next clip.`]);
     });
 
+    it("replays everything the room holds under --all", async () => {
+      server.stored = [await seal(1, "one"), await seal(2, "two"), await seal(3, "three")];
+      const { data } = await start(["--all"]);
+
+      await waitFor(() => data.length === 3, "the backlog");
+      assert.deepEqual(data, ["one", "two", "three"]);
+      // Having replayed them, it asks the socket only for what comes next.
+      assert.match(FakeSocket.last.url, /after=3\b/);
+    });
+
+    it("replays the newest n under --last", async () => {
+      server.stored = [await seal(1, "one"), await seal(2, "two"), await seal(3, "three")];
+      const { data } = await start(["--last", "2"]);
+
+      await waitFor(() => data.length === 2, "the backlog");
+      assert.deepEqual(data, ["two", "three"]);
+    });
+
+    it("replays what there is when --last asks for more than the room holds", async () => {
+      server.stored = [await seal(1, "one")];
+      const { data } = await start(["--last", "50"]);
+
+      await waitFor(() => data.length === 1, "the backlog");
+      assert.deepEqual(data, ["one"]);
+    });
+
+    it("replays nothing for --last 0, matching the default", async () => {
+      server.stored = [await seal(1, "one"), await seal(2, "two")];
+      const { data } = await start(["--last", "0"]);
+
+      await settle();
+      assert.deepEqual(data, []);
+      assert.match(FakeSocket.last.url, /after=2\b/);
+    });
+
+    it("replays the backlog in id order even when the room does not", async () => {
+      server.stored = [await seal(3, "three"), await seal(1, "one"), await seal(2, "two")];
+      const { data } = await start(["--all"]);
+
+      await waitFor(() => data.length === 3, "the backlog");
+      assert.deepEqual(data, ["one", "two", "three"]);
+    });
+
+    it("does not replay a clip again when it arrives on the socket", async () => {
+      server.stored = [await seal(1, "one"), await seal(2, "two")];
+      const { data } = await start(["--all"]);
+      await waitFor(() => data.length === 2, "the backlog");
+
+      FakeSocket.last.ready();
+      // A socket that replays what it already had must not print it twice.
+      FakeSocket.last.deliver({ type: "clip", clip: await seal(2, "two") });
+      FakeSocket.last.deliver({ type: "clip", clip: await seal(3, "three") });
+      await waitFor(() => data.length === 3, "the new clip");
+
+      assert.deepEqual(data, ["one", "two", "three"]);
+    });
+
+    it("takes the first of the backlog and exits under --last with --one", async () => {
+      server.stored = [await seal(1, "one"), await seal(2, "two")];
+      const out = reporter();
+
+      // Satisfied by the backlog, so it never opens a socket at all.
+      assert.equal(await recv(argsFor(["--last", "2", "--one"]), out.report), 0);
+
+      assert.deepEqual(out.data, ["one"]);
+      assert.equal(sockets().length, 0);
+      assert.equal(liveTimers.size, 0, "no timer left running");
+    });
+
+    it("replays the backlog as JSON under --all --json", async () => {
+      server.stored = [await seal(1, "one")];
+      const { data } = await start(["--all", "--json"]);
+
+      await waitFor(() => data.length === 1, "the backlog");
+      assert.equal(JSON.parse(data[0]).text, "one");
+    });
+
     it("prints one JSON object per clip under --json", async () => {
       const { data } = await start(["--json"]);
 

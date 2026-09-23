@@ -30,6 +30,10 @@ export type ParsedArgs = {
   one: boolean;
   /** `recv` only: print each clip as a JSON object rather than as its text. */
   json: boolean;
+  /** `recv` only: replay this many of the room's existing clips before listening. */
+  last: number | null;
+  /** `recv` only: replay every clip the room still holds before listening. */
+  all: boolean;
   /** Suppress the human-facing commentary on stderr. */
   quiet: boolean;
   ttlSeconds: number | null;
@@ -48,7 +52,14 @@ export type ParseResult =
   | { ok: true; args: ParsedArgs }
   | { ok: false; message: string };
 
-const FLAGS_WITH_VALUES = new Set(["--room", "--key", "--ttl", "--url", "--forget"]);
+const FLAGS_WITH_VALUES = new Set([
+  "--room",
+  "--key",
+  "--ttl",
+  "--url",
+  "--forget",
+  "--last",
+]);
 
 const ALIASES: Record<string, string> = {
   "-r": "--room",
@@ -80,6 +91,8 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
     save: false,
     one: false,
     json: false,
+    last: null,
+    all: false,
     quiet: false,
     ttlSeconds: null,
     baseUrl: env.CLIPLINK_URL ?? DEFAULT_BASE_URL,
@@ -123,6 +136,14 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
           args.baseUrl = value;
         } else if (name === "--forget") {
           args.forget = value;
+        } else if (name === "--last") {
+          // Number("") is 0, and an empty --last is a mistake rather than a
+          // request for no clips.
+          const count = value.trim() === "" ? Number.NaN : Number(value);
+          if (!Number.isInteger(count) || count < 0) {
+            return { ok: false, message: "--last takes a whole number of clips." };
+          }
+          args.last = count;
         } else {
           // validateRoomTtl is the same check the server applies, so the
           // bounds the help text advertises are enforced before a round trip
@@ -158,6 +179,9 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
           break;
         case "--json":
           args.json = true;
+          break;
+        case "--all":
+          args.all = true;
           break;
         case "--quiet":
           args.quiet = true;
@@ -216,6 +240,16 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
   }
   if (command !== "recv" && args.json) {
     return { ok: false, message: `--json applies to recv, not ${command}.` };
+  }
+  if (command !== "recv" && (args.last !== null || args.all)) {
+    const name = args.all ? "--all" : "--last";
+    return { ok: false, message: `${name} applies to recv, not ${command}.` };
+  }
+  if (args.last !== null && args.all) {
+    return {
+      ok: false,
+      message: "--last takes a count and --all takes everything; pick one.",
+    };
   }
   if (command === "recv" && args.text) {
     return { ok: false, message: "recv takes no text to send." };

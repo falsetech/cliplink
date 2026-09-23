@@ -18,6 +18,8 @@ OPTIONS
       --ttl <seconds>     Lifetime of a room being created (3600–86400).
   -1, --one               recv: print the next clip, then exit.
       --json              recv: print each clip as a JSON object.
+      --last <n>          recv: replay the last n clips before listening.
+      --all               recv: replay every clip the room still holds.
   -q, --quiet             Suppress commentary on stderr.
       --forget <code>     rooms: forget one saved room.
       --forget-all        rooms: forget every saved room.
@@ -53,6 +55,7 @@ EXAMPLES
   cliplink recv -r X7KP2M --one | pbcopy  wait for one clip, copy it
   cliplink recv -r X7KP2M                 follow the room until Ctrl-C
   cliplink recv -r X7KP2M --json          one JSON object per clip
+  cliplink recv -r X7KP2M --all           everything the room still holds
   cliplink rooms --prune                  list saved rooms, dropping dead ones
 
   Only clip text goes to stdout, so a pipe gets the clip and nothing else.

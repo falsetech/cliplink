@@ -200,3 +200,31 @@ describe("--json", () => {
     assert.match(reject(["send", "hi", "--json"]), /--json applies to recv, not send/);
   });
 });
+
+describe("--last and --all", () => {
+  it("default to replaying nothing", () => {
+    const args = parse(["recv", "-r", "X7KP2M"]);
+    assert.equal(args.last, null);
+    assert.equal(args.all, false);
+  });
+
+  it("parses a count", () => {
+    assert.equal(parse(["recv", "-r", "X7KP2M", "--last", "5"]).last, 5);
+    assert.equal(parse(["recv", "-r", "X7KP2M", "--last=0"]).last, 0);
+  });
+
+  it("refuses a count that is not a whole number of clips", () => {
+    for (const value of ["-1", "2.5", "many", ""]) {
+      assert.match(reject(["recv", "-r", "X7KP2M", "--last", value]), /whole number/);
+    }
+  });
+
+  it("refuses --last alongside --all", () => {
+    assert.match(reject(["recv", "-r", "X7KP2M", "--last", "5", "--all"]), /pick one/);
+  });
+
+  it("is an error on send, rather than silently ignored", () => {
+    assert.match(reject(["send", "hi", "--all"]), /--all applies to recv, not send/);
+    assert.match(reject(["send", "hi", "--last", "5"]), /--last applies to recv, not send/);
+  });
+});

@@ -19,18 +19,11 @@ export async function recv(
   const session = await openSession(args);
   const response = await session.transport.connect(session.code);
 
-  // Start from the newest clip the room already holds. A room keeps its last
-  // fifty, and dumping those into a pipe is not what "receive" means here.
-  //
   // One cursor, shared with the listener: the socket and the poller both ask
   // the server for clips after it, and whichever delivers one first moves it,
   // so a clip cannot be printed twice when the two overlap during a fallback.
-  const cursor = {
-    lastSeenId: response.clips.reduce(
-      (highest, clip) => Math.max(highest, clip.id),
-      0,
-    ),
-  };
+  // Starting it below the backlog is all replaying takes.
+  const cursor = { lastSeenId: replayFrom(response.clips, args) };
 
   report.note(
     `Listening on ${session.code}. ${args.one ? "Waiting for the next clip." : "Ctrl-C to stop."}`,
@@ -69,8 +62,40 @@ export async function recv(
     };
 
     signal?.addEventListener("abort", () => finish(0), { once: true });
+
+    // The room's own clips go through the same path as a clip that arrives
+    // later, so --one and --json mean the same thing for both. With neither
+    // --last nor --all the cursor already sits at the newest, and this emits
+    // nothing.
+    emit(response.clips);
+    if (finished) {
+      return;
+    }
+
     stop = listen(session, report, cursor, emit, () => finished);
   });
+}
+
+/**
+ * The clip id to start after, which is what decides how much of the room's
+ * backlog is replayed.
+ *
+ * The default is the newest clip: a room keeps its last fifty, and dumping
+ * those into a pipe is not what "receive" means. `--all` starts from nothing
+ * and `--last N` from just below the newest N, so both are a choice of where
+ * the cursor begins rather than a second kind of request.
+ */
+function replayFrom(clips: Clip[], args: ParsedArgs) {
+  if (args.all) {
+    return 0;
+  }
+
+  const ids = clips.map((clip) => clip.id).sort((left, right) => left - right);
+  if (args.last === null) {
+    return ids.at(-1) ?? 0;
+  }
+  // Fewer clips than asked for is not an error; the room has what it has.
+  return ids[ids.length - args.last - 1] ?? 0;
 }
 
 /**
