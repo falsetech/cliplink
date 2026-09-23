@@ -28,6 +28,8 @@ export type ParsedArgs = {
   save: boolean;
   /** `recv` only: print the next clip and exit. */
   one: boolean;
+  /** `recv` only: print each clip as a JSON object rather than as its text. */
+  json: boolean;
   /** Suppress the human-facing commentary on stderr. */
   quiet: boolean;
   ttlSeconds: number | null;
@@ -77,6 +79,7 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
     open: false,
     save: false,
     one: false,
+    json: false,
     quiet: false,
     ttlSeconds: null,
     baseUrl: env.CLIPLINK_URL ?? DEFAULT_BASE_URL,
@@ -153,6 +156,9 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
         case "--one":
           args.one = true;
           break;
+        case "--json":
+          args.json = true;
+          break;
         case "--quiet":
           args.quiet = true;
           break;
@@ -207,6 +213,9 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
   }
   if (command === "send" && args.one) {
     return { ok: false, message: "--one applies to recv, not send." };
+  }
+  if (command !== "recv" && args.json) {
+    return { ok: false, message: `--json applies to recv, not ${command}.` };
   }
   if (command === "recv" && args.text) {
     return { ok: false, message: "recv takes no text to send." };

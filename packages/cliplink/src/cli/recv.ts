@@ -50,7 +50,7 @@ export async function recv(
 
       cursor.lastSeenId = fresh[fresh.length - 1].id;
       for (const clip of fresh) {
-        report.data(clip.text);
+        report.data(args.json ? line(clip) : clip.text);
         if (args.one) {
           finish(0);
           return;
@@ -70,6 +70,24 @@ export async function recv(
 
     signal?.addEventListener("abort", () => finish(0), { once: true });
     stop = listen(session, report, cursor, emit, () => finished);
+  });
+}
+
+/**
+ * One clip as a line of JSON, for `--json`.
+ *
+ * The fields are named rather than the clip being stringified whole, because
+ * this is an output format other programs parse: a field added to the wire type
+ * should not appear here without someone deciding it should. Text still reaches
+ * stdout decrypted — `--json` changes the shape of the output, not what the CLI
+ * is willing to reveal.
+ */
+function line(clip: Clip) {
+  return JSON.stringify({
+    id: clip.id,
+    text: clip.text,
+    senderId: clip.senderId,
+    ts: clip.ts,
   });
 }
 

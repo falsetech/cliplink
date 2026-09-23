@@ -186,3 +186,17 @@ describe("rooms", () => {
     assert.match(reject(["send", "hi", "--forget-all"]), /--forget-all applies to rooms/);
   });
 });
+
+describe("--json", () => {
+  it("is off unless asked for", () => {
+    assert.equal(parse(["recv", "-r", "X7KP2M"]).json, false);
+  });
+
+  it("applies to recv", () => {
+    assert.equal(parse(["recv", "-r", "X7KP2M", "--json"]).json, true);
+  });
+
+  it("is an error on send, rather than silently ignored", () => {
+    assert.match(reject(["send", "hi", "--json"]), /--json applies to recv, not send/);
+  });
+});

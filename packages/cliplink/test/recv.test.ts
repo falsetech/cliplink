@@ -215,6 +215,48 @@ describe("recv", () => {
       assert.deepEqual(notes, [`Listening on ${CODE}. Waiting for the next clip.`]);
     });
 
+    it("prints one JSON object per clip under --json", async () => {
+      const { data } = await start(["--json"]);
+
+      FakeSocket.last.ready();
+      FakeSocket.last.deliver({ type: "clip", clip: await seal(1, "hello") });
+      await waitFor(() => data.length === 1, "the clip");
+
+      assert.deepEqual(JSON.parse(data[0]), {
+        id: 1,
+        text: "hello",
+        senderId: "someone-else",
+        ts: 1_700_000_001,
+      });
+    });
+
+    it("emits one line per clip, so --json output is newline-delimited", async () => {
+      const { data } = await start(["--json"]);
+
+      FakeSocket.last.ready();
+      FakeSocket.last.deliver({ type: "clip", clip: await seal(1, "first") });
+      FakeSocket.last.deliver({ type: "clip", clip: await seal(2, "second\nwith a newline") });
+      await waitFor(() => data.length === 2, "both clips");
+
+      // The newline inside a clip is escaped by JSON.stringify, so a reader
+      // splitting on newlines gets one object per line rather than a broken one.
+      assert.equal(data.length, 2);
+      for (const entry of data) {
+        assert.doesNotMatch(entry, /\n/);
+      }
+      assert.equal(JSON.parse(data[1]).text, "second\nwith a newline");
+    });
+
+    it("keeps --json on stdout and commentary on stderr", async () => {
+      const { data, notes } = await start(["--json"]);
+
+      FakeSocket.last.ready();
+      FakeSocket.last.deliver({ type: "clip", clip: await seal(1, "hello") });
+      await waitFor(() => data.length === 1, "the clip");
+
+      assert.deepEqual(notes, [`Listening on ${CODE}. Ctrl-C to stop.`]);
+    });
+
     it("fails before listening when the room is not there", async () => {
       server.roomStatus = 404;
       await assert.rejects(recv(argsFor(), reporter().report), /Room not found/);

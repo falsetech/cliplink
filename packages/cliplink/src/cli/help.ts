@@ -17,6 +17,7 @@ OPTIONS
       --save              Remember this room and key in the config file.
       --ttl <seconds>     Lifetime of a room being created (3600–86400).
   -1, --one               recv: print the next clip, then exit.
+      --json              recv: print each clip as a JSON object.
   -q, --quiet             Suppress commentary on stderr.
       --forget <code>     rooms: forget one saved room.
       --forget-all        rooms: forget every saved room.
@@ -51,6 +52,7 @@ EXAMPLES
   cliplink send "note to self" --save     keep the room for later
   cliplink recv -r X7KP2M --one | pbcopy  wait for one clip, copy it
   cliplink recv -r X7KP2M                 follow the room until Ctrl-C
+  cliplink recv -r X7KP2M --json          one JSON object per clip
   cliplink rooms --prune                  list saved rooms, dropping dead ones
 
   Only clip text goes to stdout, so a pipe gets the clip and nothing else.
