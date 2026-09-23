@@ -11,7 +11,7 @@ import {
 
 import type { Env } from "./env.ts";
 
-export const COMMANDS = ["send", "recv", "help", "version"] as const;
+export const COMMANDS = ["send", "recv", "rooms", "link", "help", "version"] as const;
 export type Command = (typeof COMMANDS)[number];
 
 export const DEFAULT_BASE_URL = "https://cliplink.thebkht.com";
@@ -28,17 +28,47 @@ export type ParsedArgs = {
   save: boolean;
   /** `recv` only: print the next clip and exit. */
   one: boolean;
+  /** `recv` only: print each clip as a JSON object rather than as its text. */
+  json: boolean;
+  /** `recv` only: replay this many of the room's existing clips before listening. */
+  last: number | null;
+  /** `recv` only: replay every clip the room still holds before listening. */
+  all: boolean;
+  /** `recv` only: give up after this many seconds. */
+  timeoutSeconds: number | null;
   /** Suppress the human-facing commentary on stderr. */
   quiet: boolean;
+  /**
+   * Whether to colour the QR. Off leaves it in the terminal's own colours,
+   * which many scanners will not read on a dark theme — but honouring the
+   * request is the point, and the link is printed as text either way.
+   */
+  color: boolean;
   ttlSeconds: number | null;
   baseUrl: string;
+  /** `rooms` only: the room to forget. */
+  forget: string | null;
+  /** `rooms` only: forget every saved room. */
+  forgetAll: boolean;
+  /** `rooms` only: drop the rooms that have expired. */
+  prune: boolean;
+  /** `rooms` only: print the saved keys, which the listing otherwise withholds. */
+  showKeys: boolean;
 };
 
 export type ParseResult =
   | { ok: true; args: ParsedArgs }
   | { ok: false; message: string };
 
-const FLAGS_WITH_VALUES = new Set(["--room", "--key", "--ttl", "--url"]);
+const FLAGS_WITH_VALUES = new Set([
+  "--room",
+  "--key",
+  "--ttl",
+  "--url",
+  "--forget",
+  "--last",
+  "--timeout",
+]);
 
 const ALIASES: Record<string, string> = {
   "-r": "--room",
@@ -54,13 +84,65 @@ function isCommand(value: string): value is Command {
 }
 
 /**
+ * Splits `-q1` into `-q -1`, the way every other CLI does.
+ *
+ * Only a run whose every letter is a known short flag is expanded. Anything
+ * else is passed through untouched, so `-50` and `-kSECRET` still reach the
+ * unknown-option error rather than being taken apart into letters and
+ * misreported. A short flag that takes a value has to come last, since the
+ * token after the cluster can only be one flag's value.
+ */
+function expandClusters(argv: string[]): ParseResult | string[] {
+  const expanded: string[] = [];
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const raw = argv[index];
+
+    // Past `--` nothing is a flag, cluster-shaped or not.
+    if (raw === "--") {
+      expanded.push(...argv.slice(index));
+      break;
+    }
+
+    const letters = /^-([A-Za-z0-9]{2,})$/.exec(raw)?.[1];
+    if (
+      letters === undefined ||
+      ALIASES[raw] !== undefined ||
+      ![...letters].every((letter) => ALIASES[`-${letter}`] !== undefined)
+    ) {
+      expanded.push(raw);
+      continue;
+    }
+
+    for (const [position, letter] of [...letters].entries()) {
+      const name = ALIASES[`-${letter}`];
+      if (FLAGS_WITH_VALUES.has(name) && position < letters.length - 1) {
+        return {
+          ok: false,
+          message: `${name} takes a value, so -${letter} must come last in ${raw}.`,
+        };
+      }
+      expanded.push(`-${letter}`);
+    }
+  }
+
+  return expanded;
+}
+
+/**
  * Parses `argv` as the CLI sees it, without the node and script entries.
  *
  * Unknown flags are an error rather than positional text: a mistyped `--quite`
  * silently becoming the clip you send is the kind of thing you only notice on
  * the other device.
  */
-export function parseArgs(argv: string[], env: Env = {}): ParseResult {
+export function parseArgs(rawArgv: string[], env: Env = {}): ParseResult {
+  const expanded = expandClusters(rawArgv);
+  if (!Array.isArray(expanded)) {
+    return expanded;
+  }
+  const argv = expanded;
+
   const args: ParsedArgs = {
     command: "help",
     text: "",
@@ -69,9 +151,19 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
     open: false,
     save: false,
     one: false,
+    json: false,
+    last: null,
+    all: false,
+    timeoutSeconds: null,
     quiet: false,
+    // https://no-color.org: set to anything non-empty, and colour is off.
+    color: (env.NO_COLOR ?? "") === "",
     ttlSeconds: null,
     baseUrl: env.CLIPLINK_URL ?? DEFAULT_BASE_URL,
+    forget: null,
+    forgetAll: false,
+    prune: false,
+    showKeys: false,
   };
 
   const positional: string[] = [];
@@ -106,6 +198,22 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
           args.key = value;
         } else if (name === "--url") {
           args.baseUrl = value;
+        } else if (name === "--forget") {
+          args.forget = value;
+        } else if (name === "--timeout") {
+          const seconds = value.trim() === "" ? Number.NaN : Number(value);
+          if (!Number.isFinite(seconds) || seconds <= 0) {
+            return { ok: false, message: "--timeout takes a positive number of seconds." };
+          }
+          args.timeoutSeconds = seconds;
+        } else if (name === "--last") {
+          // Number("") is 0, and an empty --last is a mistake rather than a
+          // request for no clips.
+          const count = value.trim() === "" ? Number.NaN : Number(value);
+          if (!Number.isInteger(count) || count < 0) {
+            return { ok: false, message: "--last takes a whole number of clips." };
+          }
+          args.last = count;
         } else {
           // validateRoomTtl is the same check the server applies, so the
           // bounds the help text advertises are enforced before a round trip
@@ -139,8 +247,27 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
         case "--one":
           args.one = true;
           break;
+        case "--json":
+          args.json = true;
+          break;
+        case "--all":
+          args.all = true;
+          break;
         case "--quiet":
           args.quiet = true;
+          break;
+        case "--no-color":
+        case "--no-colour":
+          args.color = false;
+          break;
+        case "--forget-all":
+          args.forgetAll = true;
+          break;
+        case "--prune":
+          args.prune = true;
+          break;
+        case "--show-keys":
+          args.showKeys = true;
           break;
         case "--help":
           return { ok: true, args: { ...args, command: "help" } };
@@ -161,7 +288,10 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
   }
 
   if (command === null) {
-    return { ok: false, message: "Expected a command: send, recv, help or version." };
+    return {
+      ok: false,
+      message: "Expected a command: send, recv, rooms, link, help or version.",
+    };
   }
 
   args.command = command;
@@ -182,11 +312,60 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
   if (command === "send" && args.one) {
     return { ok: false, message: "--one applies to recv, not send." };
   }
+  if (command !== "recv" && args.json) {
+    return { ok: false, message: `--json applies to recv, not ${command}.` };
+  }
+  if (command !== "recv" && args.timeoutSeconds !== null) {
+    return { ok: false, message: `--timeout applies to recv, not ${command}.` };
+  }
+  if (command !== "recv" && (args.last !== null || args.all)) {
+    const name = args.all ? "--all" : "--last";
+    return { ok: false, message: `${name} applies to recv, not ${command}.` };
+  }
+  if (args.last !== null && args.all) {
+    return {
+      ok: false,
+      message: "--last takes a count and --all takes everything; pick one.",
+    };
+  }
   if (command === "recv" && args.text) {
     return { ok: false, message: "recv takes no text to send." };
   }
   if (command === "recv" && !args.room) {
     return { ok: false, message: "recv needs a room: pass --room, or CLIPLINK_ROOM." };
+  }
+  if (command === "rooms" && args.text) {
+    return { ok: false, message: "rooms takes no text." };
+  }
+  if (command === "link" && args.text) {
+    return { ok: false, message: "link takes no text." };
+  }
+  if (command === "link" && !args.room) {
+    // link never creates a room. Minting one just to print its link would
+    // leave a room on the server that nobody asked for.
+    return { ok: false, message: "link needs a room: pass --room, or CLIPLINK_ROOM." };
+  }
+  if (command !== "rooms") {
+    // These read and write the saved-rooms file and mean nothing anywhere
+    // else. Silently ignoring one would let `cliplink send --prune` look like
+    // it had pruned something.
+    const misplaced = (
+      [
+        [args.forget !== null, "--forget"],
+        [args.forgetAll, "--forget-all"],
+        [args.prune, "--prune"],
+        [args.showKeys, "--show-keys"],
+      ] as const
+    ).find(([given]) => given);
+    if (misplaced) {
+      return { ok: false, message: `${misplaced[1]} applies to rooms, not ${command}.` };
+    }
+  }
+  if (args.forget !== null && args.forgetAll) {
+    return {
+      ok: false,
+      message: "--forget names one room and --forget-all takes them all; pick one.",
+    };
   }
   if (args.ttlSeconds !== null && args.room) {
     // Saying "this run joins one" explains nothing when the room came from the

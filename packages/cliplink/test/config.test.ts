@@ -5,7 +5,17 @@ import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import type { Env } from "../src/cli/env.ts";
-import { configPath, findSavedRoom, readSavedRooms, saveRoom } from "../src/cli/config.ts";
+import {
+  configPath,
+  findSavedRoom,
+  forgetAllRooms,
+  forgetRoom,
+  isExpired,
+  pruneRooms,
+  readSavedRooms,
+  saveRoom,
+} from "../src/cli/config.ts";
+import { MAX_ROOM_TTL_SECONDS } from "../src/index.ts";
 
 const dirs: string[] = [];
 
@@ -139,5 +149,101 @@ describe("readSavedRooms", () => {
 
   it("finds nothing for a room that was never saved", async () => {
     assert.equal(await findSavedRoom("X7KP2M", await tempEnv()), null);
+  });
+});
+
+describe("isExpired", () => {
+  const savedAt = 1_000_000;
+
+  it("reads a recorded expiry", () => {
+    const room = { code: "A", baseUrl: "u", savedAt, expiresAt: savedAt + 5_000 };
+    assert.equal(isExpired(room, savedAt + 4_999), false);
+    assert.equal(isExpired(room, savedAt + 5_000), true);
+  });
+
+  it("falls back to the longest a room may live when none was recorded", () => {
+    const room = { code: "A", baseUrl: "u", savedAt };
+    const bound = savedAt + MAX_ROOM_TTL_SECONDS * 1000;
+    assert.equal(isExpired(room, bound - 1), false);
+    assert.equal(isExpired(room, bound), true);
+  });
+});
+
+describe("forgetRoom", () => {
+  it("removes the room and returns it", async () => {
+    const env = await tempEnv();
+    await saveRoom({ code: "X7KP2M", key: "KEY", baseUrl: "u", savedAt: 1 }, env);
+
+    assert.equal((await forgetRoom("X7KP2M", env))?.key, "KEY");
+    assert.deepEqual(await readSavedRooms(env), []);
+  });
+
+  it("matches the code whatever case it is asked for in", async () => {
+    const env = await tempEnv();
+    await saveRoom({ code: "X7KP2M", baseUrl: "u", savedAt: 1 }, env);
+
+    assert.ok(await forgetRoom("x7kp2m", env));
+  });
+
+  it("leaves the other rooms alone", async () => {
+    const env = await tempEnv();
+    await saveRoom({ code: "AAAAAA", baseUrl: "u", savedAt: 1 }, env);
+    await saveRoom({ code: "BBBBBB", baseUrl: "u", savedAt: 2 }, env);
+
+    await forgetRoom("AAAAAA", env);
+    assert.deepEqual((await readSavedRooms(env)).map((room) => room.code), ["BBBBBB"]);
+  });
+
+  it("is null for a room that was never saved, and writes nothing", async () => {
+    const env = await tempEnv();
+
+    assert.equal(await forgetRoom("X7KP2M", env), null);
+    await assert.rejects(stat(configPath(env)));
+  });
+});
+
+describe("forgetAllRooms", () => {
+  it("removes the file rather than leaving an empty one behind", async () => {
+    const env = await tempEnv();
+    await saveRoom({ code: "AAAAAA", key: "KEY", baseUrl: "u", savedAt: 1 }, env);
+    await saveRoom({ code: "BBBBBB", key: "KEY", baseUrl: "u", savedAt: 2 }, env);
+
+    assert.equal(await forgetAllRooms(env), 2);
+    await assert.rejects(stat(configPath(env)));
+  });
+
+  it("is zero when nothing was saved", async () => {
+    assert.equal(await forgetAllRooms(await tempEnv()), 0);
+  });
+});
+
+describe("pruneRooms", () => {
+  it("drops the expired rooms and keeps the rest", async () => {
+    const env = await tempEnv();
+    await saveRoom({ code: "LIVE01", baseUrl: "u", savedAt: 0, expiresAt: 10_000 }, env);
+    await saveRoom({ code: "DEAD01", baseUrl: "u", savedAt: 0, expiresAt: 5_000 }, env);
+
+    const dropped = await pruneRooms(env, 7_000);
+
+    assert.deepEqual(dropped.map((room) => room.code), ["DEAD01"]);
+    assert.deepEqual((await readSavedRooms(env)).map((room) => room.code), ["LIVE01"]);
+  });
+
+  it("writes nothing when every room is still live", async () => {
+    const env = await tempEnv();
+    await saveRoom({ code: "LIVE01", baseUrl: "u", savedAt: 0, expiresAt: 10_000 }, env);
+    const before = await stat(configPath(env));
+
+    assert.deepEqual(await pruneRooms(env, 1_000), []);
+    assert.equal((await stat(configPath(env))).mtimeMs, before.mtimeMs);
+  });
+
+  it("prunes a room with no recorded expiry once it is past the longest TTL", async () => {
+    const env = await tempEnv();
+    await saveRoom({ code: "OLD001", baseUrl: "u", savedAt: 0 }, env);
+
+    assert.deepEqual(await pruneRooms(env, MAX_ROOM_TTL_SECONDS * 1000), [
+      { code: "OLD001", baseUrl: "u", savedAt: 0 },
+    ]);
   });
 });

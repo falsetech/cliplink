@@ -58,7 +58,7 @@ export async function send(
       report.note(session.url);
       if (report.interactive) {
         report.note();
-        report.note(renderQr(session.url));
+        report.note(renderQr(session.url, { color: args.color }));
       }
       report.note();
       report.note("The room key is in the link's #fragment and never reaches the server.");

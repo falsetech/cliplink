@@ -1,6 +1,8 @@
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+
+import { MAX_ROOM_TTL_SECONDS } from "../index.ts";
 
 import type { Env } from "./env.ts";
 
@@ -21,6 +23,12 @@ export type SavedRoom = {
   key?: string;
   baseUrl: string;
   savedAt: number;
+  /**
+   * When the room expires, in epoch ms, for the runs that were told. Creating a
+   * room yields its TTL; joining one does not, so this is absent for rooms
+   * saved by `--save` on a join.
+   */
+  expiresAt?: number;
 };
 
 type ConfigFile = { rooms: SavedRoom[] };
@@ -46,7 +54,8 @@ function isSavedRoom(value: unknown): value is SavedRoom {
     typeof room.code === "string" &&
     typeof room.baseUrl === "string" &&
     typeof room.savedAt === "number" &&
-    (room.key === undefined || typeof room.key === "string")
+    (room.key === undefined || typeof room.key === "string") &&
+    (room.expiresAt === undefined || typeof room.expiresAt === "number")
   );
 }
 
@@ -76,20 +85,8 @@ export async function findSavedRoom(
   return rooms.find((room) => room.code.toUpperCase() === wanted) ?? null;
 }
 
-/** Newest first, one entry per room code. */
-export async function saveRoom(
-  room: SavedRoom,
-  env: Env = process.env,
-): Promise<string> {
+async function writeRooms(rooms: SavedRoom[], env: Env): Promise<string> {
   const path = configPath(env);
-  const existing = await readSavedRooms(env);
-  const rooms = [
-    room,
-    ...existing.filter(
-      (saved) => saved.code.toUpperCase() !== room.code.toUpperCase(),
-    ),
-  ].slice(0, MAX_SAVED_ROOMS);
-
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   // The mode is passed on create and set again after: an existing file keeps
   // its old mode through a write, and this file may hold keys.
@@ -98,4 +95,80 @@ export async function saveRoom(
   });
   await chmod(path, 0o600);
   return path;
+}
+
+/** Newest first, one entry per room code. */
+export async function saveRoom(
+  room: SavedRoom,
+  env: Env = process.env,
+): Promise<string> {
+  const existing = await readSavedRooms(env);
+  const rooms = [
+    room,
+    ...existing.filter(
+      (saved) => saved.code.toUpperCase() !== room.code.toUpperCase(),
+    ),
+  ].slice(0, MAX_SAVED_ROOMS);
+
+  return writeRooms(rooms, env);
+}
+
+/**
+ * When a saved room is past saving, as well as this can be known without
+ * asking the server.
+ *
+ * A room saved on a join carries no expiry, so it falls back to the longest a
+ * room may be configured to live. That is a bound rather than a reading: an
+ * entry it calls expired certainly is, and one it does not may still have been
+ * collected. Pruning is therefore about clearing out what is definitely dead,
+ * not about keeping an accurate picture of the server.
+ */
+export function isExpired(room: SavedRoom, now = Date.now()) {
+  return now >= (room.expiresAt ?? room.savedAt + MAX_ROOM_TTL_SECONDS * 1000);
+}
+
+/** The forgotten room, or null when no room was saved under that code. */
+export async function forgetRoom(
+  code: string,
+  env: Env = process.env,
+): Promise<SavedRoom | null> {
+  const wanted = code.toUpperCase();
+  const rooms = await readSavedRooms(env);
+  const room = rooms.find((saved) => saved.code.toUpperCase() === wanted);
+  if (!room) {
+    return null;
+  }
+
+  await writeRooms(
+    rooms.filter((saved) => saved.code.toUpperCase() !== wanted),
+    env,
+  );
+  return room;
+}
+
+/**
+ * Removes the file rather than writing an empty one. Forgetting every room
+ * should leave nothing behind that once held a key, and a file of `[]` is a
+ * worse answer to "is anything saved" than no file at all.
+ */
+export async function forgetAllRooms(env: Env = process.env): Promise<number> {
+  const rooms = await readSavedRooms(env);
+  await rm(configPath(env), { force: true });
+  return rooms.length;
+}
+
+/** The rooms dropped, which is empty when none had expired. */
+export async function pruneRooms(
+  env: Env = process.env,
+  now = Date.now(),
+): Promise<SavedRoom[]> {
+  const rooms = await readSavedRooms(env);
+  const expired = rooms.filter((room) => isExpired(room, now));
+  if (expired.length > 0) {
+    await writeRooms(
+      rooms.filter((room) => !isExpired(room, now)),
+      env,
+    );
+  }
+  return expired;
 }

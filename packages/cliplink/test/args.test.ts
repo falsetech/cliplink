@@ -147,3 +147,183 @@ describe("combinations that cannot mean anything", () => {
     );
   });
 });
+
+describe("rooms", () => {
+  it("is a command", () => {
+    assert.equal(parse(["rooms"]).command, "rooms");
+  });
+
+  it("names it among the commands when none was given", () => {
+    assert.match(reject([]), /send, recv, rooms, link, help or version/);
+  });
+
+  it("takes the rooms flags", () => {
+    const args = parse(["rooms", "--forget", "X7KP2M", "--show-keys"]);
+    assert.equal(args.forget, "X7KP2M");
+    assert.equal(args.showKeys, true);
+  });
+
+  it("defaults the rooms flags off", () => {
+    const args = parse(["rooms"]);
+    assert.equal(args.forget, null);
+    assert.equal(args.forgetAll, false);
+    assert.equal(args.prune, false);
+    assert.equal(args.showKeys, false);
+  });
+
+  it("takes no text", () => {
+    assert.match(reject(["rooms", "X7KP2M"]), /rooms takes no text/);
+  });
+
+  it("refuses --forget alongside --forget-all", () => {
+    assert.match(reject(["rooms", "--forget", "X7KP2M", "--forget-all"]), /pick one/);
+  });
+
+  it("refuses a rooms flag on another command, rather than ignoring it", () => {
+    assert.match(reject(["send", "hi", "--prune"]), /--prune applies to rooms, not send/);
+    assert.match(reject(["recv", "-r", "X7KP2M", "--show-keys"]), /--show-keys applies to rooms/);
+    assert.match(reject(["send", "hi", "--forget", "X7KP2M"]), /--forget applies to rooms/);
+    assert.match(reject(["send", "hi", "--forget-all"]), /--forget-all applies to rooms/);
+  });
+});
+
+describe("--json", () => {
+  it("is off unless asked for", () => {
+    assert.equal(parse(["recv", "-r", "X7KP2M"]).json, false);
+  });
+
+  it("applies to recv", () => {
+    assert.equal(parse(["recv", "-r", "X7KP2M", "--json"]).json, true);
+  });
+
+  it("is an error on send, rather than silently ignored", () => {
+    assert.match(reject(["send", "hi", "--json"]), /--json applies to recv, not send/);
+  });
+});
+
+describe("--last and --all", () => {
+  it("default to replaying nothing", () => {
+    const args = parse(["recv", "-r", "X7KP2M"]);
+    assert.equal(args.last, null);
+    assert.equal(args.all, false);
+  });
+
+  it("parses a count", () => {
+    assert.equal(parse(["recv", "-r", "X7KP2M", "--last", "5"]).last, 5);
+    assert.equal(parse(["recv", "-r", "X7KP2M", "--last=0"]).last, 0);
+  });
+
+  it("refuses a count that is not a whole number of clips", () => {
+    for (const value of ["-1", "2.5", "many", ""]) {
+      assert.match(reject(["recv", "-r", "X7KP2M", "--last", value]), /whole number/);
+    }
+  });
+
+  it("refuses --last alongside --all", () => {
+    assert.match(reject(["recv", "-r", "X7KP2M", "--last", "5", "--all"]), /pick one/);
+  });
+
+  it("is an error on send, rather than silently ignored", () => {
+    assert.match(reject(["send", "hi", "--all"]), /--all applies to recv, not send/);
+    assert.match(reject(["send", "hi", "--last", "5"]), /--last applies to recv, not send/);
+  });
+});
+
+describe("link", () => {
+  it("is a command", () => {
+    assert.equal(parse(["link", "-r", "X7KP2M"]).command, "link");
+  });
+
+  it("needs a room, since it never creates one", () => {
+    assert.match(reject(["link"]), /link needs a room/);
+  });
+
+  it("takes the room from the environment", () => {
+    assert.equal(parse(["link"], { CLIPLINK_ROOM: "X7KP2M" }).room, "X7KP2M");
+  });
+
+  it("takes no text", () => {
+    assert.match(reject(["link", "X7KP2M"]), /link takes no text/);
+  });
+});
+
+describe("colour", () => {
+  it("is on by default", () => {
+    assert.equal(parse(["send", "hi"]).color, true);
+  });
+
+  it("is off under --no-color, spelled either way", () => {
+    assert.equal(parse(["send", "hi", "--no-color"]).color, false);
+    assert.equal(parse(["send", "hi", "--no-colour"]).color, false);
+  });
+
+  it("is off when NO_COLOR is set to anything", () => {
+    assert.equal(parse(["send", "hi"], { NO_COLOR: "1" }).color, false);
+    assert.equal(parse(["send", "hi"], { NO_COLOR: "0" }).color, false);
+  });
+
+  it("is on when NO_COLOR is set but empty, as the convention has it", () => {
+    assert.equal(parse(["send", "hi"], { NO_COLOR: "" }).color, true);
+  });
+
+  it("takes no value", () => {
+    assert.match(reject(["send", "hi", "--no-color=1"]), /does not take a value/);
+  });
+});
+
+describe("clustered short flags", () => {
+  it("splits a run of boolean short flags", () => {
+    const args = parse(["recv", "-r", "X7KP2M", "-q1"]);
+    assert.equal(args.quiet, true);
+    assert.equal(args.one, true);
+  });
+
+  it("lets a value-taking flag end the cluster", () => {
+    const args = parse(["recv", "-qr", "X7KP2M"]);
+    assert.equal(args.quiet, true);
+    assert.equal(args.room, "X7KP2M");
+  });
+
+  it("refuses a value-taking flag in the middle, where its value cannot go", () => {
+    assert.match(reject(["recv", "-rq", "X7KP2M"]), /--room takes a value, so -r must come last/);
+  });
+
+  it("leaves a run that is not all short flags to the unknown-option error", () => {
+    assert.match(reject(["send", "hi", "-qz"]), /Unknown option -qz/);
+    assert.match(reject(["send", "hi", "-50"]), /Unknown option -50/);
+  });
+
+  it("does not take apart a short flag that is already one token", () => {
+    assert.equal(parse(["recv", "-r", "X7KP2M", "-1"]).one, true);
+  });
+
+  it("leaves everything after -- alone", () => {
+    assert.equal(parse(["send", "--", "-q1"]).text, "-q1");
+  });
+
+  it("still reports help and version from inside a cluster", () => {
+    assert.equal(parse(["send", "-qh"]).command, "help");
+    assert.equal(parse(["send", "-qv"]).command, "version");
+  });
+});
+
+describe("--timeout", () => {
+  it("is absent by default, so recv waits forever", () => {
+    assert.equal(parse(["recv", "-r", "X7KP2M"]).timeoutSeconds, null);
+  });
+
+  it("parses seconds", () => {
+    assert.equal(parse(["recv", "-r", "X7KP2M", "--timeout", "30"]).timeoutSeconds, 30);
+    assert.equal(parse(["recv", "-r", "X7KP2M", "--timeout=1.5"]).timeoutSeconds, 1.5);
+  });
+
+  it("refuses a timeout that would never fire", () => {
+    for (const value of ["0", "-1", "soon", ""]) {
+      assert.match(reject(["recv", "-r", "X7KP2M", "--timeout", value]), /positive number/);
+    }
+  });
+
+  it("is an error on send, rather than silently ignored", () => {
+    assert.match(reject(["send", "hi", "--timeout", "30"]), /--timeout applies to recv, not send/);
+  });
+});

@@ -23,6 +23,8 @@ and the clip is on your phone. No account, no install on the other device.
 ```
 cliplink send [text]        Send a clip. With no text, reads stdin.
 cliplink recv               Print clips as they arrive, until Ctrl-C.
+cliplink rooms              List the rooms --save has kept.
+cliplink link               Print the share link and QR for a room.
 ```
 
 | Option | |
@@ -33,11 +35,22 @@ cliplink recv               Print clips as they arrive, until Ctrl-C.
 | `--save` | Remember this room and key in the config file. |
 | `--ttl <seconds>` | Lifetime of a room being created (3600–86400). |
 | `-1, --one` | `recv`: print the next clip, then exit. |
+| `--json` | `recv`: print each clip as a JSON object. |
+| `--last <n>` | `recv`: replay the last n clips before listening. |
+| `--all` | `recv`: replay every clip the room still holds. |
+| `--timeout <secs>` | `recv`: give up after this long. Exits 1 if no clip arrived. |
+| `--forget <code>` | `rooms`: forget one saved room. |
+| `--forget-all` | `rooms`: forget every saved room. |
+| `--prune` | `rooms`: drop the rooms that have expired. |
+| `--show-keys` | `rooms`: print the saved keys, withheld by default. |
 | `-q, --quiet` | Suppress commentary on stderr. |
+| `--no-color` | Draw the QR without colour. |
 | `--url <origin>` | Deployment to talk to. |
 
+Short flags cluster, so `-q1` is `-q -1`. A flag that takes a value comes last.
+
 Environment: `CLIPLINK_ROOM`, `CLIPLINK_ROOM_KEY`, `CLIPLINK_URL`,
-`CLIPLINK_CONFIG_DIR`.
+`CLIPLINK_CONFIG_DIR`, `NO_COLOR`.
 
 ## stdout is the data channel
 
@@ -49,6 +62,11 @@ cliplink recv --room X7KP2M --one | pbcopy
 ```
 
 The QR is printed only when stderr is a terminal, so it never lands in a file.
+
+`cliplink link` and `cliplink rooms` follow the same rule: the link, and the
+listing, are what you asked for, so they go to stdout and can be piped. Under
+`--json`, `recv` writes one JSON object per line — `id`, `text`, `senderId`,
+`ts` — still on stdout, still nothing else.
 
 ## Keys
 
@@ -69,6 +87,12 @@ that writes a key to disk, and it does so only when you ask, per run.
 `--open` rooms derive their key from the room code. The server sees the code,
 so those are encrypted at rest but **not** end-to-end.
 
+`cliplink rooms` lists what `--save` has kept — code, origin, age — but
+withholds the keys unless `--show-keys` asks for them, so reminding yourself of
+a room code does not put key material into your scrollback. `--forget` and
+`--forget-all` remove entries; forgetting them all removes the file rather than
+leaving an empty one behind.
+
 ## Examples
 
 ```bash
@@ -84,6 +108,21 @@ cliplink recv --room X7KP2M --one | pbcopy
 
 # Follow a room
 cliplink recv --room X7KP2M | tee -a clips.log
+
+# Catch up on what the room already holds, then keep following
+cliplink recv --room X7KP2M --all
+
+# Wait, but not forever: exits 1 if nothing arrived
+cliplink recv --room X7KP2M --one --timeout 30 | pbcopy
+
+# Script against the clip metadata, not just the text
+cliplink recv --room X7KP2M --json | jq -r '.senderId'
+
+# Show the link and QR again for a room you already have
+cliplink link --room X7KP2M
+
+# See what is saved, and drop what has expired
+cliplink rooms --prune
 ```
 
 ## What it does not do

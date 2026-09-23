@@ -215,6 +215,171 @@ describe("recv", () => {
       assert.deepEqual(notes, [`Listening on ${CODE}. Waiting for the next clip.`]);
     });
 
+    it("replays everything the room holds under --all", async () => {
+      server.stored = [await seal(1, "one"), await seal(2, "two"), await seal(3, "three")];
+      const { data } = await start(["--all"]);
+
+      await waitFor(() => data.length === 3, "the backlog");
+      assert.deepEqual(data, ["one", "two", "three"]);
+      // Having replayed them, it asks the socket only for what comes next.
+      assert.match(FakeSocket.last.url, /after=3\b/);
+    });
+
+    it("replays the newest n under --last", async () => {
+      server.stored = [await seal(1, "one"), await seal(2, "two"), await seal(3, "three")];
+      const { data } = await start(["--last", "2"]);
+
+      await waitFor(() => data.length === 2, "the backlog");
+      assert.deepEqual(data, ["two", "three"]);
+    });
+
+    it("replays what there is when --last asks for more than the room holds", async () => {
+      server.stored = [await seal(1, "one")];
+      const { data } = await start(["--last", "50"]);
+
+      await waitFor(() => data.length === 1, "the backlog");
+      assert.deepEqual(data, ["one"]);
+    });
+
+    it("replays nothing for --last 0, matching the default", async () => {
+      server.stored = [await seal(1, "one"), await seal(2, "two")];
+      const { data } = await start(["--last", "0"]);
+
+      await settle();
+      assert.deepEqual(data, []);
+      assert.match(FakeSocket.last.url, /after=2\b/);
+    });
+
+    it("replays the backlog in id order even when the room does not", async () => {
+      server.stored = [await seal(3, "three"), await seal(1, "one"), await seal(2, "two")];
+      const { data } = await start(["--all"]);
+
+      await waitFor(() => data.length === 3, "the backlog");
+      assert.deepEqual(data, ["one", "two", "three"]);
+    });
+
+    it("does not replay a clip again when it arrives on the socket", async () => {
+      server.stored = [await seal(1, "one"), await seal(2, "two")];
+      const { data } = await start(["--all"]);
+      await waitFor(() => data.length === 2, "the backlog");
+
+      FakeSocket.last.ready();
+      // A socket that replays what it already had must not print it twice.
+      FakeSocket.last.deliver({ type: "clip", clip: await seal(2, "two") });
+      FakeSocket.last.deliver({ type: "clip", clip: await seal(3, "three") });
+      await waitFor(() => data.length === 3, "the new clip");
+
+      assert.deepEqual(data, ["one", "two", "three"]);
+    });
+
+    it("takes the first of the backlog and exits under --last with --one", async () => {
+      server.stored = [await seal(1, "one"), await seal(2, "two")];
+      const out = reporter();
+
+      // Satisfied by the backlog, so it never opens a socket at all.
+      assert.equal(await recv(argsFor(["--last", "2", "--one"]), out.report), 0);
+
+      assert.deepEqual(out.data, ["one"]);
+      assert.equal(sockets().length, 0);
+      assert.equal(liveTimers.size, 0, "no timer left running");
+    });
+
+    it("replays the backlog as JSON under --all --json", async () => {
+      server.stored = [await seal(1, "one")];
+      const { data } = await start(["--all", "--json"]);
+
+      await waitFor(() => data.length === 1, "the backlog");
+      assert.equal(JSON.parse(data[0]).text, "one");
+    });
+
+    it("gives up after --timeout, exiting 1 when no clip arrived", async () => {
+      const { result, notes } = await start(["--one", "--timeout", "30"]);
+
+      tick(30_000);
+
+      assert.equal(await result, 1);
+      assert.ok(notes.includes("Nothing arrived within 30s."));
+      assert.equal(liveTimers.size, 0, "no timer left running");
+    });
+
+    it("exits 0 when a clip did arrive before the deadline", async () => {
+      const { result, data } = await start(["--timeout", "30"]);
+
+      FakeSocket.last.ready();
+      FakeSocket.last.deliver({ type: "clip", clip: await seal(1, "hello") });
+      await waitFor(() => data.length === 1, "the clip");
+
+      tick(30_000);
+
+      assert.equal(await result, 0);
+      assert.deepEqual(data, ["hello"]);
+    });
+
+    it("does not fire the deadline once --one has been satisfied", async () => {
+      const { result, data } = await start(["--one", "--timeout", "30"]);
+
+      FakeSocket.last.ready();
+      FakeSocket.last.deliver({ type: "clip", clip: await seal(1, "hello") });
+
+      assert.equal(await result, 0);
+      // The deadline was cleared with everything else, so 30s later there is
+      // nothing left to fire.
+      tick(30_000);
+      assert.deepEqual(data, ["hello"]);
+      assert.equal(liveTimers.size, 0, "no timer left running");
+    });
+
+    it("waits forever without --timeout", async () => {
+      const { data } = await start(["--one"]);
+
+      tick(300_000);
+      await settle();
+
+      assert.deepEqual(data, []);
+    });
+
+    it("prints one JSON object per clip under --json", async () => {
+      const { data } = await start(["--json"]);
+
+      FakeSocket.last.ready();
+      FakeSocket.last.deliver({ type: "clip", clip: await seal(1, "hello") });
+      await waitFor(() => data.length === 1, "the clip");
+
+      assert.deepEqual(JSON.parse(data[0]), {
+        id: 1,
+        text: "hello",
+        senderId: "someone-else",
+        ts: 1_700_000_001,
+      });
+    });
+
+    it("emits one line per clip, so --json output is newline-delimited", async () => {
+      const { data } = await start(["--json"]);
+
+      FakeSocket.last.ready();
+      FakeSocket.last.deliver({ type: "clip", clip: await seal(1, "first") });
+      FakeSocket.last.deliver({ type: "clip", clip: await seal(2, "second\nwith a newline") });
+      await waitFor(() => data.length === 2, "both clips");
+
+      // The newline inside a clip is escaped by JSON.stringify, so a reader
+      // splitting on newlines gets one object per line rather than a broken one.
+      assert.equal(data.length, 2);
+      for (const entry of data) {
+        assert.doesNotMatch(entry, /\n/);
+      }
+      assert.equal(JSON.parse(data[1]).text, "second\nwith a newline");
+    });
+
+    it("keeps --json on stdout and commentary on stderr", async () => {
+      const { data, notes } = await start(["--json"]);
+
+      FakeSocket.last.ready();
+      FakeSocket.last.deliver({ type: "clip", clip: await seal(1, "hello") });
+      await waitFor(() => data.length === 1, "the clip");
+
+      assert.deepEqual(notes, [`Listening on ${CODE}. Ctrl-C to stop.`]);
+    });
+
     it("fails before listening when the room is not there", async () => {
       server.roomStatus = 404;
       await assert.rejects(recv(argsFor(), reporter().report), /Room not found/);
@@ -456,6 +621,49 @@ describe("recv", () => {
       await waitFor(() => data.length === 1, "the clip after recovery");
 
       assert.deepEqual(data, ["back online"]);
+    });
+
+    it("says why once for a run of failures, not once per poll", async () => {
+      const { warns, notes } = await start();
+      FakeSocket.last.fail();
+
+      server.onPoll = async () => {
+        throw new Error("network down");
+      };
+
+      for (let poll = 0; poll < 5; poll += 1) {
+        tick(POLL_INTERVAL_MS);
+        await settle();
+      }
+
+      // A server that is down stays down; a line every 1.5s would bury the
+      // clips and the first line that said why.
+      assert.deepEqual(warns, [`Could not reach ${CODE}: network down`]);
+      assert.ok(server.polls.length >= 5, "it kept polling regardless");
+
+      server.onPoll = async () => json({ clips: [] });
+      tick(POLL_INTERVAL_MS);
+      await waitFor(() => notes.includes(`Reached ${CODE} again.`), "the recovery note");
+    });
+
+    it("says why afresh when polling fails again after recovering", async () => {
+      const { warns } = await start();
+      FakeSocket.last.fail();
+
+      const down = async () => {
+        throw new Error("network down");
+      };
+      server.onPoll = down;
+      tick(POLL_INTERVAL_MS);
+      await waitFor(() => warns.length === 1, "the first warning");
+
+      server.onPoll = async () => json({ clips: [] });
+      tick(POLL_INTERVAL_MS);
+      await settle();
+
+      server.onPoll = down;
+      tick(POLL_INTERVAL_MS);
+      await waitFor(() => warns.length === 2, "the second warning");
     });
   });
 
