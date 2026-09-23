@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 
-import { RoomKeyMismatchError } from "../index.ts";
-
 import { parseArgs } from "./args.ts";
+import { describeError } from "./errors.ts";
 import { HELP } from "./help.ts";
-import { KeyError } from "./key.ts";
-import { createReporter } from "./output.ts";
 import { link } from "./link.ts";
+import { createReporter } from "./output.ts";
 import { recv } from "./recv.ts";
 import { rooms } from "./rooms.ts";
 import { send } from "./send.ts";
@@ -45,7 +43,7 @@ export async function main(argv: string[]): Promise<number> {
     try {
       return args.command === "rooms" ? await rooms(args, report) : await link(args, report);
     } catch (error) {
-      report.warn(describe(error));
+      report.warn(describeError(error));
       return 1;
     }
   }
@@ -62,29 +60,12 @@ export async function main(argv: string[]): Promise<number> {
       ? await send(args, report)
       : await recv(args, report, controller.signal);
   } catch (error) {
-    report.warn(describe(error));
+    report.warn(describeError(error));
     return 1;
   } finally {
     process.off("SIGINT", interrupt);
     process.off("SIGTERM", interrupt);
   }
-}
-
-/**
- * The failures worth naming precisely: a wrong key and an unreachable server
- * look nothing alike to the person, and "fetch failed" explains neither.
- */
-function describe(error: unknown): string {
-  if (error instanceof RoomKeyMismatchError) {
-    return "That key does not open this room. Check the link or key you were given.";
-  }
-  if (error instanceof KeyError) {
-    return error.message;
-  }
-  if (error instanceof TypeError && /fetch/i.test(error.message)) {
-    return "Could not reach the server. Check your connection, or --url.";
-  }
-  return error instanceof Error ? error.message : String(error);
 }
 
 const exitCode = await main(process.argv.slice(2));
