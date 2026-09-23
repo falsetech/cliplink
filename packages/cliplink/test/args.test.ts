@@ -154,7 +154,7 @@ describe("rooms", () => {
   });
 
   it("names it among the commands when none was given", () => {
-    assert.match(reject([]), /send, recv, rooms, help or version/);
+    assert.match(reject([]), /send, recv, rooms, link, help or version/);
   });
 
   it("takes the rooms flags", () => {
@@ -226,5 +226,23 @@ describe("--last and --all", () => {
   it("is an error on send, rather than silently ignored", () => {
     assert.match(reject(["send", "hi", "--all"]), /--all applies to recv, not send/);
     assert.match(reject(["send", "hi", "--last", "5"]), /--last applies to recv, not send/);
+  });
+});
+
+describe("link", () => {
+  it("is a command", () => {
+    assert.equal(parse(["link", "-r", "X7KP2M"]).command, "link");
+  });
+
+  it("needs a room, since it never creates one", () => {
+    assert.match(reject(["link"]), /link needs a room/);
+  });
+
+  it("takes the room from the environment", () => {
+    assert.equal(parse(["link"], { CLIPLINK_ROOM: "X7KP2M" }).room, "X7KP2M");
+  });
+
+  it("takes no text", () => {
+    assert.match(reject(["link", "X7KP2M"]), /link takes no text/);
   });
 });

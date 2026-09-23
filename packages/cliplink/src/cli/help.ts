@@ -6,6 +6,7 @@ USAGE
   cliplink send [text]        Send a clip. With no text, reads stdin.
   cliplink recv               Print clips as they arrive, until Ctrl-C.
   cliplink rooms              List the rooms --save has kept.
+  cliplink link               Print the share link and QR for a room.
 
   With no --room, send creates a room and prints a link and QR code for
   the other device. That is the path that leaves no key anywhere.
@@ -56,6 +57,7 @@ EXAMPLES
   cliplink recv -r X7KP2M                 follow the room until Ctrl-C
   cliplink recv -r X7KP2M --json          one JSON object per clip
   cliplink recv -r X7KP2M --all           everything the room still holds
+  cliplink link -r X7KP2M                 re-show the link and QR for a room
   cliplink rooms --prune                  list saved rooms, dropping dead ones
 
   Only clip text goes to stdout, so a pipe gets the clip and nothing else.

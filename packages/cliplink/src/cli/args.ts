@@ -11,7 +11,7 @@ import {
 
 import type { Env } from "./env.ts";
 
-export const COMMANDS = ["send", "recv", "rooms", "help", "version"] as const;
+export const COMMANDS = ["send", "recv", "rooms", "link", "help", "version"] as const;
 export type Command = (typeof COMMANDS)[number];
 
 export const DEFAULT_BASE_URL = "https://cliplink.thebkht.com";
@@ -216,7 +216,7 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
   if (command === null) {
     return {
       ok: false,
-      message: "Expected a command: send, recv, rooms, help or version.",
+      message: "Expected a command: send, recv, rooms, link, help or version.",
     };
   }
 
@@ -259,6 +259,14 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
   }
   if (command === "rooms" && args.text) {
     return { ok: false, message: "rooms takes no text." };
+  }
+  if (command === "link" && args.text) {
+    return { ok: false, message: "link takes no text." };
+  }
+  if (command === "link" && !args.room) {
+    // link never creates a room. Minting one just to print its link would
+    // leave a room on the server that nobody asked for.
+    return { ok: false, message: "link needs a room: pass --room, or CLIPLINK_ROOM." };
   }
   if (command !== "rooms") {
     // These read and write the saved-rooms file and mean nothing anywhere
