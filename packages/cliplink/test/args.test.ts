@@ -147,3 +147,42 @@ describe("combinations that cannot mean anything", () => {
     );
   });
 });
+
+describe("rooms", () => {
+  it("is a command", () => {
+    assert.equal(parse(["rooms"]).command, "rooms");
+  });
+
+  it("names it among the commands when none was given", () => {
+    assert.match(reject([]), /send, recv, rooms, help or version/);
+  });
+
+  it("takes the rooms flags", () => {
+    const args = parse(["rooms", "--forget", "X7KP2M", "--show-keys"]);
+    assert.equal(args.forget, "X7KP2M");
+    assert.equal(args.showKeys, true);
+  });
+
+  it("defaults the rooms flags off", () => {
+    const args = parse(["rooms"]);
+    assert.equal(args.forget, null);
+    assert.equal(args.forgetAll, false);
+    assert.equal(args.prune, false);
+    assert.equal(args.showKeys, false);
+  });
+
+  it("takes no text", () => {
+    assert.match(reject(["rooms", "X7KP2M"]), /rooms takes no text/);
+  });
+
+  it("refuses --forget alongside --forget-all", () => {
+    assert.match(reject(["rooms", "--forget", "X7KP2M", "--forget-all"]), /pick one/);
+  });
+
+  it("refuses a rooms flag on another command, rather than ignoring it", () => {
+    assert.match(reject(["send", "hi", "--prune"]), /--prune applies to rooms, not send/);
+    assert.match(reject(["recv", "-r", "X7KP2M", "--show-keys"]), /--show-keys applies to rooms/);
+    assert.match(reject(["send", "hi", "--forget", "X7KP2M"]), /--forget applies to rooms/);
+    assert.match(reject(["send", "hi", "--forget-all"]), /--forget-all applies to rooms/);
+  });
+});

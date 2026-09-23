@@ -11,7 +11,7 @@ import {
 
 import type { Env } from "./env.ts";
 
-export const COMMANDS = ["send", "recv", "help", "version"] as const;
+export const COMMANDS = ["send", "recv", "rooms", "help", "version"] as const;
 export type Command = (typeof COMMANDS)[number];
 
 export const DEFAULT_BASE_URL = "https://cliplink.thebkht.com";
@@ -32,13 +32,21 @@ export type ParsedArgs = {
   quiet: boolean;
   ttlSeconds: number | null;
   baseUrl: string;
+  /** `rooms` only: the room to forget. */
+  forget: string | null;
+  /** `rooms` only: forget every saved room. */
+  forgetAll: boolean;
+  /** `rooms` only: drop the rooms that have expired. */
+  prune: boolean;
+  /** `rooms` only: print the saved keys, which the listing otherwise withholds. */
+  showKeys: boolean;
 };
 
 export type ParseResult =
   | { ok: true; args: ParsedArgs }
   | { ok: false; message: string };
 
-const FLAGS_WITH_VALUES = new Set(["--room", "--key", "--ttl", "--url"]);
+const FLAGS_WITH_VALUES = new Set(["--room", "--key", "--ttl", "--url", "--forget"]);
 
 const ALIASES: Record<string, string> = {
   "-r": "--room",
@@ -72,6 +80,10 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
     quiet: false,
     ttlSeconds: null,
     baseUrl: env.CLIPLINK_URL ?? DEFAULT_BASE_URL,
+    forget: null,
+    forgetAll: false,
+    prune: false,
+    showKeys: false,
   };
 
   const positional: string[] = [];
@@ -106,6 +118,8 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
           args.key = value;
         } else if (name === "--url") {
           args.baseUrl = value;
+        } else if (name === "--forget") {
+          args.forget = value;
         } else {
           // validateRoomTtl is the same check the server applies, so the
           // bounds the help text advertises are enforced before a round trip
@@ -142,6 +156,15 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
         case "--quiet":
           args.quiet = true;
           break;
+        case "--forget-all":
+          args.forgetAll = true;
+          break;
+        case "--prune":
+          args.prune = true;
+          break;
+        case "--show-keys":
+          args.showKeys = true;
+          break;
         case "--help":
           return { ok: true, args: { ...args, command: "help" } };
         case "--version":
@@ -161,7 +184,10 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
   }
 
   if (command === null) {
-    return { ok: false, message: "Expected a command: send, recv, help or version." };
+    return {
+      ok: false,
+      message: "Expected a command: send, recv, rooms, help or version.",
+    };
   }
 
   args.command = command;
@@ -187,6 +213,31 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
   }
   if (command === "recv" && !args.room) {
     return { ok: false, message: "recv needs a room: pass --room, or CLIPLINK_ROOM." };
+  }
+  if (command === "rooms" && args.text) {
+    return { ok: false, message: "rooms takes no text." };
+  }
+  if (command !== "rooms") {
+    // These read and write the saved-rooms file and mean nothing anywhere
+    // else. Silently ignoring one would let `cliplink send --prune` look like
+    // it had pruned something.
+    const misplaced = (
+      [
+        [args.forget !== null, "--forget"],
+        [args.forgetAll, "--forget-all"],
+        [args.prune, "--prune"],
+        [args.showKeys, "--show-keys"],
+      ] as const
+    ).find(([given]) => given);
+    if (misplaced) {
+      return { ok: false, message: `${misplaced[1]} applies to rooms, not ${command}.` };
+    }
+  }
+  if (args.forget !== null && args.forgetAll) {
+    return {
+      ok: false,
+      message: "--forget names one room and --forget-all takes them all; pick one.",
+    };
   }
   if (args.ttlSeconds !== null && args.room) {
     // Saying "this run joins one" explains nothing when the room came from the

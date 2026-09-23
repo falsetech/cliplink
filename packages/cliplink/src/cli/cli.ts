@@ -8,6 +8,7 @@ import { HELP } from "./help.ts";
 import { KeyError } from "./key.ts";
 import { createReporter } from "./output.ts";
 import { recv } from "./recv.ts";
+import { rooms } from "./rooms.ts";
 import { send } from "./send.ts";
 
 async function version() {
@@ -35,6 +36,17 @@ export async function main(argv: string[]): Promise<number> {
   if (args.command === "version") {
     process.stdout.write(`${await version()}\n`);
     return 0;
+  }
+
+  // Reads and writes the config file and never opens a socket, so it runs
+  // before the signal handlers the network commands need.
+  if (args.command === "rooms") {
+    try {
+      return await rooms(args, report);
+    } catch (error) {
+      report.warn(describe(error));
+      return 1;
+    }
   }
 
   // Ctrl-C is how `recv` is meant to end, so it exits cleanly rather than

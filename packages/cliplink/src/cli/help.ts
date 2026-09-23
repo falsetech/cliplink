@@ -5,6 +5,7 @@ export const HELP = `cliplink — cross-device clipboard, from the terminal
 USAGE
   cliplink send [text]        Send a clip. With no text, reads stdin.
   cliplink recv               Print clips as they arrive, until Ctrl-C.
+  cliplink rooms              List the rooms --save has kept.
 
   With no --room, send creates a room and prints a link and QR code for
   the other device. That is the path that leaves no key anywhere.
@@ -17,6 +18,10 @@ OPTIONS
       --ttl <seconds>     Lifetime of a room being created (3600–86400).
   -1, --one               recv: print the next clip, then exit.
   -q, --quiet             Suppress commentary on stderr.
+      --forget <code>     rooms: forget one saved room.
+      --forget-all        rooms: forget every saved room.
+      --prune             rooms: drop the rooms that have expired.
+      --show-keys         rooms: print the saved keys, withheld by default.
       --url <origin>      Deployment to talk to.
                           Default ${DEFAULT_BASE_URL}
   -h, --help              This text.
@@ -46,6 +51,7 @@ EXAMPLES
   cliplink send "note to self" --save     keep the room for later
   cliplink recv -r X7KP2M --one | pbcopy  wait for one clip, copy it
   cliplink recv -r X7KP2M                 follow the room until Ctrl-C
+  cliplink rooms --prune                  list saved rooms, dropping dead ones
 
   Only clip text goes to stdout, so a pipe gets the clip and nothing else.
 
