@@ -622,6 +622,49 @@ describe("recv", () => {
 
       assert.deepEqual(data, ["back online"]);
     });
+
+    it("says why once for a run of failures, not once per poll", async () => {
+      const { warns, notes } = await start();
+      FakeSocket.last.fail();
+
+      server.onPoll = async () => {
+        throw new Error("network down");
+      };
+
+      for (let poll = 0; poll < 5; poll += 1) {
+        tick(POLL_INTERVAL_MS);
+        await settle();
+      }
+
+      // A server that is down stays down; a line every 1.5s would bury the
+      // clips and the first line that said why.
+      assert.deepEqual(warns, [`Could not reach ${CODE}: network down`]);
+      assert.ok(server.polls.length >= 5, "it kept polling regardless");
+
+      server.onPoll = async () => json({ clips: [] });
+      tick(POLL_INTERVAL_MS);
+      await waitFor(() => notes.includes(`Reached ${CODE} again.`), "the recovery note");
+    });
+
+    it("says why afresh when polling fails again after recovering", async () => {
+      const { warns } = await start();
+      FakeSocket.last.fail();
+
+      const down = async () => {
+        throw new Error("network down");
+      };
+      server.onPoll = down;
+      tick(POLL_INTERVAL_MS);
+      await waitFor(() => warns.length === 1, "the first warning");
+
+      server.onPoll = async () => json({ clips: [] });
+      tick(POLL_INTERVAL_MS);
+      await settle();
+
+      server.onPoll = down;
+      tick(POLL_INTERVAL_MS);
+      await waitFor(() => warns.length === 2, "the second warning");
+    });
   });
 
   describe("when the socket comes back", () => {

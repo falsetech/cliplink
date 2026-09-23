@@ -159,6 +159,8 @@ function listen(
   let retryTimer: NodeJS.Timeout | null = null;
   let attempts = 0;
   let announcedFallback = false;
+  /** Whether the last poll failed, so a run of failures is reported once. */
+  let pollFailing = false;
 
   const stopPolling = () => {
     if (pollTimer) {
@@ -173,11 +175,21 @@ function listen(
         session.code,
         cursor.lastSeenId,
       );
+      if (pollFailing) {
+        pollFailing = false;
+        report.note(`Reached ${session.code} again.`);
+      }
       emit(clips);
     } catch (error) {
-      report.warn(
-        `Could not reach ${session.code}: ${error instanceof Error ? error.message : error}`,
-      );
+      // Once per run of failures, not once per poll. A server that is down
+      // stays down, and a line every 1.5s for as long as that lasts buries
+      // the clips in the scrollback and the first line that said why.
+      if (!pollFailing) {
+        pollFailing = true;
+        report.warn(
+          `Could not reach ${session.code}: ${error instanceof Error ? error.message : error}`,
+        );
+      }
     }
   };
 
