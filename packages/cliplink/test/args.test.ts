@@ -270,3 +270,39 @@ describe("colour", () => {
     assert.match(reject(["send", "hi", "--no-color=1"]), /does not take a value/);
   });
 });
+
+describe("clustered short flags", () => {
+  it("splits a run of boolean short flags", () => {
+    const args = parse(["recv", "-r", "X7KP2M", "-q1"]);
+    assert.equal(args.quiet, true);
+    assert.equal(args.one, true);
+  });
+
+  it("lets a value-taking flag end the cluster", () => {
+    const args = parse(["recv", "-qr", "X7KP2M"]);
+    assert.equal(args.quiet, true);
+    assert.equal(args.room, "X7KP2M");
+  });
+
+  it("refuses a value-taking flag in the middle, where its value cannot go", () => {
+    assert.match(reject(["recv", "-rq", "X7KP2M"]), /--room takes a value, so -r must come last/);
+  });
+
+  it("leaves a run that is not all short flags to the unknown-option error", () => {
+    assert.match(reject(["send", "hi", "-qz"]), /Unknown option -qz/);
+    assert.match(reject(["send", "hi", "-50"]), /Unknown option -50/);
+  });
+
+  it("does not take apart a short flag that is already one token", () => {
+    assert.equal(parse(["recv", "-r", "X7KP2M", "-1"]).one, true);
+  });
+
+  it("leaves everything after -- alone", () => {
+    assert.equal(parse(["send", "--", "-q1"]).text, "-q1");
+  });
+
+  it("still reports help and version from inside a cluster", () => {
+    assert.equal(parse(["send", "-qh"]).command, "help");
+    assert.equal(parse(["send", "-qv"]).command, "version");
+  });
+});

@@ -81,13 +81,65 @@ function isCommand(value: string): value is Command {
 }
 
 /**
+ * Splits `-q1` into `-q -1`, the way every other CLI does.
+ *
+ * Only a run whose every letter is a known short flag is expanded. Anything
+ * else is passed through untouched, so `-50` and `-kSECRET` still reach the
+ * unknown-option error rather than being taken apart into letters and
+ * misreported. A short flag that takes a value has to come last, since the
+ * token after the cluster can only be one flag's value.
+ */
+function expandClusters(argv: string[]): ParseResult | string[] {
+  const expanded: string[] = [];
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const raw = argv[index];
+
+    // Past `--` nothing is a flag, cluster-shaped or not.
+    if (raw === "--") {
+      expanded.push(...argv.slice(index));
+      break;
+    }
+
+    const letters = /^-([A-Za-z0-9]{2,})$/.exec(raw)?.[1];
+    if (
+      letters === undefined ||
+      ALIASES[raw] !== undefined ||
+      ![...letters].every((letter) => ALIASES[`-${letter}`] !== undefined)
+    ) {
+      expanded.push(raw);
+      continue;
+    }
+
+    for (const [position, letter] of [...letters].entries()) {
+      const name = ALIASES[`-${letter}`];
+      if (FLAGS_WITH_VALUES.has(name) && position < letters.length - 1) {
+        return {
+          ok: false,
+          message: `${name} takes a value, so -${letter} must come last in ${raw}.`,
+        };
+      }
+      expanded.push(`-${letter}`);
+    }
+  }
+
+  return expanded;
+}
+
+/**
  * Parses `argv` as the CLI sees it, without the node and script entries.
  *
  * Unknown flags are an error rather than positional text: a mistyped `--quite`
  * silently becoming the clip you send is the kind of thing you only notice on
  * the other device.
  */
-export function parseArgs(argv: string[], env: Env = {}): ParseResult {
+export function parseArgs(rawArgv: string[], env: Env = {}): ParseResult {
+  const expanded = expandClusters(rawArgv);
+  if (!Array.isArray(expanded)) {
+    return expanded;
+  }
+  const argv = expanded;
+
   const args: ParsedArgs = {
     command: "help",
     text: "",
