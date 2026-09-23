@@ -89,3 +89,23 @@ describe("link", () => {
     await assert.rejects(run(["link", "-r", CODE, "--url", BASE]), /needs its key/);
   });
 });
+
+describe("link colour", () => {
+  const ESCAPE = "\u001b[";
+
+  it("colours the QR by default, since block characters invert on a dark theme", async () => {
+    const result = await run(["link", "-r", CODE, "--open", "--url", BASE], true);
+
+    assert.ok(result.notes.some((note) => note.includes(ESCAPE)), "an escape sequence");
+  });
+
+  it("draws it bare under --no-color", async () => {
+    const result = await run(["link", "-r", CODE, "--open", "--url", BASE, "--no-color"], true);
+
+    assert.ok(result.notes.some((note) => note.includes("█")), "still a QR");
+    assert.ok(
+      result.notes.every((note) => !note.includes(ESCAPE)),
+      "no escape sequence",
+    );
+  });
+});

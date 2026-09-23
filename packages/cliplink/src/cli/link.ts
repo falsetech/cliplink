@@ -27,7 +27,7 @@ export async function link(args: ParsedArgs, report: Reporter): Promise<number> 
 
   if (report.interactive) {
     report.note("");
-    report.note(renderQr(session.url));
+    report.note(renderQr(session.url, { color: args.color }));
   }
 
   return 0;

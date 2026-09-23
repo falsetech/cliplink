@@ -22,6 +22,7 @@ OPTIONS
       --last <n>          recv: replay the last n clips before listening.
       --all               recv: replay every clip the room still holds.
   -q, --quiet             Suppress commentary on stderr.
+      --no-color          Draw the QR without colour. See NO_COLOR.
       --forget <code>     rooms: forget one saved room.
       --forget-all        rooms: forget every saved room.
       --prune             rooms: drop the rooms that have expired.
@@ -49,6 +50,7 @@ ENVIRONMENT
   CLIPLINK_ROOM_KEY    Default --key
   CLIPLINK_URL         Default --url
   CLIPLINK_CONFIG_DIR  Overrides where --save writes
+  NO_COLOR             Set to anything: same as --no-color
 
 EXAMPLES
   git log -1 | cliplink send              create a room, send, print a QR

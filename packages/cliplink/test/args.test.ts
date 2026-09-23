@@ -246,3 +246,27 @@ describe("link", () => {
     assert.match(reject(["link", "X7KP2M"]), /link takes no text/);
   });
 });
+
+describe("colour", () => {
+  it("is on by default", () => {
+    assert.equal(parse(["send", "hi"]).color, true);
+  });
+
+  it("is off under --no-color, spelled either way", () => {
+    assert.equal(parse(["send", "hi", "--no-color"]).color, false);
+    assert.equal(parse(["send", "hi", "--no-colour"]).color, false);
+  });
+
+  it("is off when NO_COLOR is set to anything", () => {
+    assert.equal(parse(["send", "hi"], { NO_COLOR: "1" }).color, false);
+    assert.equal(parse(["send", "hi"], { NO_COLOR: "0" }).color, false);
+  });
+
+  it("is on when NO_COLOR is set but empty, as the convention has it", () => {
+    assert.equal(parse(["send", "hi"], { NO_COLOR: "" }).color, true);
+  });
+
+  it("takes no value", () => {
+    assert.match(reject(["send", "hi", "--no-color=1"]), /does not take a value/);
+  });
+});

@@ -36,6 +36,12 @@ export type ParsedArgs = {
   all: boolean;
   /** Suppress the human-facing commentary on stderr. */
   quiet: boolean;
+  /**
+   * Whether to colour the QR. Off leaves it in the terminal's own colours,
+   * which many scanners will not read on a dark theme — but honouring the
+   * request is the point, and the link is printed as text either way.
+   */
+  color: boolean;
   ttlSeconds: number | null;
   baseUrl: string;
   /** `rooms` only: the room to forget. */
@@ -94,6 +100,8 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
     last: null,
     all: false,
     quiet: false,
+    // https://no-color.org: set to anything non-empty, and colour is off.
+    color: (env.NO_COLOR ?? "") === "",
     ttlSeconds: null,
     baseUrl: env.CLIPLINK_URL ?? DEFAULT_BASE_URL,
     forget: null,
@@ -185,6 +193,10 @@ export function parseArgs(argv: string[], env: Env = {}): ParseResult {
           break;
         case "--quiet":
           args.quiet = true;
+          break;
+        case "--no-color":
+        case "--no-colour":
+          args.color = false;
           break;
         case "--forget-all":
           args.forgetAll = true;
