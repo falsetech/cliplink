@@ -32,6 +32,8 @@ export async function recv(
   return new Promise<number>((resolve) => {
     let finished = false;
     let stop: Stop = () => {};
+    let printed = 0;
+    let deadline: NodeJS.Timeout | null = null;
 
     const emit = (clips: Clip[]) => {
       const fresh = clips
@@ -44,6 +46,7 @@ export async function recv(
       cursor.lastSeenId = fresh[fresh.length - 1].id;
       for (const clip of fresh) {
         report.data(args.json ? line(clip) : clip.text);
+        printed += 1;
         if (args.one) {
           finish(0);
           return;
@@ -56,6 +59,9 @@ export async function recv(
         return;
       }
       finished = true;
+      if (deadline) {
+        clearTimeout(deadline);
+      }
       stop();
       session.transport.disconnect();
       resolve(code);
@@ -70,6 +76,21 @@ export async function recv(
     emit(response.clips);
     if (finished) {
       return;
+    }
+
+    if (args.timeoutSeconds !== null) {
+      const seconds = args.timeoutSeconds;
+      deadline = setTimeout(() => {
+        // Nothing arrived, so nothing was written to stdout — a caller that
+        // pipes this needs the exit code to say so, or an empty clip and a
+        // clip that never came look alike.
+        report.note(
+          printed === 0
+            ? `Nothing arrived within ${seconds}s.`
+            : `Stopping after ${seconds}s.`,
+        );
+        finish(printed === 0 ? 1 : 0);
+      }, seconds * 1000);
     }
 
     stop = listen(session, report, cursor, emit, () => finished);

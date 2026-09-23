@@ -34,6 +34,8 @@ export type ParsedArgs = {
   last: number | null;
   /** `recv` only: replay every clip the room still holds before listening. */
   all: boolean;
+  /** `recv` only: give up after this many seconds. */
+  timeoutSeconds: number | null;
   /** Suppress the human-facing commentary on stderr. */
   quiet: boolean;
   /**
@@ -65,6 +67,7 @@ const FLAGS_WITH_VALUES = new Set([
   "--url",
   "--forget",
   "--last",
+  "--timeout",
 ]);
 
 const ALIASES: Record<string, string> = {
@@ -151,6 +154,7 @@ export function parseArgs(rawArgv: string[], env: Env = {}): ParseResult {
     json: false,
     last: null,
     all: false,
+    timeoutSeconds: null,
     quiet: false,
     // https://no-color.org: set to anything non-empty, and colour is off.
     color: (env.NO_COLOR ?? "") === "",
@@ -196,6 +200,12 @@ export function parseArgs(rawArgv: string[], env: Env = {}): ParseResult {
           args.baseUrl = value;
         } else if (name === "--forget") {
           args.forget = value;
+        } else if (name === "--timeout") {
+          const seconds = value.trim() === "" ? Number.NaN : Number(value);
+          if (!Number.isFinite(seconds) || seconds <= 0) {
+            return { ok: false, message: "--timeout takes a positive number of seconds." };
+          }
+          args.timeoutSeconds = seconds;
         } else if (name === "--last") {
           // Number("") is 0, and an empty --last is a mistake rather than a
           // request for no clips.
@@ -304,6 +314,9 @@ export function parseArgs(rawArgv: string[], env: Env = {}): ParseResult {
   }
   if (command !== "recv" && args.json) {
     return { ok: false, message: `--json applies to recv, not ${command}.` };
+  }
+  if (command !== "recv" && args.timeoutSeconds !== null) {
+    return { ok: false, message: `--timeout applies to recv, not ${command}.` };
   }
   if (command !== "recv" && (args.last !== null || args.all)) {
     const name = args.all ? "--all" : "--last";

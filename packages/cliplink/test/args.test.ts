@@ -306,3 +306,24 @@ describe("clustered short flags", () => {
     assert.equal(parse(["send", "-qv"]).command, "version");
   });
 });
+
+describe("--timeout", () => {
+  it("is absent by default, so recv waits forever", () => {
+    assert.equal(parse(["recv", "-r", "X7KP2M"]).timeoutSeconds, null);
+  });
+
+  it("parses seconds", () => {
+    assert.equal(parse(["recv", "-r", "X7KP2M", "--timeout", "30"]).timeoutSeconds, 30);
+    assert.equal(parse(["recv", "-r", "X7KP2M", "--timeout=1.5"]).timeoutSeconds, 1.5);
+  });
+
+  it("refuses a timeout that would never fire", () => {
+    for (const value of ["0", "-1", "soon", ""]) {
+      assert.match(reject(["recv", "-r", "X7KP2M", "--timeout", value]), /positive number/);
+    }
+  });
+
+  it("is an error on send, rather than silently ignored", () => {
+    assert.match(reject(["send", "hi", "--timeout", "30"]), /--timeout applies to recv, not send/);
+  });
+});

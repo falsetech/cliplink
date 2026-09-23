@@ -292,6 +292,52 @@ describe("recv", () => {
       assert.equal(JSON.parse(data[0]).text, "one");
     });
 
+    it("gives up after --timeout, exiting 1 when no clip arrived", async () => {
+      const { result, notes } = await start(["--one", "--timeout", "30"]);
+
+      tick(30_000);
+
+      assert.equal(await result, 1);
+      assert.ok(notes.includes("Nothing arrived within 30s."));
+      assert.equal(liveTimers.size, 0, "no timer left running");
+    });
+
+    it("exits 0 when a clip did arrive before the deadline", async () => {
+      const { result, data } = await start(["--timeout", "30"]);
+
+      FakeSocket.last.ready();
+      FakeSocket.last.deliver({ type: "clip", clip: await seal(1, "hello") });
+      await waitFor(() => data.length === 1, "the clip");
+
+      tick(30_000);
+
+      assert.equal(await result, 0);
+      assert.deepEqual(data, ["hello"]);
+    });
+
+    it("does not fire the deadline once --one has been satisfied", async () => {
+      const { result, data } = await start(["--one", "--timeout", "30"]);
+
+      FakeSocket.last.ready();
+      FakeSocket.last.deliver({ type: "clip", clip: await seal(1, "hello") });
+
+      assert.equal(await result, 0);
+      // The deadline was cleared with everything else, so 30s later there is
+      // nothing left to fire.
+      tick(30_000);
+      assert.deepEqual(data, ["hello"]);
+      assert.equal(liveTimers.size, 0, "no timer left running");
+    });
+
+    it("waits forever without --timeout", async () => {
+      const { data } = await start(["--one"]);
+
+      tick(300_000);
+      await settle();
+
+      assert.deepEqual(data, []);
+    });
+
     it("prints one JSON object per clip under --json", async () => {
       const { data } = await start(["--json"]);
 

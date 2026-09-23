@@ -21,6 +21,8 @@ OPTIONS
       --json              recv: print each clip as a JSON object.
       --last <n>          recv: replay the last n clips before listening.
       --all               recv: replay every clip the room still holds.
+      --timeout <secs>    recv: give up after this long. Exits 1 if no
+                          clip arrived, so a script can tell.
   -q, --quiet             Suppress commentary on stderr.
       --no-color          Draw the QR without colour. See NO_COLOR.
       --forget <code>     rooms: forget one saved room.
@@ -56,6 +58,7 @@ EXAMPLES
   git log -1 | cliplink send              create a room, send, print a QR
   cliplink send "note to self" --save     keep the room for later
   cliplink recv -r X7KP2M --one | pbcopy  wait for one clip, copy it
+  cliplink recv -r X7KP2M -1 --timeout 30 wait, but not forever
   cliplink recv -r X7KP2M                 follow the room until Ctrl-C
   cliplink recv -r X7KP2M --json          one JSON object per clip
   cliplink recv -r X7KP2M --all           everything the room still holds
