@@ -24,8 +24,14 @@ export function settle(ms = 25) {
  * Waits for `condition` to hold, yielding to the event loop between checks.
  * Prefer this to `settle` whenever there is something to wait *for*: it
  * returns the moment the work lands rather than after a guess.
+ *
+ * The deadline is generous because it is a guard against a hang, not an
+ * assertion about speed: these conditions land in single-digit milliseconds,
+ * and the only thing a tight bound buys is a test that fails when the machine
+ * stalls. `node --test` runs a process per file, so how long a wait takes in
+ * wall clock says more about what else is running than about the code.
  */
-export async function waitFor(condition: () => boolean, what: string, timeoutMs = 2_000) {
+export async function waitFor(condition: () => boolean, what: string, timeoutMs = 15_000) {
   const deadline = performance.now() + timeoutMs;
   while (!condition()) {
     if (performance.now() > deadline) {

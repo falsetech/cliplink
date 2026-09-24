@@ -63,16 +63,23 @@ export async function openSession(args: ParsedArgs): Promise<Session> {
   const key = await generateRoomKey();
   // The server is told the fingerprint, never the key: it can tell a joiner
   // their key is wrong without being any closer to holding it.
-  const { code } = await http.createRoomRequest(key.check, args.ttlSeconds ?? undefined);
+  const { code, ttlSeconds } = await http.createRoomRequest(
+    key.check,
+    args.ttlSeconds ?? undefined,
+  );
   const transport = createEncryptedTransport(createWebSocketTransport(options));
   transport.setRoomKey(code, key);
 
   if (args.save) {
+    const savedAt = Date.now();
+    // Creating is the one path that learns the room's lifetime, so it is the
+    // one that can record a real expiry rather than an upper bound.
     await saveRoom({
       code,
       key: key.encoded,
       baseUrl: args.baseUrl,
-      savedAt: Date.now(),
+      savedAt,
+      expiresAt: savedAt + ttlSeconds * 1000,
     });
   }
 

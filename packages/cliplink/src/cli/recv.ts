@@ -19,18 +19,11 @@ export async function recv(
   const session = await openSession(args);
   const response = await session.transport.connect(session.code);
 
-  // Start from the newest clip the room already holds. A room keeps its last
-  // fifty, and dumping those into a pipe is not what "receive" means here.
-  //
   // One cursor, shared with the listener: the socket and the poller both ask
   // the server for clips after it, and whichever delivers one first moves it,
   // so a clip cannot be printed twice when the two overlap during a fallback.
-  const cursor = {
-    lastSeenId: response.clips.reduce(
-      (highest, clip) => Math.max(highest, clip.id),
-      0,
-    ),
-  };
+  // Starting it below the backlog is all replaying takes.
+  const cursor = { lastSeenId: replayFrom(response.clips, args) };
 
   report.note(
     `Listening on ${session.code}. ${args.one ? "Waiting for the next clip." : "Ctrl-C to stop."}`,
@@ -39,6 +32,8 @@ export async function recv(
   return new Promise<number>((resolve) => {
     let finished = false;
     let stop: Stop = () => {};
+    let printed = 0;
+    let deadline: NodeJS.Timeout | null = null;
 
     const emit = (clips: Clip[]) => {
       const fresh = clips
@@ -50,7 +45,8 @@ export async function recv(
 
       cursor.lastSeenId = fresh[fresh.length - 1].id;
       for (const clip of fresh) {
-        report.data(clip.text);
+        report.data(args.json ? line(clip) : clip.text);
+        printed += 1;
         if (args.one) {
           finish(0);
           return;
@@ -63,13 +59,81 @@ export async function recv(
         return;
       }
       finished = true;
+      if (deadline) {
+        clearTimeout(deadline);
+      }
       stop();
       session.transport.disconnect();
       resolve(code);
     };
 
     signal?.addEventListener("abort", () => finish(0), { once: true });
+
+    // The room's own clips go through the same path as a clip that arrives
+    // later, so --one and --json mean the same thing for both. With neither
+    // --last nor --all the cursor already sits at the newest, and this emits
+    // nothing.
+    emit(response.clips);
+    if (finished) {
+      return;
+    }
+
+    if (args.timeoutSeconds !== null) {
+      const seconds = args.timeoutSeconds;
+      deadline = setTimeout(() => {
+        // Nothing arrived, so nothing was written to stdout — a caller that
+        // pipes this needs the exit code to say so, or an empty clip and a
+        // clip that never came look alike.
+        report.note(
+          printed === 0
+            ? `Nothing arrived within ${seconds}s.`
+            : `Stopping after ${seconds}s.`,
+        );
+        finish(printed === 0 ? 1 : 0);
+      }, seconds * 1000);
+    }
+
     stop = listen(session, report, cursor, emit, () => finished);
+  });
+}
+
+/**
+ * The clip id to start after, which is what decides how much of the room's
+ * backlog is replayed.
+ *
+ * The default is the newest clip: a room keeps its last fifty, and dumping
+ * those into a pipe is not what "receive" means. `--all` starts from nothing
+ * and `--last N` from just below the newest N, so both are a choice of where
+ * the cursor begins rather than a second kind of request.
+ */
+function replayFrom(clips: Clip[], args: ParsedArgs) {
+  if (args.all) {
+    return 0;
+  }
+
+  const ids = clips.map((clip) => clip.id).sort((left, right) => left - right);
+  if (args.last === null) {
+    return ids.at(-1) ?? 0;
+  }
+  // Fewer clips than asked for is not an error; the room has what it has.
+  return ids[ids.length - args.last - 1] ?? 0;
+}
+
+/**
+ * One clip as a line of JSON, for `--json`.
+ *
+ * The fields are named rather than the clip being stringified whole, because
+ * this is an output format other programs parse: a field added to the wire type
+ * should not appear here without someone deciding it should. Text still reaches
+ * stdout decrypted — `--json` changes the shape of the output, not what the CLI
+ * is willing to reveal.
+ */
+function line(clip: Clip) {
+  return JSON.stringify({
+    id: clip.id,
+    text: clip.text,
+    senderId: clip.senderId,
+    ts: clip.ts,
   });
 }
 
@@ -95,6 +159,8 @@ function listen(
   let retryTimer: NodeJS.Timeout | null = null;
   let attempts = 0;
   let announcedFallback = false;
+  /** Whether the last poll failed, so a run of failures is reported once. */
+  let pollFailing = false;
 
   const stopPolling = () => {
     if (pollTimer) {
@@ -109,11 +175,21 @@ function listen(
         session.code,
         cursor.lastSeenId,
       );
+      if (pollFailing) {
+        pollFailing = false;
+        report.note(`Reached ${session.code} again.`);
+      }
       emit(clips);
     } catch (error) {
-      report.warn(
-        `Could not reach ${session.code}: ${error instanceof Error ? error.message : error}`,
-      );
+      // Once per run of failures, not once per poll. A server that is down
+      // stays down, and a line every 1.5s for as long as that lasts buries
+      // the clips in the scrollback and the first line that said why.
+      if (!pollFailing) {
+        pollFailing = true;
+        report.warn(
+          `Could not reach ${session.code}: ${error instanceof Error ? error.message : error}`,
+        );
+      }
     }
   };
 

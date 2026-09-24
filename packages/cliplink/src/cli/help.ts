@@ -5,6 +5,8 @@ export const HELP = `cliplink — cross-device clipboard, from the terminal
 USAGE
   cliplink send [text]        Send a clip. With no text, reads stdin.
   cliplink recv               Print clips as they arrive, until Ctrl-C.
+  cliplink rooms              List the rooms --save has kept.
+  cliplink link               Print the share link and QR for a room.
 
   With no --room, send creates a room and prints a link and QR code for
   the other device. That is the path that leaves no key anywhere.
@@ -16,7 +18,17 @@ OPTIONS
       --save              Remember this room and key in the config file.
       --ttl <seconds>     Lifetime of a room being created (3600–86400).
   -1, --one               recv: print the next clip, then exit.
+      --json              recv: print each clip as a JSON object.
+      --last <n>          recv: replay the last n clips before listening.
+      --all               recv: replay every clip the room still holds.
+      --timeout <secs>    recv: give up after this long. Exits 1 if no
+                          clip arrived, so a script can tell.
   -q, --quiet             Suppress commentary on stderr.
+      --no-color          Draw the QR without colour. See NO_COLOR.
+      --forget <code>     rooms: forget one saved room.
+      --forget-all        rooms: forget every saved room.
+      --prune             rooms: drop the rooms that have expired.
+      --show-keys         rooms: print the saved keys, withheld by default.
       --url <origin>      Deployment to talk to.
                           Default ${DEFAULT_BASE_URL}
   -h, --help              This text.
@@ -40,12 +52,18 @@ ENVIRONMENT
   CLIPLINK_ROOM_KEY    Default --key
   CLIPLINK_URL         Default --url
   CLIPLINK_CONFIG_DIR  Overrides where --save writes
+  NO_COLOR             Set to anything: same as --no-color
 
 EXAMPLES
   git log -1 | cliplink send              create a room, send, print a QR
   cliplink send "note to self" --save     keep the room for later
   cliplink recv -r X7KP2M --one | pbcopy  wait for one clip, copy it
+  cliplink recv -r X7KP2M -1 --timeout 30 wait, but not forever
   cliplink recv -r X7KP2M                 follow the room until Ctrl-C
+  cliplink recv -r X7KP2M --json          one JSON object per clip
+  cliplink recv -r X7KP2M --all           everything the room still holds
+  cliplink link -r X7KP2M                 re-show the link and QR for a room
+  cliplink rooms --prune                  list saved rooms, dropping dead ones
 
   Only clip text goes to stdout, so a pipe gets the clip and nothing else.
 
