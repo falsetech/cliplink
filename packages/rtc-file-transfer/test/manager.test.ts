@@ -907,6 +907,113 @@ describe("verified blocks and resume", () => {
     assert.deepEqual(new Uint8Array(await incoming(carol)[0].blob!.arrayBuffer()), source);
   });
 
+  it("collapses two peers offering the same content into one item with two sources", async () => {
+    const store = memoryStore();
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00", {
+      resume: store.provider,
+      keepReceived: true,
+    });
+    const source = randomBytes(MB + 9);
+
+    alice.manager.offerFiles([new File([source], "twice.bin")], { digest: true });
+    await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+    const digest = incoming(bob)[0].digest!;
+    bob.manager.request(incoming(bob)[0].id);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 5000);
+    bob.manager.seed(await store.provider.list());
+
+    // A late joiner hears the same file from both devices.
+    const carol = bus.addPeer("peer-carol");
+    alice.manager.announce();
+    bob.manager.announce();
+    await waitFor(() => (incoming(carol)[0]?.sources?.length ?? 0) === 2, 5000);
+
+    assert.equal(incoming(carol).length, 1, "one row, not one per device");
+    const item = incoming(carol)[0];
+    assert.equal(item.digest, digest);
+    assert.deepEqual(
+      item.sources!.map((entry) => entry.peerId).sort(),
+      ["peer-alice", "peer-bob00"],
+    );
+    assert.ok(item.sources!.every((entry) => entry.have === source.byteLength));
+    assert.equal(item.peerId, item.sources![0].peerId, "the first source is the active one");
+
+    // One device stops sharing: the row stays, with the other device behind it.
+    const other = item.sources!.find((entry) => entry.peerId !== item.peerId)!;
+    bus.peers
+      .get(other.peerId)!
+      .manager.revoke(
+        bus.peers
+          .get(other.peerId)!
+          .items.find((candidate) => candidate.direction === "outgoing")!.id,
+      );
+    await waitFor(() => incoming(carol)[0]?.sources?.length === 1, 5000);
+    assert.equal(incoming(carol)[0].status, "offered", "still downloadable");
+
+    // The last one goes too: now there is nothing left to download from.
+    const active = incoming(carol)[0].peerId;
+    bus.peers
+      .get(active)!
+      .manager.revoke(
+        bus.peers
+          .get(active)!
+          .items.find((candidate) => candidate.direction === "outgoing")!.id,
+      );
+    await waitFor(() => incoming(carol)[0]?.status === "revoked", 5000);
+  });
+
+  it("keeps a row per peer when an offer carries no digest", async () => {
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00");
+    const carol = bus.addPeer("peer-carol");
+    const source = randomBytes(4096);
+
+    // Byte-for-byte the same file, but nothing on the wire says so: without a
+    // digest there is no way to know, so they stay two offers.
+    alice.manager.offerFiles([new File([source], "same.bin")]);
+    bob.manager.offerFiles([new File([source], "same.bin")]);
+    await waitFor(() => incoming(carol).length === 2);
+    assert.deepEqual(
+      incoming(carol).map((item) => item.sources?.length),
+      [1, 1],
+    );
+  });
+
+  it("promotes another source when the active one leaves", async () => {
+    const store = memoryStore();
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00", {
+      resume: store.provider,
+      keepReceived: true,
+    });
+    const source = randomBytes(MB + 1);
+
+    alice.manager.offerFiles([new File([source], "handoff.bin")], { digest: true });
+    await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+    bob.manager.request(incoming(bob)[0].id);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 5000);
+    bob.manager.seed(await store.provider.list());
+
+    const carol = bus.addPeer("peer-carol");
+    alice.manager.announce();
+    bob.manager.announce();
+    await waitFor(() => (incoming(carol)[0]?.sources?.length ?? 0) === 2, 5000);
+    const wasActive = incoming(carol)[0].peerId;
+
+    carol.manager.handleSignal(wasActive, { type: "peer-left" });
+    await waitFor(() => incoming(carol)[0]?.peerId !== wasActive, 5000);
+    assert.equal(incoming(carol)[0].status, "offered");
+    assert.equal(incoming(carol)[0].sources!.length, 1);
+
+    assert.equal(carol.manager.request(incoming(carol)[0].id), true);
+    await waitFor(() => carol.notices.some((notice) => notice.type === "received"), 5000);
+    assert.deepEqual(new Uint8Array(await incoming(carol)[0].blob!.arrayBuffer()), source);
+  });
+
   it("cancels cleanly when the store no longer has a file it is seeding", async () => {
     const store = memoryStore();
     bus = new FakeSignaling();

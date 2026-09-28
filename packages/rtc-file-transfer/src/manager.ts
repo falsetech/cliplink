@@ -81,6 +81,25 @@ export type OutgoingTransfer = {
   etaMs?: number;
 };
 
+/**
+ * One peer offering an item's exact content, as told apart by its `digest`.
+ *
+ * Several devices in a room can hold the same file, and each announces it
+ * under its own offer id. They are one row to the person looking at them, so
+ * they are one item here, with the peers behind it listed.
+ */
+export type ItemSource = {
+  peerId: PeerId;
+  offerId: string;
+  /**
+   * Verified bytes this peer can serve, which is `size` for a complete file.
+   * A peer that holds only a prefix says so in its offer.
+   */
+  have: number;
+  /** What that peer supports; `item.caps` mirrors the active source's. */
+  caps?: Capability[];
+};
+
 export type FileItem = FileOffer & {
   /** Unique per sender: `${peerId}:${offerId}`. */
   id: string;
@@ -123,6 +142,12 @@ export type FileItem = FileOffer & {
    * absent on incoming items — those report their own progress in `bytes`.
    */
   outgoingTransfers?: OutgoingTransfer[];
+  /**
+   * Every peer offering this exact content (incoming only), in the order they
+   * were heard from. `peerId`, `offerId` and `caps` mirror the first one: the
+   * source a download uses. Absent on outgoing items.
+   */
+  sources?: ItemSource[];
 };
 
 /**
@@ -1809,15 +1834,96 @@ export function createFileTransferManager(
   // ---------------------------------------------------------------------------
   // Signal handling
 
+  /** The active source is always the first entry, so these stay in step. */
+  function promoteSource(item: FileItem, source: ItemSource) {
+    item.peerId = source.peerId;
+    item.offerId = source.offerId;
+    item.caps = source.caps;
+  }
+
+  /**
+   * An incoming item already holding this exact content, or undefined. Only
+   * offers that carry a `digest` can be matched: without one there is nothing
+   * that says two peers mean the same bytes, so a v1 offer gets its own row
+   * exactly as it always has.
+   */
+  function itemForContent(offer: FileOffer) {
+    if (!offer.digest) {
+      return undefined;
+    }
+    for (const item of items.values()) {
+      if (
+        item.direction === "incoming" &&
+        item.digest === offer.digest &&
+        item.size === offer.size &&
+        item.status !== "revoked"
+      ) {
+        return item;
+      }
+    }
+    return undefined;
+  }
+
+  /** The item a signal about `offerId` from `from` is about, if any. */
+  function itemForOffer(from: PeerId, offerId: string) {
+    const direct = items.get(itemKey(from, offerId));
+    if (direct) {
+      return direct;
+    }
+    for (const item of items.values()) {
+      if (
+        item.direction === "incoming" &&
+        item.sources?.some(
+          (source) => source.peerId === from && source.offerId === offerId,
+        )
+      ) {
+        return item;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Forgets what `from` was offering. Returns whether anything is left to
+   * download from; the caller revokes the item when nothing is.
+   */
+  function dropSource(item: FileItem, from: PeerId, offerId?: string) {
+    const sources = item.sources ?? [];
+    const remaining = sources.filter(
+      (source) =>
+        source.peerId !== from ||
+        (offerId !== undefined && source.offerId !== offerId),
+    );
+    if (remaining.length === 0) {
+      return false;
+    }
+    if (remaining.length !== sources.length) {
+      item.sources = remaining;
+      if (item.peerId === from) {
+        promoteSource(item, remaining[0]);
+      }
+    }
+    return true;
+  }
+
   function handleOffer(from: PeerId, offer: FileOffer) {
     if (offer.size <= 0 || offer.size > limits.maxFileBytes) {
       return;
     }
     const id = itemKey(from, offer.offerId);
-    const existing = items.get(id);
+    const existing = items.get(id) ?? itemForOffer(from, offer.offerId);
     if (existing) {
       // Re-announced after the sender reconnected, or once its digest is ready.
-      existing.caps = offer.caps;
+      const source = existing.sources?.find(
+        (candidate) => candidate.peerId === from && candidate.offerId === offer.offerId,
+      );
+      if (source) {
+        source.caps = offer.caps;
+        source.have = offer.size;
+      }
+      if (existing.peerId === from && existing.offerId === offer.offerId) {
+        existing.caps = offer.caps;
+      }
       if (offer.digest && !existing.digest) {
         existing.digest = offer.digest;
         emit();
@@ -1829,6 +1935,24 @@ export function createFileTransferManager(
         existing.errorCode = undefined;
         emit();
       }
+      return;
+    }
+
+    // Another device in the room holding the same bytes is another way to get
+    // them, not another file: one row, one download, several places to pull
+    // it from.
+    const held = itemForContent(offer);
+    if (held) {
+      held.sources = [
+        ...(held.sources ?? []),
+        {
+          peerId: from,
+          offerId: offer.offerId,
+          have: offer.size,
+          ...(offer.caps && { caps: offer.caps }),
+        },
+      ];
+      emit();
       return;
     }
 
@@ -1849,6 +1973,14 @@ export function createFileTransferManager(
       bytes: 0,
       activeTransfers: 0,
       completedTransfers: 0,
+      sources: [
+        {
+          peerId: from,
+          offerId: offer.offerId,
+          have: offer.size,
+          ...(offer.caps && { caps: offer.caps }),
+        },
+      ],
     };
     addItem(item);
     emit();
@@ -1926,8 +2058,15 @@ export function createFileTransferManager(
         return;
 
       case "file-revoke": {
-        const item = items.get(itemKey(from, payload.offerId));
-        if (item && revokeIncoming(item, "revoked")) {
+        const item = itemForOffer(from, payload.offerId);
+        if (!item || item.direction !== "incoming") {
+          return;
+        }
+        // Only the last source leaving takes the file away; before that this
+        // is one device of several stopping.
+        if (dropSource(item, from, payload.offerId)) {
+          emit();
+        } else if (revokeIncoming(item, "revoked")) {
           emit();
         }
         return;
@@ -1939,9 +2078,16 @@ export function createFileTransferManager(
         // their own.
         let changed = false;
         for (const item of items.values()) {
-          if (item.direction === "incoming" && item.peerId === from) {
-            changed = revokeIncoming(item, "sender-left") || changed;
+          if (item.direction !== "incoming") {
+            continue;
           }
+          const offered = item.sources?.some((source) => source.peerId === from);
+          if (!offered) {
+            continue;
+          }
+          changed = dropSource(item, from)
+            ? true
+            : revokeIncoming(item, "sender-left") || changed;
         }
         if (changed) {
           emit();

@@ -4,6 +4,7 @@ export {
   type FileItem,
   type FileItemStatus,
   type FileSink,
+  type ItemSource,
   type FileTransferManager,
   type FileTransferOptions,
   type OfferEntry,
