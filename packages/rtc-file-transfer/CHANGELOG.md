@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0
+
+- **A failed connection is restarted once before the transfer is given up on.** `connectionState === "failed"` went straight to a `nat` failure, so the things that routinely break a candidate pair mid-file — moving from Wi-Fi to Ethernet, a phone changing cell, a NAT binding expiring — ended a transfer that the network could still have carried. The sender now re-offers with `iceRestart`, which gathers fresh candidates over the existing connection. Only the sender offers, along the path it already used, so the restart is answered by a peer running an older version with no new message type and no capability to negotiate. One attempt, not a retry loop.
+- **`limits.iceRestartMs`** (8 s) bounds how long a restarted connection has to come back. Shorter than `stallMs` by default, so a restart that does not take still reports `nat` rather than `stalled`.
+- `iceServers` was already resolved per connection, so a restart dials with refreshed TURN credentials without further work.
+
+No wire changes. An ICE restart is an ordinary `rtc-description` offer.
+
 ## 1.1.0
 
 - **Progress on files you are sending.** `FileItem.bytes` has always been the receiver's count, so a sender could see that a file was being pulled and by how many devices, but not how far along any of them was — there was no way to draw an upload bar. Outgoing items now carry `outgoingTransfers`, one entry per device pulling the file, with `bytes`, `bytesPerSecond` and `etaMs`. A single number would have to pick one receiver and be wrong about the rest. Each entry's `committed` says what its count means: with the `flow` capability it is what the receiver has written, and without it what the sender has handed to the channel, which can run ahead. A device joins the list when its transfer opens, before any byte moves, and leaves when it ends.

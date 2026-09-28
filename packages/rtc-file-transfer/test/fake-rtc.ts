@@ -154,7 +154,11 @@ export class FakePeerConnection extends EventTarget {
     return this.channel;
   }
 
-  async createOffer() {
+  /** Every `createOffer` on this connection, so a restart offer can be told apart. */
+  readonly offerOptions: RTCOfferOptions[] = [];
+
+  async createOffer(options: RTCOfferOptions = {}) {
+    this.offerOptions.push(options);
     return { type: "offer" as const, sdp: `fake-sdp-${nextSdp++}` };
   }
 
@@ -211,6 +215,12 @@ export class FakePeerConnection extends EventTarget {
 
   failConnection() {
     this.connectionState = "failed";
+    this.dispatchEvent(new Event("connectionstatechange"));
+  }
+
+  /** What a successful ICE restart looks like from the manager's side. */
+  recoverConnection() {
+    this.connectionState = "connected";
     this.dispatchEvent(new Event("connectionstatechange"));
   }
 }

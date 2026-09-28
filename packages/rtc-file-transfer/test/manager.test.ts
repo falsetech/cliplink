@@ -363,7 +363,7 @@ describe("file transfer", () => {
     assert.equal(outgoing(alice).completedTransfers, 0);
   });
 
-  it("reports a connection ICE could not establish", async () => {
+  it("reports a connection ICE could not establish, once the restart is spent", async () => {
     bus = new FakeSignaling();
     bus.addPeer("peer-alice");
     bus.addPeer("peer-bob00");
@@ -371,7 +371,79 @@ describe("file transfer", () => {
 
     const { bob } = await offerAndRequest(randomBytes(4096));
     bob.pcs()[0].failConnection();
+    // The first failure buys a restart, so it is not yet an answer.
+    assert.equal(failure(bob), undefined);
+
+    bob.pcs()[0].failConnection();
     assert.equal(failure(bob)?.code, "nat");
+  });
+
+  it("restarts ICE rather than failing the first time a connection drops", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice");
+    bus.addPeer("peer-bob00");
+    bus.net.setFlowing(false);
+
+    const { alice } = await offerAndRequest(randomBytes(4096));
+    await waitFor(() => alice.pcs().length === 1);
+    const pc = alice.pcs()[0];
+    await waitFor(() => pc.offerOptions.length === 1);
+    assert.deepEqual(pc.offerOptions, [{}]);
+
+    pc.failConnection();
+    await waitFor(() => pc.offerOptions.length === 2);
+
+    // A restart is a second offer on the same connection, not a new one, and
+    // the receiver answers it through the path it already had — so a peer on
+    // an older version needs no new message type to take part.
+    assert.deepEqual(pc.offerOptions[1], { iceRestart: true });
+    assert.equal(alice.pcs().length, 1);
+    assert.equal(failure(alice), undefined);
+  });
+
+  it("does not re-offer from the receiving side", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice");
+    bus.addPeer("peer-bob00", { limits: { iceRestartMs: 50 } });
+    bus.net.setFlowing(false);
+
+    const { bob } = await offerAndRequest(randomBytes(4096));
+    const pc = bob.pcs()[0];
+    pc.failConnection();
+    await waitFor(() => failure(bob)?.code === "nat");
+
+    // The receiver waits out the restart; only the offerer ever offers.
+    assert.deepEqual(pc.offerOptions, []);
+  });
+
+  it("carries on when the restart takes", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice");
+    bus.addPeer("peer-bob00", { limits: { iceRestartMs: 50 } });
+    bus.net.setFlowing(false);
+
+    const { bob } = await offerAndRequest(randomBytes(4096));
+    const pc = bob.pcs()[0];
+    pc.failConnection();
+    pc.recoverConnection();
+
+    // The grace deadline must not still fire on a connection that came back.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(failure(bob), undefined);
+  });
+
+  it("gives up when a restarted connection never comes back", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice");
+    bus.addPeer("peer-bob00", { limits: { iceRestartMs: 50 } });
+    bus.net.setFlowing(false);
+
+    const { bob } = await offerAndRequest(randomBytes(4096));
+    // Silence, rather than a second `failed`: the deadline is the only thing
+    // that ends this, and without it the transfer would hang until the stall.
+    bob.pcs()[0].failConnection();
+
+    await waitFor(() => failure(bob)?.code === "nat");
   });
 
   it("revokes idle offers from a peer that left", async () => {

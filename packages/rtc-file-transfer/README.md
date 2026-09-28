@@ -145,7 +145,7 @@ Anything else still works the way the example above does — an adapter is a con
 | `onItemsChange(items)` | Called with a fresh snapshot whenever state changes. Progress updates are coalesced to every 100 ms. |
 | `onNotice(notice)` | `incoming-offer`, `received`, or `failed` with a `code`. |
 | `iceServers` | Defaults to public Google and Cloudflare STUN servers. Add a TURN server for restrictive networks. Pass a function instead of an array and it is called for each connection, so short-lived TURN credentials can be refreshed — see [ICE servers](#ice-servers). |
-| `limits` | Any of `maxFileBytes` (64 GiB), `maxMemoryBytes` (500 MB), `chunkBytes` (64 KB), `bufferHighBytes` (4 MB), `bufferLowBytes` (1 MB), `windowBytes` (16 MB), `stallMs` (20 s), `maxItems` (20). |
+| `limits` | Any of `maxFileBytes` (64 GiB), `maxMemoryBytes` (500 MB), `chunkBytes` (64 KB), `bufferHighBytes` (4 MB), `bufferLowBytes` (1 MB), `windowBytes` (16 MB), `stallMs` (20 s), `iceRestartMs` (8 s), `maxItems` (20). |
 | `createId` | Id generator for offers and transfers. |
 | `capabilities` | Protocol features to advertise: `blocks`, `resume` and `flow`. Defaults to all of them where `crypto.subtle` exists. Pass `[]` to behave exactly like a v1 peer. |
 | `createPeerConnection` | For environments without a global `RTCPeerConnection`, such as Node with a WebRTC polyfill. |
@@ -189,6 +189,25 @@ createFileTransferManager({
 ```
 
 TURN credentials are usually short-lived, and an array is read once when the manager is created — so a transfer started an hour later would dial with credentials that have expired. The function is synchronous on purpose: `request` returns a boolean, and awaiting here would make it async. Refresh on your own schedule and return the latest.
+
+### When a connection drops
+
+A connection that reports `failed` gets one ICE restart before the transfer is
+given up on as a `nat` failure. A restart gathers fresh candidates over the
+existing connection, so a transfer survives the things that routinely break a
+candidate pair mid-file — a laptop moving from Wi-Fi to Ethernet, a phone
+changing cell, a NAT binding expiring — instead of failing and having to be
+resumed by hand.
+
+Only the sender re-offers, along the path it already used for the first offer,
+so a peer running an older version takes part without knowing this exists. The
+restarted connection has `limits.iceRestartMs` (8 s) to come back; after that
+the transfer fails with `nat`, as it did before. One attempt, not a retry loop:
+a network that cannot carry the transfer should say so while the person is
+still watching.
+
+`iceServers` is resolved per connection, so a restart also picks up refreshed
+TURN credentials.
 
 ### Where received bytes go
 
@@ -296,7 +315,7 @@ Where `maxMessageSize` is missing, chunks stay at `limits.chunkBytes` (64 KB), w
 
 Worth knowing before you pick this:
 
-- **NAT traversal.** The defaults are STUN only. Behind symmetric NAT a connection needs a TURN relay, which you supply through `iceServers` and pay bandwidth for.
+- **NAT traversal.** The defaults are STUN only. Behind symmetric NAT a connection needs a TURN relay, which you supply through `iceServers` and pay bandwidth for. A dropped connection is restarted once; a network that never had a path is not made to have one.
 - **The tab has to stay open.** Closing or reloading a page closes its peer connections. Resume survives that only with a `ResumeProvider`, and only on the receiving side; the sender has to still be there, holding the same file.
 - **Mobile backgrounding.** A hidden page can be frozen or discarded, which stops a transfer. Desktop Chrome exempts pages with an open data channel from intensive throttling, so the stall timer keeps working there.
 - **Throughput is SCTP's.** One congestion window per association, and a user-space stack on both ends. This package can't make a data channel faster than the browser makes it.
