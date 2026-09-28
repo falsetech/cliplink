@@ -5,6 +5,8 @@ import type {
   ResumeKey,
   ResumeProvider,
   ResumeState,
+  StoredFile,
+  StoredMeta,
 } from "./manager.ts";
 
 /**
@@ -278,6 +280,12 @@ const DEFAULT_SEGMENT_BYTES = 64 * 1024 * 1024;
 export type ResumeOptions = OpfsSinkOptions & {
   /** Bytes per part file. Smaller means less to refetch, and more files. */
   segmentBytes?: number;
+  /**
+   * Recorded with every file this store writes, and returned by `list`.
+   * Opaque here: the application decides what it means — a room code, an
+   * account, a session — and which tags are still worth keeping.
+   */
+  tag?: string;
 };
 
 const STATE_FILE = "state.json";
@@ -287,7 +295,31 @@ function partName(index: number) {
   return `${PART_PREFIX}${String(index).padStart(5, "0")}`;
 }
 
-type StoredState = ResumeState & { size: number; segmentBytes: number };
+type StoredState = ResumeState & {
+  size: number;
+  segmentBytes: number;
+  /**
+   * What the file is, so `list` can rebuild an offer from it. Optional
+   * because states written before seeding existed carry none; those still
+   * resume, they just can't be re-offered.
+   */
+  meta?: StoredMeta;
+};
+
+function isStoredMeta(value: unknown): value is StoredMeta {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const meta = value as Record<string, unknown>;
+  return (
+    typeof meta.name === "string" &&
+    meta.name.length > 0 &&
+    typeof meta.mime === "string" &&
+    typeof meta.ts === "number" &&
+    (meta.path === undefined || typeof meta.path === "string") &&
+    (meta.tag === undefined || typeof meta.tag === "string")
+  );
+}
 
 function isStoredState(value: unknown): value is StoredState {
   if (typeof value !== "object" || value === null) {
@@ -299,9 +331,12 @@ function isStoredState(value: unknown): value is StoredState {
     typeof state.size === "number" &&
     typeof state.segmentBytes === "number" &&
     Array.isArray(state.blockHashes) &&
-    state.blockHashes.every((hash) => typeof hash === "string")
+    state.blockHashes.every((hash) => typeof hash === "string") &&
+    (state.meta === undefined || isStoredMeta(state.meta))
   );
 }
+
+const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 
 /**
  * Keeps partial downloads in the Origin Private File System, so they survive a
@@ -470,11 +505,83 @@ export function opfsResume(options: ResumeOptions = {}): ResumeProvider {
             ),
             size: key.size,
             segmentBytes: SEGMENT_BYTES,
+            meta: {
+              name: key.name,
+              mime: key.mime ?? "",
+              ...(key.path !== undefined && { path: key.path }),
+              ...(options.tag !== undefined && { tag: options.tag }),
+              ts: Date.now(),
+            },
           }),
         )
         .catch(() => {});
       pending.set(key.digest, next);
       return next;
+    },
+
+    /**
+     * Every file this store still holds, complete or not. A folder whose
+     * `state.json` predates seeding carries no `meta`, so there is no honest
+     * way to re-offer it; it is left out rather than offered under a guess.
+     */
+    async list() {
+      const root = await opfsDirectory(options).catch(() => null);
+      if (!root) {
+        return [];
+      }
+      const held: StoredFile[] = [];
+      for await (const digest of (
+        root as unknown as { keys(): AsyncIterable<string> }
+      ).keys()) {
+        if (!DIGEST_PATTERN.test(digest)) {
+          continue;
+        }
+        const state = await readState({ digest, size: 0, name: "" });
+        if (!state?.meta || state.verifiedBytes <= 0) {
+          continue;
+        }
+        held.push({
+          key: {
+            digest,
+            size: state.size,
+            name: state.meta.name,
+            mime: state.meta.mime,
+            ...(state.meta.path !== undefined && { path: state.meta.path }),
+          },
+          state: {
+            verifiedBytes: state.verifiedBytes,
+            blockHashes: state.blockHashes,
+          },
+          meta: state.meta,
+        });
+      }
+      return held;
+    },
+
+    /**
+     * What is on disk for this file, as a Blob — the same parts `close`
+     * assembles, cut to the verified prefix so a partial file never hands out
+     * bytes that were never checked.
+     */
+    async read(key) {
+      const state = await readState(key);
+      if (!state || state.verifiedBytes <= 0) {
+        return null;
+      }
+      const folder = await folderFor(key, false).catch(() => null);
+      if (!folder) {
+        return null;
+      }
+      const parts: File[] = [];
+      for (let part = 0; ; part += 1) {
+        try {
+          parts.push(await (await folder.getFileHandle(partName(part))).getFile());
+        } catch {
+          break;
+        }
+      }
+      const type = state.meta?.mime || key.mime || "application/octet-stream";
+      return new Blob(parts, { type }).slice(0, state.verifiedBytes, type);
     },
 
     async forget(key) {

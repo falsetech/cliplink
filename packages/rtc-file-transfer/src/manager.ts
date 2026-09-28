@@ -177,6 +177,36 @@ export type ResumeKey = {
   digest: string;
   size: number;
   name: string;
+  /**
+   * The offer's `mime` and `path`. Absent from a key a caller built by hand;
+   * the manager always fills them, so a store that keeps finished files has
+   * everything an offer needs to be rebuilt after a reload.
+   */
+  mime?: string;
+  path?: string;
+};
+
+/**
+ * What a store records beside the bytes, so a file it still holds can be
+ * offered again on the next page load without being hashed or named again.
+ *
+ * `tag` is opaque to this library: a store sets it, and the application reads
+ * it to decide what a file still belongs to — a room, an account, a session.
+ */
+export type StoredMeta = {
+  name: string;
+  mime: string;
+  path?: string;
+  tag?: string;
+  /** When it was last written, as `Date.now()`. */
+  ts: number;
+};
+
+/** One file a store is holding: enough to re-offer it and to serve it. */
+export type StoredFile = {
+  key: ResumeKey;
+  state: ResumeState;
+  meta: StoredMeta;
 };
 
 /**
@@ -197,6 +227,16 @@ export type ResumeProvider = {
   checkpoint(key: ResumeKey, state: ResumeState): void | Promise<void>;
   /** Drop everything kept for this file. */
   forget(key: ResumeKey): void | Promise<void>;
+  /**
+   * Everything kept for this origin, for a seeder to re-offer. Optional: a
+   * store written before seeding existed simply never seeds.
+   */
+  list?(): Promise<StoredFile[]>;
+  /**
+   * The bytes on disk, up to `state.verifiedBytes`, as a Blob. Null when the
+   * file is gone — evicted, or never stored.
+   */
+  read?(key: ResumeKey): Promise<Blob | null>;
 };
 
 export type RequestOptions = {
@@ -1258,7 +1298,15 @@ export function createFileTransferManager(
   }
 
   function resumeKeyFor(item: FileItem): ResumeKey | null {
-    return item.digest ? { digest: item.digest, size: item.size, name: item.name } : null;
+    return item.digest
+      ? {
+          digest: item.digest,
+          size: item.size,
+          name: item.name,
+          mime: item.mime,
+          ...(item.path !== undefined && { path: item.path }),
+        }
+      : null;
   }
 
   /** Whether this item could be picked up again after a reload. */

@@ -16,6 +16,8 @@ export {
   type ResumeKey,
   type ResumeProvider,
   type ResumeState,
+  type StoredFile,
+  type StoredMeta,
   type TransferNotice,
 } from "./manager.ts";
 export { sanitizeFileName, sanitizeRelativePath } from "./names.ts";

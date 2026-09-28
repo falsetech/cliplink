@@ -204,6 +204,83 @@ describe("sinks", () => {
     assert.equal(await store.load(key), null);
   });
 
+  it("lists and reads what it holds, so a seeder can re-offer it", async () => {
+    const root = new FakeDirectory();
+    const segmentBytes = 4096;
+    const store = opfsResume({ root: asDirectory(root), segmentBytes, tag: "ROOM01" });
+    const key = {
+      digest: "c".repeat(64),
+      size: 8192,
+      name: "held.bin",
+      mime: "video/mp4",
+      path: "clips",
+    };
+    const source = randomBytes(key.size);
+
+    assert.deepEqual(await store.list!(), [], "nothing held yet");
+    assert.equal(await store.read!(key), null, "nothing to read yet");
+
+    const sink = await store.open(key, { verifiedBytes: 0, blockHashes: [] });
+    await sink!.write(source);
+    await store.checkpoint(key, {
+      verifiedBytes: key.size,
+      blockHashes: [`${"d".repeat(64)}`],
+    });
+
+    const held = await store.list!();
+    assert.equal(held.length, 1);
+    assert.equal(held[0].key.digest, key.digest);
+    assert.equal(held[0].key.size, key.size);
+    assert.equal(held[0].key.name, "held.bin");
+    assert.equal(held[0].state.verifiedBytes, key.size);
+    assert.equal(held[0].meta.mime, "video/mp4");
+    assert.equal(held[0].meta.path, "clips");
+    assert.equal(held[0].meta.tag, "ROOM01");
+    assert.ok(held[0].meta.ts > 0, "records when it was stored");
+
+    const blob = await store.read!(held[0].key);
+    assert.ok(blob instanceof Blob);
+    assert.equal(blob.type, "video/mp4");
+    assert.deepEqual(new Uint8Array(await blob.arrayBuffer()), source);
+  });
+
+  it("reads only the verified prefix, and skips folders it can't rebuild an offer from", async () => {
+    const root = new FakeDirectory();
+    const segmentBytes = 4096;
+    const store = opfsResume({ root: asDirectory(root), segmentBytes });
+    const key = { digest: "e".repeat(64), size: 10_000, name: "part.bin", mime: "" };
+    const source = randomBytes(key.size);
+
+    const sink = await store.open(key, { verifiedBytes: 0, blockHashes: [] });
+    await sink!.write(source.slice(0, 9000));
+    await store.checkpoint(key, { verifiedBytes: 9000, blockHashes: [] });
+
+    // Two segments are closed; the third is still open, so 8192 is what is there.
+    const blob = await store.read!(key);
+    assert.equal(blob!.size, 2 * segmentBytes);
+    assert.deepEqual(
+      new Uint8Array(await blob!.arrayBuffer()),
+      source.slice(0, 2 * segmentBytes),
+    );
+    assert.equal(blob!.type, "application/octet-stream", "no mime means a generic blob");
+
+    // A state.json from a build before seeding carries no meta: unusable as an
+    // offer, so it is left out rather than re-offered with a guessed name.
+    const folder = await (
+      await root.getDirectoryHandle(OPFS_DIRECTORY)
+    ).getDirectoryHandle(key.digest);
+    const state = await folder.getFileHandle("state.json");
+    const writable = await state.createWritable();
+    await writable.write(
+      new TextEncoder().encode(
+        JSON.stringify({ verifiedBytes: 9000, blockHashes: [], size: key.size, segmentBytes }),
+      ),
+    );
+    await writable.close();
+    assert.deepEqual(await store.list!(), []);
+    assert.equal((await store.load(key))?.verifiedBytes, 9000, "but it still resumes");
+  });
+
   it("reports nothing available outside a browser", async () => {
     assert.equal(canPickFile(), false);
     assert.equal(canPickDirectory(), false);
