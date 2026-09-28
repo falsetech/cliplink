@@ -15,6 +15,13 @@ export type TransferLimits = {
   /** Fail a transfer that makes no progress for this long. */
   stallMs: number;
   /**
+   * How long a connection that failed and was restarted has to come back
+   * before the transfer is called a NAT failure. Shorter than `stallMs` by
+   * default, so a restart that does not take reports `nat` rather than
+   * `stalled`.
+   */
+  iceRestartMs: number;
+  /**
    * How far ahead of the receiver's sink the sender may run, when both peers
    * support `flow`. Bounds the receiver's memory on a slow disk.
    */
@@ -30,6 +37,7 @@ export const DEFAULT_LIMITS: TransferLimits = {
   bufferHighBytes: 4 * 1024 * 1024,
   bufferLowBytes: 1024 * 1024,
   stallMs: 20_000,
+  iceRestartMs: 8_000,
   windowBytes: 16 * 1024 * 1024,
   maxItems: 20,
 };

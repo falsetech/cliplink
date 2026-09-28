@@ -293,6 +293,10 @@ type Transfer = {
   channel: RTCDataChannel | null;
   pendingCandidates: RTCIceCandidateInit[];
   stallTimer: Timer | null;
+  /** One ICE restart is attempted per transfer; this records that it was spent. */
+  iceRestarted: boolean;
+  /** Running while a restart is in flight, and the deadline for giving up on it. */
+  restartTimer: Timer | null;
   /** Receive side only: where this transfer's bytes are written. */
   download: Download | null;
   /** Both peers negotiated `blocks` for this transfer. */
@@ -778,6 +782,68 @@ export function createFileTransferManager(
     }, limits.stallMs);
   }
 
+  function clearRestart(transfer: Transfer) {
+    if (transfer.restartTimer !== null) {
+      clearTimeout(transfer.restartTimer);
+      transfer.restartTimer = null;
+    }
+  }
+
+  /**
+   * Re-offers with `iceRestart`, which gathers fresh candidates over the
+   * existing connection rather than tearing the transfer down.
+   *
+   * Only the sender offers, because only the sender ever does: the receiver
+   * answers a restart offer through the same path as the first one, so a peer
+   * running an older version needs no new message type to take part. The
+   * receiver's side of a restart is simply to wait, which is what the grace
+   * timer buys it.
+   */
+  async function renegotiate(transfer: Transfer) {
+    try {
+      const offer = await transfer.pc.createOffer({ iceRestart: true });
+      await transfer.pc.setLocalDescription(offer);
+      sendSignal(
+        {
+          type: "rtc-description",
+          transferId: transfer.id,
+          description: { type: "offer", sdp: offer.sdp ?? "" },
+        },
+        transfer.remotePeer,
+      );
+    } catch {
+      failTransfer(transfer, "nat", true);
+    }
+  }
+
+  /**
+   * One attempt to recover a failed connection, on both peers. False once that
+   * attempt has been spent, which is the caller's cue to fail the transfer —
+   * including when the restart itself reports `failed`, which is the ordinary
+   * way a restart that cannot connect ends.
+   */
+  function beginIceRestart(transfer: Transfer): boolean {
+    if (transfer.iceRestarted) {
+      return false;
+    }
+    transfer.iceRestarted = true;
+    // The channel is down for the duration, so nothing will touch the stall
+    // timer; restarting it keeps the grace period from being cut short by a
+    // stall that is really this reconnection.
+    touch(transfer);
+    transfer.restartTimer = setTimeout(() => {
+      transfer.restartTimer = null;
+      const current = transfers.get(transfer.id);
+      if (current) {
+        failTransfer(current, "nat", true);
+      }
+    }, limits.iceRestartMs);
+    if (transfer.role === "send") {
+      void renegotiate(transfer);
+    }
+    return true;
+  }
+
   function closeTransfer(transfer: Transfer) {
     if (transfer.closed) {
       return false;
@@ -787,6 +853,7 @@ export function createFileTransferManager(
       clearTimeout(transfer.stallTimer);
       transfer.stallTimer = null;
     }
+    clearRestart(transfer);
     try {
       transfer.channel?.close();
       transfer.pc.close();
@@ -911,7 +978,15 @@ export function createFileTransferManager(
 
     pc.addEventListener("connectionstatechange", () => {
       const current = transfers.get(transfer.id);
-      if (current && pc.connectionState === "failed") {
+      if (!current) {
+        return;
+      }
+      if (pc.connectionState === "connected") {
+        // The restart took, or the connection recovered on its own.
+        clearRestart(current);
+        return;
+      }
+      if (pc.connectionState === "failed" && !beginIceRestart(current)) {
         failTransfer(current, "nat", true);
       }
     });
@@ -1065,6 +1140,8 @@ export function createFileTransferManager(
       channel: null,
       pendingCandidates: [],
       stallTimer: null,
+      iceRestarted: false,
+      restartTimer: null,
       ...setup,
       blockParts: [],
       blockReceived: 0,
