@@ -318,19 +318,21 @@ describe("openSession", () => {
       assert.deepEqual(await readSavedRooms({ CLIPLINK_CONFIG_DIR: dir }), []);
     });
 
-    it("matches a saved room by code alone, whatever origin it was saved for", async () => {
+    it("does not offer a key saved against a different server", async () => {
       const key = await generateRoomKey();
       await saveRoom(
         { code: CODE, key: key.encoded, baseUrl: "http://localhost:3000", savedAt: Date.now() },
         { CLIPLINK_CONFIG_DIR: dir },
       );
 
-      // The origin is recorded but not consulted, so a room code saved against
-      // a dev server supplies its key when the same code is joined against
-      // another deployment. The key simply will not decrypt there.
-      const session = await openSession(argsFor(["send", "hi", "-r", CODE]));
-
-      assert.equal(session.key.encoded, key.encoded);
+      // A six-character code is unique only to the server that issued it, so
+      // the room saved against a dev server says nothing about this one. Being
+      // asked for the key is the right answer; silently using that one would
+      // fail to decrypt, and would have been the wrong room's key regardless.
+      await assert.rejects(
+        openSession(argsFor(["send", "hi", "-r", CODE])),
+        /is end-to-end encrypted, so it needs its key/,
+      );
     });
   });
 });
