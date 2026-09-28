@@ -116,7 +116,7 @@ async function joinRoom(args: ParsedArgs) {
   }
 
   if (!key && !args.open) {
-    const saved = await findSavedRoom(code);
+    const saved = await findSavedRoom(code, args.baseUrl);
     if (saved?.key) {
       key = saved.key;
       source = "saved";

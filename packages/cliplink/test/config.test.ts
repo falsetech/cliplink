@@ -61,7 +61,10 @@ describe("saveRoom", () => {
       env,
     );
 
-    assert.equal((await findSavedRoom("X7KP2M", env))?.key, "KEY");
+    assert.equal(
+      (await findSavedRoom("X7KP2M", "https://example", env))?.key,
+      "KEY",
+    );
   });
 
   it("finds a room whatever case it is asked for in", async () => {
@@ -71,7 +74,31 @@ describe("saveRoom", () => {
       env,
     );
 
-    assert.ok(await findSavedRoom("x7kp2m", env));
+    assert.ok(await findSavedRoom("x7kp2m", "https://example", env));
+  });
+
+  it("keeps the same code on two servers as two rooms", async () => {
+    const env = await tempEnv();
+    await saveRoom(
+      { code: "X7KP2M", key: "DEV", baseUrl: "http://localhost:3000", savedAt: 1 },
+      env,
+    );
+    await saveRoom(
+      { code: "X7KP2M", key: "PROD", baseUrl: "https://cliplink.app", savedAt: 2 },
+      env,
+    );
+
+    // Deduplicating on the code alone would have evicted the first, leaving
+    // the origin-aware lookup nothing to tell apart.
+    assert.equal((await readSavedRooms(env)).length, 2);
+    assert.equal(
+      (await findSavedRoom("X7KP2M", "http://localhost:3000", env))?.key,
+      "DEV",
+    );
+    assert.equal(
+      (await findSavedRoom("X7KP2M", "https://cliplink.app", env))?.key,
+      "PROD",
+    );
   });
 
   it("replaces rather than duplicates a room saved twice", async () => {
@@ -112,7 +139,59 @@ describe("saveRoom", () => {
     const env = await tempEnv();
     await saveRoom({ code: "X7KP2M", baseUrl: "u", savedAt: 1 }, env);
 
-    assert.equal((await findSavedRoom("X7KP2M", env))?.key, undefined);
+    assert.equal((await findSavedRoom("X7KP2M", "u", env))?.key, undefined);
+  });
+});
+
+describe("findSavedRoom", () => {
+  const room = {
+    code: "X7KP2M",
+    key: "KEY",
+    baseUrl: "https://cliplink.app",
+    savedAt: 1,
+  };
+
+  it("withholds a room saved against a different server", async () => {
+    const env = await tempEnv();
+    await saveRoom(room, env);
+
+    // The whole point: a six-character code is unique only to the server that
+    // issued it, so the dev room's key must not be offered for the same code
+    // in production. Being handed no key is the right answer, not a miss.
+    assert.equal(await findSavedRoom("X7KP2M", "http://localhost:3000", env), null);
+  });
+
+  it("still matches when the origin is written differently", async () => {
+    const env = await tempEnv();
+    await saveRoom(room, env);
+
+    for (const baseUrl of [
+      "https://cliplink.app/",
+      "https://CLIPLINK.app",
+      "https://cliplink.app:443",
+    ]) {
+      assert.ok(await findSavedRoom("X7KP2M", baseUrl, env), baseUrl);
+    }
+  });
+
+  it("tells two paths on one host apart, but not by a trailing slash", async () => {
+    const env = await tempEnv();
+    await saveRoom({ ...room, baseUrl: "https://example.com/a" }, env);
+
+    assert.ok(await findSavedRoom("X7KP2M", "https://example.com/a", env));
+    // A path is where a trailing slash is the difference between two strings
+    // and no difference at all in the server they name; on a bare origin the
+    // URL parser has already made both "/".
+    assert.ok(await findSavedRoom("X7KP2M", "https://example.com/a/", env));
+    assert.equal(await findSavedRoom("X7KP2M", "https://example.com/b", env), null);
+  });
+
+  it("matches an unparseable baseUrl against itself, not against everything", async () => {
+    const env = await tempEnv();
+    await saveRoom({ ...room, baseUrl: "not a url" }, env);
+
+    assert.ok(await findSavedRoom("X7KP2M", "not a url", env));
+    assert.equal(await findSavedRoom("X7KP2M", "also not a url", env), null);
   });
 });
 
@@ -148,7 +227,7 @@ describe("readSavedRooms", () => {
   });
 
   it("finds nothing for a room that was never saved", async () => {
-    assert.equal(await findSavedRoom("X7KP2M", await tempEnv()), null);
+    assert.equal(await findSavedRoom("X7KP2M", "https://example", await tempEnv()), null);
   });
 });
 
@@ -174,7 +253,10 @@ describe("forgetRoom", () => {
     const env = await tempEnv();
     await saveRoom({ code: "X7KP2M", key: "KEY", baseUrl: "u", savedAt: 1 }, env);
 
-    assert.equal((await forgetRoom("X7KP2M", env))?.key, "KEY");
+    assert.deepEqual(
+      (await forgetRoom("X7KP2M", env)).map((forgotten) => forgotten.key),
+      ["KEY"],
+    );
     assert.deepEqual(await readSavedRooms(env), []);
   });
 
@@ -182,7 +264,24 @@ describe("forgetRoom", () => {
     const env = await tempEnv();
     await saveRoom({ code: "X7KP2M", baseUrl: "u", savedAt: 1 }, env);
 
-    assert.ok(await forgetRoom("x7kp2m", env));
+    assert.equal((await forgetRoom("x7kp2m", env)).length, 1);
+  });
+
+  it("forgets the code on every server it was saved against", async () => {
+    const env = await tempEnv();
+    await saveRoom(
+      { code: "X7KP2M", key: "DEV", baseUrl: "http://localhost:3000", savedAt: 1 },
+      env,
+    );
+    await saveRoom(
+      { code: "X7KP2M", key: "PROD", baseUrl: "https://cliplink.app", savedAt: 2 },
+      env,
+    );
+
+    // `rooms --forget` is given a code and nothing else, so leaving a copy
+    // behind on an origin the user never named would be a surprise.
+    assert.equal((await forgetRoom("X7KP2M", env)).length, 2);
+    assert.deepEqual(await readSavedRooms(env), []);
   });
 
   it("leaves the other rooms alone", async () => {
@@ -194,10 +293,10 @@ describe("forgetRoom", () => {
     assert.deepEqual((await readSavedRooms(env)).map((room) => room.code), ["BBBBBB"]);
   });
 
-  it("is null for a room that was never saved, and writes nothing", async () => {
+  it("is empty for a room that was never saved, and writes nothing", async () => {
     const env = await tempEnv();
 
-    assert.equal(await forgetRoom("X7KP2M", env), null);
+    assert.deepEqual(await forgetRoom("X7KP2M", env), []);
     await assert.rejects(stat(configPath(env)));
   });
 });

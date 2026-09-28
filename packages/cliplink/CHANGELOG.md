@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- **A saved room is now matched by its code and its server, not by the code alone.** A room code is six characters and unique only to the server that issued it, so the same code names different rooms on a dev server and on a deployment. `findSavedRoom` consulted only the code, so joining a code against one origin could be handed the key `--save` had written for another — which fails to decrypt, and is the wrong room's key besides. The origin was already recorded in `rooms.json`; it is now read. Saving matches the same way, so the same code can be held for two servers at once rather than one evicting the other. Trailing slashes, host case and a default port do not make two origins different; a path does. `rooms --forget` still takes a code alone, and so now forgets it on every server it was saved against, rather than the first one found.
+
 ## 0.2.0
 
 - **`cliplink rooms`.** `--save` could write to the saved-rooms file but nothing could read it back, so seeing what a machine had kept, or removing one entry, meant opening `rooms.json` by hand. `rooms` lists code, origin and age; `--forget` takes one, `--forget-all` takes them all, and `--prune` drops what has expired. The listing withholds keys unless `--show-keys` asks — keeping keys scarce is the whole reason `--save` is opt-in per run, and a command run to remind yourself of a room code should not put key material into scrollback or a screen share. It says on stderr that it is withholding, so the omission cannot be read as the room having no key. Forgetting every room removes the file rather than leaving an empty one behind.

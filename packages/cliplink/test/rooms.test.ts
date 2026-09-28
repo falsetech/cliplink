@@ -150,6 +150,25 @@ describe("rooms --forget", () => {
     );
   });
 
+  it("names the servers when one code was saved against several", async () => {
+    const env = await tempEnv();
+    await saveRoom(
+      { code: "X7KP2M", key: "K", baseUrl: "http://localhost:3000", savedAt: NOW },
+      env,
+    );
+    await saveRoom(
+      { code: "X7KP2M", key: "K", baseUrl: "https://cliplink.app", savedAt: NOW },
+      env,
+    );
+
+    const result = await run(["rooms", "--forget", "X7KP2M"], env, NOW);
+
+    assert.match(result.stderr, /Forgot X7KP2M on 2 servers/);
+    assert.match(result.stderr, /http:\/\/localhost:3000/);
+    assert.match(result.stderr, /https:\/\/cliplink\.app/);
+    assert.match((await run(["rooms"], env, NOW)).stderr, /No rooms saved/);
+  });
+
   it("fails rather than reporting success for a room that was never saved", async () => {
     const result = await run(["rooms", "--forget", "X7KP2M"], await tempEnv(), NOW);
 
