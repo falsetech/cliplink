@@ -674,6 +674,12 @@ export function createFileTransferManager(
   const downloads = new Map<string, Download>();
   /** Incoming item id → what a previous page load left on disk. */
   const stored = new Map<string, ResumeState>();
+  /**
+   * What each peer said it supports in its `hello`. Offers are broadcast, so
+   * this is the only place a sender learns who can understand a partial one
+   * before it has anything to send them.
+   */
+  const peerCaps = new Map<PeerId, Capability[]>();
   let emitTimer: Timer | null = null;
   let disposed = false;
 
@@ -2053,6 +2059,11 @@ export function createFileTransferManager(
 
     switch (payload.type) {
       case "hello":
+        if (payload.caps) {
+          peerCaps.set(from, payload.caps);
+        } else {
+          peerCaps.delete(from);
+        }
         for (const item of outgoingItems()) {
           sendSignal(toOffer(item), from);
         }
@@ -2078,6 +2089,7 @@ export function createFileTransferManager(
       }
 
       case "peer-left": {
+        peerCaps.delete(from);
         // Established data channels are P2P and outlive the signaling socket,
         // so only idle offers are dropped here; in-flight transfers settle on
         // their own.
@@ -2209,7 +2221,12 @@ export function createFileTransferManager(
 
     /** Call once signaling is ready: asks peers for their offers and re-announces ours. */
     announce() {
-      if (!sendSignal({ type: "hello" })) {
+      if (
+        !sendSignal({
+          type: "hello",
+          ...(selfCaps.length > 0 && { caps: selfCaps }),
+        })
+      ) {
         return;
       }
       for (const item of outgoingItems()) {
@@ -2435,6 +2452,7 @@ export function createFileTransferManager(
       outgoingFiles.clear();
       outgoingSources.clear();
       offerBlockHashes.clear();
+      peerCaps.clear();
       emit();
       disposed = true;
     },

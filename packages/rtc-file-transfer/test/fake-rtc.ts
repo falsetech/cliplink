@@ -251,6 +251,8 @@ export type TestPeer = {
 export class FakeSignaling {
   readonly net = new FakeNetwork();
   readonly peers = new Map<PeerId, TestPeer>();
+  /** Every signal sent, as it went over the wire. */
+  readonly signals: Array<{ from: PeerId; to?: PeerId; payload: FileSignal }> = [];
   connected = true;
   transform: (payload: FileSignal) => FileSignal = (payload) => payload;
   private owners = new Map<FakePeerConnection, PeerId>();
@@ -289,6 +291,7 @@ export class FakeSignaling {
       return false;
     }
     const wire = JSON.stringify(this.transform(payload));
+    this.signals.push({ from, to, payload: JSON.parse(wire) as FileSignal });
     setTimeout(() => {
       const parsed = parseFileSignal(JSON.parse(wire));
       if (!parsed) {

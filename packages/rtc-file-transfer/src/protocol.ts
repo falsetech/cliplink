@@ -14,10 +14,20 @@ export type PeerId = string;
  *   sender stops once it is `windowBytes` ahead. Requires `blocks`, since a
  *   block is what the receiver commits. Without it a slow disk piles up in the
  *   receiver's memory.
+ * - `partial`: the sender may hold only a verified prefix of the file, says so
+ *   in the offer's `have`, and ends its side with `part` rather than `done`
+ *   when it runs out; the receiver keeps what arrived and continues from
+ *   another peer. Requires `blocks` and `resume`, which are what make a prefix
+ *   verifiable and a continuation possible.
  */
-export type Capability = "blocks" | "resume" | "flow";
+export type Capability = "blocks" | "resume" | "flow" | "partial";
 
-export const CAPABILITIES: readonly Capability[] = ["blocks", "resume", "flow"];
+export const CAPABILITIES: readonly Capability[] = [
+  "blocks",
+  "resume",
+  "flow",
+  "partial",
+];
 
 /** Size of a verified block. Resume offsets fall on these boundaries. */
 export const BLOCK_BYTES = 1024 * 1024;
@@ -36,6 +46,12 @@ export type FileOffer = {
   path?: string;
   /** Shared by files offered together, so a receiver can group them. */
   batchId?: string;
+  /**
+   * Verified bytes the sender can actually serve, when that is less than
+   * `size`. Absent from a complete offer, and only ever sent to a peer that
+   * advertised `partial`.
+   */
+  have?: number;
   /**
    * SHA-256 of the file's block digests joined together, as hex. Sent by a
    * sender that hashed the file up front (`offerFiles(entries, { digest: true })`)
@@ -74,7 +90,12 @@ export type RtcCandidate = {
  * arrives from a peer — `parseFileSignal` does.
  */
 export type FileSignal =
-  | { type: "hello" }
+  /**
+   * Asks peers for their offers, and tells them what this one supports — the
+   * only place a peer learns that before an offer is made, which is what lets
+   * a partial offer be sent to the peers that can understand it.
+   */
+  | { type: "hello"; caps?: Capability[] }
   | ({ type: "file-offer" } & FileOffer)
   | { type: "file-revoke"; offerId: string }
   | { type: "peer-left" }

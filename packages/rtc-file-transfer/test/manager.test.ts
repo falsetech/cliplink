@@ -1507,6 +1507,35 @@ describe("verified blocks and resume", () => {
   });
 });
 
+describe("capability announcements", () => {
+  function hellos(from: string) {
+    return bus.signals.filter(
+      (signal) => signal.from === from && signal.payload.type === "hello",
+    );
+  }
+
+  it("says what it supports when it announces, and a v1 peer says nothing", async () => {
+    bus = new FakeSignaling();
+    const modern = bus.addPeer("peer-alice");
+    const old = bus.addPeer("peer-bob00", { capabilities: [] });
+
+    modern.manager.announce();
+    old.manager.announce();
+    await waitFor(() => hellos("peer-alice").length + hellos("peer-bob00").length === 2);
+
+    const [hello] = hellos("peer-alice");
+    assert.deepEqual(
+      (hello.payload as { caps?: string[] }).caps,
+      ["blocks", "resume", "flow", "partial"],
+    );
+    assert.equal(
+      "caps" in (hellos("peer-bob00")[0].payload as object),
+      false,
+      "a v1 peer announces exactly as it always did",
+    );
+  });
+});
+
 describe("protocol v1 compatibility", () => {
   // `capabilities: []` is exactly what a 0.1.0 peer looks like on the wire:
   // no `caps`, so no block hashes, no offsets and no credits.
