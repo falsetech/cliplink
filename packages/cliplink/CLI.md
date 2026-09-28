@@ -87,6 +87,11 @@ that writes a key to disk, and it does so only when you ask, per run.
 `--open` rooms derive their key from the room code. The server sees the code,
 so those are encrypted at rest but **not** end-to-end.
 
+A saved room is identified by its code *and* the server it was saved against,
+so a room code held for a local dev server is never matched against the same
+code on a deployment. `--forget` takes a code alone and so forgets it on every
+server it was saved for.
+
 `cliplink rooms` lists what `--save` has kept — code, origin, age — but
 withholds the keys unless `--show-keys` asks for them, so reminding yourself of
 a room code does not put key material into your scrollback. `--forget` and
