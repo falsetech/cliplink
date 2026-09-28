@@ -1,0 +1,47 @@
+name: CodeQL
+
+# Static analysis on every change, which nothing else in CI does: lint is style
+# and type-check is types, and neither follows a value from an untrusted input
+# to somewhere it matters. The interesting targets are the route handlers and
+# `packages/cliplink/src/validation.ts`, which parse what a client sends.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Mondays, alongside the Scorecard run. A scheduled scan re-checks the same
+    # code against query packs that have since been updated.
+    - cron: "30 6 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    permissions:
+      # Writing the findings to the code-scanning dashboard.
+      security-events: write
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
+        with:
+          languages: javascript-typescript
+          # Nothing is compiled to analyze: the app is JavaScript and both
+          # packages run their TypeScript directly under Node's type stripping.
+          build-mode: none
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
