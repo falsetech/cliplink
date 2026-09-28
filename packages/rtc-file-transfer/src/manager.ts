@@ -237,6 +237,15 @@ export type ResumeProvider = {
    * file is gone — evicted, or never stored.
    */
   read?(key: ResumeKey): Promise<Blob | null>;
+  /**
+   * Record that the whole file is on disk, under `keepReceived`. Called after
+   * the sink has closed, which is why — unlike `checkpoint` — it is not
+   * clamped to what the store considers durable: by then it all is.
+   *
+   * Without it a completed download is forgotten as before, so a store that
+   * doesn't implement it simply never seeds.
+   */
+  keep?(key: ResumeKey, state: ResumeState): void | Promise<void>;
 };
 
 export type RequestOptions = {
@@ -295,6 +304,16 @@ export type FileTransferOptions = {
    * a `digest` and peers that support `resume`.
    */
   resume?: ResumeProvider;
+  /**
+   * Keep a download in the `resume` store once it finishes, instead of
+   * deleting it at the finish line, so `seed` can offer it to other peers.
+   * Needs a store that implements `keep`, `list` and `read`.
+   *
+   * The store then grows without bound unless the application sweeps it: what
+   * is worth keeping, and for how long, is not something this library can
+   * decide.
+   */
+  keepReceived?: boolean;
 };
 
 type Timer = ReturnType<typeof setTimeout>;
@@ -520,6 +539,16 @@ export type FileTransferManager = {
     entries: Array<File | OfferEntry>,
     options?: OfferOptions,
   ): { offered: number; rejected: OfferRejection[] };
+  /**
+   * Re-offer files this device already holds in its `resume` store, as
+   * returned by that store's `list`. Returns the items created.
+   *
+   * Nothing is hashed: the digest came with the offer and was checked against
+   * every block on arrival, so it is already known and already trusted. Files
+   * this device is offering under the same digest are skipped, and so — for
+   * now — is anything less than complete.
+   */
+  seed(entries: StoredFile[]): FileItem[];
   /** Stop sharing an outgoing file, cutting off any download in flight. */
   revoke(id: string): void;
   /** Ask the sender for an incoming file. False if it can't be downloaded. */
@@ -592,6 +621,7 @@ export function createFileTransferManager(
   const newPeerConnection =
     options.createPeerConnection ?? ((config) => new RTCPeerConnection(config));
   const resumeStore = options.resume;
+  const keepReceived = options.keepReceived === true;
   const advertised = new Set(
     options.capabilities ?? (hasSubtleCrypto() ? CAPABILITIES : []),
   );
@@ -601,6 +631,12 @@ export function createFileTransferManager(
 
   const items = new Map<string, FileItem>();
   const outgoingFiles = new Map<string, File>();
+  /**
+   * Offer id → the store key of a file this device holds but did not pick:
+   * `seed` registers it here and `startSend` reads the bytes back when a peer
+   * asks, so seeding costs a map entry rather than a file in memory.
+   */
+  const outgoingSources = new Map<string, ResumeKey>();
   /** Offer id → its file's block hashes, once hashed for a `digest`. */
   const offerBlockHashes = new Map<string, string[]>();
   const transfers = new Map<string, Transfer>();
@@ -1107,7 +1143,12 @@ export function createFileTransferManager(
     return true;
   }
 
-  async function pumpFile(transfer: Transfer, channel: RTCDataChannel, file: File) {
+  /**
+   * `source` is a Blob rather than a File because a seeded offer is served out
+   * of the resume store, which hands back bytes and not a named file. Only
+   * `slice` and `size` are used, and `File extends Blob`.
+   */
+  async function pumpFile(transfer: Transfer, channel: RTCDataChannel, source: Blob) {
     const item = items.get(transfer.itemId);
     const cachedHashes = item && offerBlockHashes.get(item.offerId);
     const maxMessage = transfer.pc.sctp?.maxMessageSize;
@@ -1118,9 +1159,9 @@ export function createFileTransferManager(
 
     try {
       if (transfer.blocks) {
-        for (let start = transfer.offset; start < file.size; start += BLOCK_BYTES) {
+        for (let start = transfer.offset; start < source.size; start += BLOCK_BYTES) {
           const block = new Uint8Array(
-            await file.slice(start, start + BLOCK_BYTES).arrayBuffer(),
+            await source.slice(start, start + BLOCK_BYTES).arrayBuffer(),
           );
           const index = start / BLOCK_BYTES;
           // Hashed already if this offer carries a digest.
@@ -1138,11 +1179,11 @@ export function createFileTransferManager(
           }
         }
       } else {
-        for (let offset = 0; offset < file.size; ) {
+        for (let offset = 0; offset < source.size; ) {
           if (transfer.closed || channel.readyState !== "open") {
             return;
           }
-          const chunk = await file.slice(offset, offset + chunkSize).arrayBuffer();
+          const chunk = await source.slice(offset, offset + chunkSize).arrayBuffer();
           if (!(await sendChunk(transfer, channel, chunk))) {
             return;
           }
@@ -1349,6 +1390,26 @@ export function createFileTransferManager(
     emit();
   }
 
+  /**
+   * What happens to the stored copy of a download that just finished. Under
+   * `keepReceived` it stays, recorded as complete so the next page load finds
+   * it and can seed it; otherwise it goes, as it always has.
+   */
+  function keepOrForget(item: FileItem, download: Download) {
+    const key = download.key;
+    if (!keepReceived || !key || !resumeStore?.keep) {
+      forgetStored(item);
+      return;
+    }
+    stored.delete(item.id);
+    void Promise.resolve(
+      resumeStore.keep(key, {
+        verifiedBytes: item.size,
+        blockHashes: download.blockHashes.slice(),
+      }),
+    ).catch(() => {});
+  }
+
   function forgetStored(item: FileItem) {
     stored.delete(item.id);
     const key = resumeKeyFor(item);
@@ -1395,29 +1456,62 @@ export function createFileTransferManager(
     emit();
   }
 
+  /**
+   * The bytes behind an offer: the file this device picked, or — for a seeded
+   * offer — whatever the store still holds. Null once neither is there.
+   */
+  async function resolveSource(offerId: string): Promise<Blob | null> {
+    const file = outgoingFiles.get(offerId);
+    if (file) {
+      return file;
+    }
+    const key = outgoingSources.get(offerId);
+    if (!key || !resumeStore?.read) {
+      return null;
+    }
+    try {
+      const blob = await resumeStore.read(key);
+      return blob && blob.size >= key.size ? blob : null;
+    } catch {
+      return null;
+    }
+  }
+
   async function startSend(
     from: PeerId,
     request: Extract<FileSignal, { type: "file-request" }>,
   ) {
     const { offerId, transferId } = request;
     const id = itemKey(selfId, offerId);
-    const file = outgoingFiles.get(offerId);
     const item = items.get(id);
-    if (!file || !item) {
+    if (transfers.has(transferId)) {
+      return;
+    }
+    const gone = () =>
       sendSignal(
         { type: "transfer-cancel", transferId, reason: "This file is no longer shared." },
         from,
       );
+    if (!item) {
+      gone();
       return;
     }
-    if (transfers.has(transferId)) {
+    // A file this device picked is in memory; a file it is seeding has to be
+    // read back out of the store, which may have evicted it since the offer.
+    const source = await resolveSource(offerId);
+    // Reading the store is a turn of its own, so check again: the offer may
+    // have been revoked, or this transfer already started, while it ran.
+    if (!source || items.get(id) !== item || transfers.has(transferId)) {
+      if (!source) {
+        gone();
+      }
       return;
     }
 
     const blocks = hasCap("blocks", request.caps);
     const flow = blocks && hasCap("flow", request.caps);
     const offset = blocks && selfCaps.includes("resume") ? (request.offset ?? 0) : 0;
-    if (offset > file.size || (offset % BLOCK_BYTES !== 0 && offset !== file.size)) {
+    if (offset > source.size || (offset % BLOCK_BYTES !== 0 && offset !== source.size)) {
       sendSignal(
         { type: "transfer-cancel", transferId, reason: "Can't resume from there." },
         from,
@@ -1446,7 +1540,7 @@ export function createFileTransferManager(
 
     channel.addEventListener("open", () => {
       touch(transfer);
-      void pumpFile(transfer, channel, file);
+      void pumpFile(transfer, channel, source);
     });
     channel.addEventListener("message", (event) => {
       if (event.data === ACK_MESSAGE) {
@@ -1628,7 +1722,7 @@ export function createFileTransferManager(
       return;
     }
 
-    forgetStored(item);
+    keepOrForget(item, download);
     item.blob = result instanceof Blob ? result : undefined;
     item.savedToSink = !(result instanceof Blob);
     item.status = "done";
@@ -2030,6 +2124,65 @@ export function createFileTransferManager(
       return { offered, rejected };
     },
 
+    /**
+     * Re-offer files this device already holds, as `resume.list()` returns
+     * them. The offer carries the original digest, name, size, mime and path
+     * under a fresh offer id; the bytes are read from the store only when a
+     * peer actually asks for them.
+     */
+    seed(entries: StoredFile[]) {
+      const offered: FileItem[] = [];
+      const already = new Set(
+        outgoingItems()
+          .map((item) => item.digest)
+          .filter((digest): digest is string => digest !== undefined),
+      );
+      for (const entry of entries) {
+        const { key, state, meta } = entry;
+        if (
+          !HASH_PATTERN.test(key.digest) ||
+          key.size <= 0 ||
+          key.size > limits.maxFileBytes ||
+          // Phase one serves whole files only: a prefix needs a way to say so.
+          state.verifiedBytes !== key.size ||
+          already.has(key.digest)
+        ) {
+          continue;
+        }
+        already.add(key.digest);
+        const offerId = createId();
+        const item: FileItem = {
+          id: itemKey(selfId, offerId),
+          offerId,
+          name: sanitizeFileName(meta.name || key.name || "file"),
+          size: key.size,
+          mime: meta.mime,
+          digest: key.digest,
+          ...(meta.path !== undefined && {
+            path: sanitizeRelativePath(meta.path),
+          }),
+          direction: "outgoing",
+          peerId: selfId,
+          ts: Date.now(),
+          status: "offered",
+          bytes: 0,
+          activeTransfers: 0,
+          completedTransfers: 0,
+        };
+        outgoingSources.set(offerId, { ...key, size: key.size });
+        // Already verified block by block on the way in, so a peer pulling
+        // this file is never made to wait for it to be hashed again.
+        offerBlockHashes.set(offerId, state.blockHashes.slice());
+        addItem(item);
+        sendSignal(toOffer(item));
+        offered.push({ ...item });
+      }
+      if (offered.length > 0) {
+        emit();
+      }
+      return offered;
+    },
+
     /** Stop sharing an outgoing file. Devices mid-download are cut off. */
     revoke(id: string) {
       const item = items.get(id);
@@ -2037,6 +2190,7 @@ export function createFileTransferManager(
         return;
       }
       outgoingFiles.delete(item.offerId);
+      outgoingSources.delete(item.offerId);
       offerBlockHashes.delete(item.offerId);
       items.delete(id);
       sendSignal({ type: "file-revoke", offerId: item.offerId });
@@ -2127,6 +2281,7 @@ export function createFileTransferManager(
       }
       items.clear();
       outgoingFiles.clear();
+      outgoingSources.clear();
       offerBlockHashes.clear();
       emit();
       disposed = true;

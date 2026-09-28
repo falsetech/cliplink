@@ -6,6 +6,10 @@ import {
   sanitizeFileName,
   sanitizeRelativePath,
   type FileItem,
+  type ResumeKey,
+  type ResumeState,
+  type StoredFile,
+  type StoredMeta,
 } from "../src/index.ts";
 import { FakeSignaling, randomBytes, waitFor, type TestPeer } from "./fake-rtc.ts";
 
@@ -773,11 +777,14 @@ describe("verified blocks and resume", () => {
   function memoryStore() {
     const files = new Map<string, Uint8Array<ArrayBuffer>[]>();
     const states = new Map<string, { verifiedBytes: number; blockHashes: string[] }>();
+    const metas = new Map<string, StoredMeta>();
+    const keys = new Map<string, ResumeKey>();
     /** Bytes handed to a sink but not yet "committed", as an open segment would be. */
     let uncommitted = 0;
     return {
       files,
       states,
+      metas,
       hold(bytes: number) {
         uncommitted = bytes;
       },
@@ -802,25 +809,133 @@ describe("verified blocks and resume", () => {
             abort: () => {},
           };
         },
-        checkpoint: (
-          key: { digest: string },
-          state: { verifiedBytes: number; blockHashes: string[] },
-        ) => {
+        checkpoint: (key: ResumeKey, state: ResumeState) => {
           const durable = Math.max(0, state.verifiedBytes - uncommitted);
           if (durable > 0) {
+            keys.set(key.digest, key);
+            metas.set(key.digest, {
+              name: key.name,
+              mime: key.mime ?? "",
+              ...(key.path !== undefined && { path: key.path }),
+              tag: "room",
+              ts: Date.now(),
+            });
             states.set(key.digest, {
               verifiedBytes: durable,
               blockHashes: state.blockHashes.slice(0, Math.ceil(durable / MB)),
             });
           }
         },
+        // The whole file is on disk by the time this is called, so unlike a
+        // checkpoint it is not clamped to what a closed segment holds.
+        keep: (key: ResumeKey, state: ResumeState) => {
+          keys.set(key.digest, key);
+          metas.set(key.digest, {
+            name: key.name,
+            mime: key.mime ?? "",
+            ...(key.path !== undefined && { path: key.path }),
+            tag: "room",
+            ts: Date.now(),
+          });
+          states.set(key.digest, { ...state, blockHashes: state.blockHashes.slice() });
+        },
+        list: async (): Promise<StoredFile[]> =>
+          [...states].flatMap(([digest, state]) => {
+            const meta = metas.get(digest);
+            const key = keys.get(digest);
+            return meta && key ? [{ key, state, meta }] : [];
+          }),
+        read: async (key: ResumeKey) => {
+          const state = states.get(key.digest);
+          const parts = files.get(key.digest);
+          return state && parts
+            ? new Blob(parts as BlobPart[]).slice(0, state.verifiedBytes)
+            : null;
+        },
         forget: (key: { digest: string }) => {
           states.delete(key.digest);
           files.delete(key.digest);
+          metas.delete(key.digest);
+          keys.delete(key.digest);
         },
       },
     };
   }
+
+  it("keeps a received file and serves it after the original sender is gone", async () => {
+    const store = memoryStore();
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00", {
+      resume: store.provider,
+      keepReceived: true,
+    });
+    const source = randomBytes(2 * MB + 5);
+
+    alice.manager.offerFiles([{ file: new File([source], "kept.bin"), path: "docs" }], {
+      digest: true,
+    });
+    await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+    const digest = incoming(bob)[0].digest!;
+    assert.equal(bob.manager.request(incoming(bob)[0].id), true);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 5000);
+
+    // The copy stays: that is what makes bob able to seed it.
+    assert.equal(store.states.get(digest)?.verifiedBytes, source.byteLength);
+    assert.equal(store.metas.get(digest)?.name, "kept.bin");
+    assert.equal(store.metas.get(digest)?.path, "docs");
+
+    // The original sender goes away entirely.
+    alice.manager.dispose();
+    bus.peers.delete("peer-alice");
+
+    const held = await store.provider.list();
+    assert.equal(held.length, 1);
+    const seeded = bob.manager.seed(held);
+    assert.equal(seeded.length, 1);
+    assert.equal(seeded[0].direction, "outgoing");
+    assert.equal(seeded[0].digest, digest);
+    assert.equal(seeded[0].name, "kept.bin");
+    assert.equal(seeded[0].path, "docs");
+    assert.notEqual(seeded[0].offerId, incoming(bob)[0].offerId, "a fresh offer id");
+
+    const carol = bus.addPeer("peer-carol");
+    bob.manager.announce();
+    await waitFor(() => incoming(carol)[0]?.digest === digest, 5000);
+    assert.equal(carol.manager.request(incoming(carol)[0].id), true);
+    await waitFor(() => carol.notices.some((notice) => notice.type === "received"), 5000);
+    assert.deepEqual(new Uint8Array(await incoming(carol)[0].blob!.arrayBuffer()), source);
+  });
+
+  it("cancels cleanly when the store no longer has a file it is seeding", async () => {
+    const store = memoryStore();
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00", {
+      resume: store.provider,
+      keepReceived: true,
+    });
+    const source = randomBytes(MB + 3);
+
+    alice.manager.offerFiles([new File([source], "evicted.bin")], { digest: true });
+    await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+    bob.manager.request(incoming(bob)[0].id);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 5000);
+
+    alice.manager.dispose();
+    bus.peers.delete("peer-alice");
+    bob.manager.seed(await store.provider.list());
+
+    const carol = bus.addPeer("peer-carol");
+    bob.manager.announce();
+    await waitFor(() => incoming(carol).length === 1, 5000);
+    // Evicted between the offer and the request: the download must end, not hang.
+    store.files.clear();
+    store.states.clear();
+    assert.equal(carol.manager.request(incoming(carol)[0].id), true);
+    await waitFor(() => failure(carol) !== undefined, 5000);
+    assert.equal(failure(carol)!.code, "remote-canceled");
+  });
 
   it("picks a download back up after a reload, from what the store had committed", async () => {
     const store = memoryStore();

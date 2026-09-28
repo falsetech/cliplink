@@ -226,7 +226,10 @@ export class FakePeerConnection extends EventTarget {
 }
 
 type PeerOptions = Partial<
-  Pick<FileTransferOptions, "limits" | "createId" | "iceServers" | "capabilities" | "resume">
+  Pick<
+    FileTransferOptions,
+    "limits" | "createId" | "iceServers" | "capabilities" | "resume" | "keepReceived"
+  >
 > & {
   /** Called with the config of every peer connection this peer opens. */
   onPeerConfig?: (config: RTCConfiguration) => void;
