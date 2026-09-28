@@ -964,6 +964,47 @@ describe("verified blocks and resume", () => {
     await waitFor(() => incoming(carol)[0]?.status === "revoked", 5000);
   });
 
+  it("seeds again after a reload, from the store alone", async () => {
+    const store = memoryStore();
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    let bob = bus.addPeer("peer-bob00", {
+      resume: store.provider,
+      keepReceived: true,
+    });
+    const source = randomBytes(2 * MB + 77);
+
+    alice.manager.offerFiles([new File([source], "reseed.bin")], { digest: true });
+    await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+    const digest = incoming(bob)[0].digest!;
+    bob.manager.request(incoming(bob)[0].id);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 5000);
+
+    // The tab reloads and the sender is gone: the store is all that is left.
+    bob.manager.dispose();
+    bus.peers.delete("peer-bob00");
+    alice.manager.dispose();
+    bus.peers.delete("peer-alice");
+    bob = bus.addPeer("peer-bob00", { resume: store.provider, keepReceived: true });
+
+    const held = await store.provider.list();
+    const seeded = bob.manager.seed(held);
+    assert.equal(seeded.length, 1);
+    assert.equal(seeded[0].digest, digest, "the digest survives the reload");
+
+    const carol = bus.addPeer("peer-carol");
+    bob.manager.announce();
+    await waitFor(() => incoming(carol).length === 1, 5000);
+    assert.equal(carol.manager.request(incoming(carol)[0].id), true);
+    await waitFor(() => carol.notices.some((notice) => notice.type === "received"), 5000);
+    const item = incoming(carol)[0];
+    assert.equal(item.digest, digest, "and the receiver checks the file against it");
+    assert.deepEqual(new Uint8Array(await item.blob!.arrayBuffer()), source);
+
+    // Seeding twice from the same store is one offer, not two.
+    assert.equal(bob.manager.seed(held).length, 0);
+  });
+
   it("keeps a row per peer when an offer carries no digest", async () => {
     bus = new FakeSignaling();
     const alice = bus.addPeer("peer-alice");
