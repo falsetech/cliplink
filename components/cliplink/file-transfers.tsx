@@ -53,7 +53,15 @@ function statusText(item: FileListItem) {
   const size = formatBytes(item.size);
 
   if (item.direction === "outgoing") {
-    const parts = [size, "Available while this tab is open"];
+    // A seeded row is a file this device received and is passing on, not one
+    // the person here chose to share — worth saying, since "Stop Sharing"
+    // means something different for each.
+    const parts = [
+      size,
+      item.seeded
+        ? "Received here · passing it on"
+        : "Available while this tab is open",
+    ];
     if (item.activeTransfers > 0) {
       parts.push(`Sending to ${item.activeTransfers}`);
     }
@@ -82,8 +90,13 @@ function statusText(item: FileListItem) {
       return item.error ?? "Transfer failed.";
     case "revoked":
       return `${size} · No longer available`;
-    default:
-      return size;
+    default: {
+      // Several devices in the room hold this file. Which one it comes from is
+      // the app's business, not the person's; how many there are is what tells
+      // them the download will survive one of them leaving.
+      const devices = item.sources?.length ?? 1;
+      return devices > 1 ? `${size} · On ${devices} devices` : size;
+    }
   }
 }
 

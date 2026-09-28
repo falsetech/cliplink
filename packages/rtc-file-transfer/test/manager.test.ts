@@ -894,6 +894,7 @@ describe("verified blocks and resume", () => {
     const seeded = bob.manager.seed(held);
     assert.equal(seeded.length, 1);
     assert.equal(seeded[0].direction, "outgoing");
+    assert.equal(seeded[0].seeded, true, "held rather than chosen to share");
     assert.equal(seeded[0].digest, digest);
     assert.equal(seeded[0].name, "kept.bin");
     assert.equal(seeded[0].path, "docs");

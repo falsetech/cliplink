@@ -10,7 +10,6 @@ import {
   type OfferRejection,
   type TransferNotice,
 } from "@thebkht/rtc-file-transfer";
-import { opfsResume } from "@thebkht/rtc-file-transfer/sinks";
 
 import {
   DISK_SINK_MIN_BYTES,
@@ -23,9 +22,12 @@ import type { ShareEntry } from "@/lib/cliplink/dropped-files";
 import {
   canPickDiskSink,
   createDirectorySink,
+  createSeedStore,
+  heldFiles,
   pickDiskSink,
   pickDirectory,
   releaseDiskFiles,
+  sweepSeedStore,
 } from "@/lib/cliplink/file-sink";
 import type { PeerId, SignalPayload } from "@/lib/cliplink/types";
 import { createZip } from "@/lib/cliplink/zip";
@@ -41,6 +43,12 @@ type UseFileTransferOptions = {
   peerId: PeerId;
   sendSignal: (payload: SignalPayload, to?: PeerId) => boolean;
   pushToast: (message: string, tone?: ToastTone) => void;
+  /**
+   * The room this device is in, or null outside one. Read through a ref rather
+   * than a dependency: it arrives after the hook does, and rebuilding the
+   * manager when it lands would drop every transfer in flight.
+   */
+  roomCode: string | null;
 };
 
 /** Reads `NEXT_PUBLIC_ICE_SERVERS` (JSON array) so a TURN relay can be added without code changes. */
@@ -121,6 +129,7 @@ export function useFileTransfer({
   peerId,
   sendSignal,
   pushToast,
+  roomCode,
 }: UseFileTransferOptions) {
   const [items, setItems] = useState<FileListItem[]>([]);
 
@@ -135,9 +144,11 @@ export function useFileTransfer({
   /** Batches already announced, so a folder of 50 files makes one toast. */
   const announcedRef = useRef(new Set<string>());
   const toastRef = useRef(pushToast);
+  const roomRef = useRef(roomCode);
 
   useEffect(() => {
     toastRef.current = pushToast;
+    roomRef.current = roomCode;
   });
 
   const api = useMemo(() => {
@@ -345,6 +356,19 @@ export function useFileTransfer({
       }
     }
 
+    /** Runs once per room: sweep what is stale, then offer what is left. */
+    async function startSeeding() {
+      const room = roomRef.current;
+      await sweepSeedStore(room);
+      if (!room || roomRef.current !== room || !managerRef.current) {
+        return;
+      }
+      const held = await heldFiles(room);
+      if (held.length > 0 && roomRef.current === room) {
+        managerRef.current?.seed(held);
+      }
+    }
+
     function getManager() {
       if (!managerRef.current) {
         managerRef.current = createFileTransferManager({
@@ -355,9 +379,11 @@ export function useFileTransfer({
           onNotice: handleNotice,
           iceServers: resolveIceServers(),
           limits: { maxFileBytes: MAX_FILE_BYTES, maxItems: MAX_FILE_ITEMS },
-          // Lets a refreshed tab pick a download back up: keyed by digest+size,
-          // not by room, so it survives leaving and re-entering a room too.
-          resume: opfsResume({ directory: "cliplink-resume" }),
+          // Lets a refreshed tab pick a download back up, and keeps the file
+          // afterwards so this device can pass it on to the rest of the room:
+          // the sender is then free to close its tab.
+          resume: createSeedStore(() => roomRef.current),
+          keepReceived: true,
         });
       }
       return managerRef.current;
@@ -372,6 +398,9 @@ export function useFileTransfer({
 
       announce() {
         getManager().announce();
+        // Joining, or a reconnect: re-offer whatever this device is holding
+        // for this room. Seeding the same digest twice is a no-op.
+        void startSeeding();
       },
 
       offerFiles(entries: ShareEntry[]) {
@@ -550,6 +579,8 @@ export function useFileTransfer({
         urls.clear();
         // After the object URLs: those are what still pointed at these files.
         releaseDiskFiles();
+        // Leaving the room ends this device's reason to hold its files.
+        void sweepSeedStore(null);
         setItems([]);
       },
     };

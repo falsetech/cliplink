@@ -204,15 +204,6 @@ export default function CliplinkApp({
     timer: number;
   } | null>(null);
 
-  const files = useFileTransfer({
-    peerId,
-    // The transport's own method, not a wrapper: useFileTransfer memoises on
-    // this identity, and a fresh closure each render resets the manager in a
-    // loop.
-    sendSignal: transport.sendSignal,
-    pushToast,
-  });
-
   const presence = usePresence({ sendSignal: transport.sendSignal });
 
   const room = useRoomSession({
@@ -224,6 +215,21 @@ export default function CliplinkApp({
       presence.handleSignal(from, payload);
       files.handleSignal(from, payload);
     },
+  });
+
+  // After the room, which it needs the code of: every reference to `files`
+  // above is inside a callback the room invokes later, never during this
+  // render.
+  const files = useFileTransfer({
+    peerId,
+    // The transport's own method, not a wrapper: useFileTransfer memoises on
+    // this identity, and a fresh closure each render resets the manager in a
+    // loop.
+    sendSignal: transport.sendSignal,
+    pushToast,
+    // What a received file is tagged with, so the room it belongs to is what
+    // decides whether this device keeps seeding it.
+    roomCode: room.roomCode,
   });
 
   const editor = useClipEditor({

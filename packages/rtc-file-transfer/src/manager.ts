@@ -143,6 +143,11 @@ export type FileItem = FileOffer & {
    */
   outgoingTransfers?: OutgoingTransfer[];
   /**
+   * This device is passing on a file it received rather than one it chose to
+   * share (outgoing only), as created by `seed`.
+   */
+  seeded?: boolean;
+  /**
    * Every peer offering this exact content (incoming only), in the order they
    * were heard from. `peerId`, `offerId` and `caps` mirror the first one: the
    * source a download uses. Absent on outgoing items.
@@ -2314,6 +2319,7 @@ export function createFileTransferManager(
           bytes: 0,
           activeTransfers: 0,
           completedTransfers: 0,
+          seeded: true,
         };
         outgoingSources.set(offerId, { ...key, size: key.size });
         // Already verified block by block on the way in, so a peer pulling

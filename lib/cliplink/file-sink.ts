@@ -1,13 +1,19 @@
-import type { FileSink } from "@thebkht/rtc-file-transfer";
+import type {
+  FileSink,
+  ResumeProvider,
+  StoredFile,
+} from "@thebkht/rtc-file-transfer";
 import {
   canPickFile,
   clearOpfs,
   directorySink,
   hasOpfs,
+  opfsResume,
   opfsSink,
   pickFileSink,
 } from "@thebkht/rtc-file-transfer/sinks";
 
+import { ROOM_TTL_SECONDS, SEED_BUDGET_BYTES } from "./constants";
 import { createRandomId } from "./session";
 
 export { canPickDirectory, pickDirectory } from "@thebkht/rtc-file-transfer/sinks";
@@ -82,5 +88,100 @@ export async function pickDiskSink(name: string): Promise<FileSink | null> {
 export function releaseDiskFiles() {
   if (opfsClaimed) {
     void clearOpfs({ directory: opfsDirectory });
+  }
+}
+
+// -----------------------------------------------------------------------------
+// The seed store
+//
+// Received files stay here so this device can pass them on to the rest of the
+// room: the sender can close its tab, and a third device pulls from whoever is
+// nearest. It doubles as the resume store, because a partial download and a
+// file worth seeding are the same bytes at different points.
+//
+// It outlives a tab, unlike the per-tab download folders above, so the app —
+// not a Web Lock — decides what stays: files from this room, young enough to
+// still have a room to belong to, inside a byte budget.
+
+const SEED_DIRECTORY = "cliplink-resume";
+
+/** Tagged with the room, so a sweep can tell this room's files from another's. */
+export function createSeedStore(tag: () => string | null): ResumeProvider {
+  // The tag is read when the store is built, which is the first time a file is
+  // written — by then the room is joined.
+  return opfsResume({ directory: SEED_DIRECTORY, tag: tag() ?? undefined });
+}
+
+function sweepStore() {
+  return opfsResume({ directory: SEED_DIRECTORY });
+}
+
+/**
+ * The ceiling on what is kept, lowered on a device that hasn't the room for
+ * it. `quota` is the whole origin's allowance, so half of it leaves as much
+ * again for downloads in flight, zips being built, and everything else.
+ */
+async function seedBudget() {
+  try {
+    const { quota } = await navigator.storage.estimate();
+    return quota && quota > 0
+      ? Math.min(SEED_BUDGET_BYTES, Math.floor(quota / 2))
+      : SEED_BUDGET_BYTES;
+  } catch {
+    return SEED_BUDGET_BYTES;
+  }
+}
+
+/** Complete files this device holds for `tag`, ready to be re-offered. */
+export async function heldFiles(tag: string): Promise<StoredFile[]> {
+  if (!hasOpfs()) {
+    return [];
+  }
+  try {
+    const held = (await sweepStore().list?.()) ?? [];
+    return held.filter(
+      (entry) =>
+        entry.meta.tag === tag && entry.state.verifiedBytes === entry.key.size,
+    );
+  } catch {
+    // No private file system, or it refused: this device simply doesn't seed.
+    return [];
+  }
+}
+
+/**
+ * Drops what is no longer worth keeping: files from another room, files older
+ * than a room lives, and — oldest first — whatever is over budget. Called on
+ * joining and on leaving, and every failure is silent: not seeding is a
+ * smaller problem than a broken app.
+ */
+export async function sweepSeedStore(keepTag: string | null) {
+  if (!hasOpfs()) {
+    return;
+  }
+  try {
+    const store = sweepStore();
+    const held = (await store.list?.()) ?? [];
+    const budget = await seedBudget();
+    const oldest = Date.now() - ROOM_TTL_SECONDS * 1000;
+
+    // Newest first, so the budget is spent on what is most likely wanted.
+    const keep = held
+      .filter((entry) => entry.meta.tag === keepTag && entry.meta.ts > oldest)
+      .sort((left, right) => right.meta.ts - left.meta.ts);
+
+    let kept = 0;
+    const drop = held.filter((entry) => !keep.includes(entry));
+    for (const entry of keep) {
+      kept += entry.state.verifiedBytes;
+      if (kept > budget) {
+        drop.push(entry);
+      }
+    }
+    for (const entry of drop) {
+      await Promise.resolve(store.forget(entry.key)).catch(() => {});
+    }
+  } catch {
+    // Leftovers wait for the next sweep.
   }
 }

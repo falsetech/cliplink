@@ -64,5 +64,15 @@ export const MAX_ZIP_BYTES = 1024 * 1024 * 1024;
  * file system elsewhere.
  */
 export const DISK_SINK_MIN_BYTES = 64 * 1024 * 1024;
+/**
+ * How much this device keeps of files it has received so it can pass them on
+ * to the rest of the room. Oldest first is evicted past this, and the whole
+ * store is swept on joining and on leaving a room — so this is a ceiling on
+ * what is held between rooms, not a quota the app tries to fill.
+ *
+ * Bounded again by the origin's own quota at sweep time: a phone with little
+ * free space keeps less than a laptop with plenty.
+ */
+export const SEED_BUDGET_BYTES = 2 * 1024 * 1024 * 1024;
 export const SIGNAL_RATE_WINDOW_MS = 10_000;
 export const SIGNAL_RATE_MAX_MESSAGES = 200;
