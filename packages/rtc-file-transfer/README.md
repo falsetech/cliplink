@@ -147,11 +147,13 @@ Anything else still works the way the example above does — an adapter is a con
 | `iceServers` | Defaults to public Google and Cloudflare STUN servers. Add a TURN server for restrictive networks. Pass a function instead of an array and it is called for each connection, so short-lived TURN credentials can be refreshed — see [ICE servers](#ice-servers). |
 | `limits` | Any of `maxFileBytes` (64 GiB), `maxMemoryBytes` (500 MB), `chunkBytes` (64 KB), `bufferHighBytes` (4 MB), `bufferLowBytes` (1 MB), `windowBytes` (16 MB), `stallMs` (20 s), `iceRestartMs` (8 s), `maxItems` (20). |
 | `createId` | Id generator for offers and transfers. |
-| `capabilities` | Protocol features to advertise: `blocks`, `resume` and `flow`. Defaults to all of them where `crypto.subtle` exists. Pass `[]` to behave exactly like a v1 peer. |
+| `capabilities` | Protocol features to advertise: `blocks`, `resume`, `flow` and `partial`. Defaults to all of them where `crypto.subtle` exists. Pass `[]` to behave exactly like a v1 peer. |
 | `createPeerConnection` | For environments without a global `RTCPeerConnection`, such as Node with a WebRTC polyfill. |
 | `resume` | A `ResumeProvider` that keeps partial downloads across page loads. `opfsResume()` from `/sinks` is one. |
+| `keepReceived` | Keep a finished download in the `resume` store instead of deleting it, so `seed` can pass it on. See [Passing a file on](#passing-a-file-on). |
+| `seedWhileDownloading` | Offer a stored download's verified prefix to the room while it is still arriving. On by default where `partial` is advertised. |
 
-The manager returns `handleSignal`, `announce`, `offerFiles`, `request`, `pause`, `resume`, `cancel`, `revoke`, `dismiss`, `getItems`, `getItem` and `dispose`.
+The manager returns `handleSignal`, `announce`, `offerFiles`, `seed`, `request`, `pause`, `resume`, `cancel`, `revoke`, `dismiss`, `getItems`, `getItem` and `dispose`.
 
 `getItems()` returns the same snapshot `onItemsChange` receives, newest first, and `getItem(id)` returns one of them. Both hand back copies, so reading cannot disturb the manager. They are there for a caller that needs to ask rather than keep its own mirror of every change.
 
@@ -260,9 +262,43 @@ files.offerFiles([...input.files!], { digest: true });
 
 On the next load the offer comes back, the manager asks the store what it has, and the item shows `resumableBytes` before anything is requested. `request` then continues into the same file. The store also supplies the sink for a fresh download, so nothing else is needed for a file with a digest.
 
-`opfsResume()` writes fixed-size part files, closing each as it fills, because that is when bytes actually reach disk — so a reload replays at most one segment (64 MB by default; `segmentBytes` changes it). `close` returns the finished file as a Blob made of those parts, still backed by disk. A completed, revoked or dismissed file is deleted.
+`opfsResume()` writes fixed-size part files, closing each as it fills, because that is when bytes actually reach disk — so a reload replays at most one segment (64 MB by default; `segmentBytes` changes it). A file stored with a different `segmentBytes` starts over rather than resuming, since its parts wouldn't line up. `close` returns the finished file as a Blob made of those parts, still backed by disk. A completed file is deleted unless `keepReceived` is set; a revoked or dismissed one always is.
 
-Write your own by implementing `load`, `open`, `checkpoint` and `forget`. The one rule: `checkpoint` must report only what is durably written, because that is exactly what the next load resumes from.
+Write your own by implementing `load`, `open`, `checkpoint` and `forget`. The one rule: `checkpoint` must report only what is durably written, because that is exactly what the next load resumes from. `list`, `read` and `keep` are optional, and are what [passing a file on](#passing-a-file-on) needs.
+
+### Passing a file on
+
+A device that has a file can serve it, not only the one that first offered it. With `keepReceived`, a finished download stays in the store, and `seed` offers what the store holds:
+
+```ts
+const store = opfsResume({ tag: roomId });
+const files = createFileTransferManager({ ..., resume: store, keepReceived: true });
+
+// On joining — including after a reload, which is the point.
+files.seed((await store.list()).filter((held) => held.meta.tag === roomId));
+```
+
+A seeded offer carries the original digest, name and path under a fresh offer id. Nothing is hashed again: the block hashes are in the store, and the bytes are read back only when a peer asks. The item is `seeded: true`, so a UI can tell it from a file this device chose to share.
+
+On the receiving side, offers of the same content are one item. An incoming item's `sources` lists every peer offering its digest, and `peerId` is the one a download uses. When that source goes away or runs out, the download keeps its sink and every verified block and continues at the next — a handoff, not a failure, so nothing is reported and the item stays in flight. A source that has already let the download down is tried last, and a run of handoffs that makes no progress ends as the failure it would have been. A source leaving only revokes the item when it was the last one.
+
+With `seedWhileDownloading` (on by default), a stored download starts offering its verified prefix once the first block is in, and says how much it has as more arrives. The second device to get a file then serves the third before it has finished. The offer becomes a complete one when the download completes, and is withdrawn if it is dropped.
+
+The store grows with every file this device keeps. What is worth keeping, and for how long, is the application's call: `opfsResume`'s `tag` records what a file belongs to, `list` returns every file with its `meta.ts`, and `forget` removes one.
+
+### Playing while it downloads
+
+A stored file is on disk in parts, and `read(key)` returns its verified prefix as a Blob. To play a video before it has finished, answer a media element's Range requests out of that prefix — from a service worker, typically. `prefixRange` from `/sinks` is the arithmetic:
+
+```ts
+import { prefixRange } from "@thebkht/rtc-file-transfer/sinks";
+
+const range = prefixRange(size, verifiedBytes, request.headers.get("Range"));
+// { status: 206, start, end, contentRange } — serve start..end, inclusive
+// { status: 416, contentRange, pending }   — pending: those bytes are on their way
+```
+
+A short `206` is legal, and a media element simply asks for the next range, so playback carries on as the file arrives. The type the file is served with came from the peer that offered it: serve only audio and video types, only to media requests, and with `X-Content-Type-Options: nosniff`, or a peer can offer an HTML "video" that runs as your origin.
 
 ### Pausing and resuming
 
@@ -294,6 +330,8 @@ Newer peers negotiate optional features through fields that v1 peers never send 
 - With `blocks`, the sender follows every `BLOCK_BYTES` (1 MiB) of data with the string `{"t":"block","i":<index>,"h":"<sha256 hex>"}`. The receiver checks each block before writing it to the sink.
 - With `resume` (which requires `blocks`), `file-request.offset` asks the sender to start at a block boundary.
 - With `flow` (which also requires `blocks`), the receiver answers each verified block with `{"t":"credit","b":<bytes committed>}`, and the sender stops once it is `windowBytes` ahead of that. Peers without it ignore the message and rely on `bufferedAmount` alone.
+- `hello.caps` says what a peer supports before any offer is made. Offers are broadcast, so it is the only way a sender learns who can take a partial one.
+- With `partial` (which requires `blocks` and `resume`), an offer's `have` says how much of the file the sender holds, and the sender ends with `{"t":"part","b":<bytes>}` instead of `"done"` when it runs out. The receiver keeps what arrived and continues elsewhere. A partial offer is only ever sent to a peer whose `hello` listed `partial`, and a peer without it is never sent a `part`.
 
 `file-offer` can also carry `path`, `batchId` and `digest`. These aren't capabilities: older peers drop them on receipt, showing loose files and skipping the whole-file check.
 
