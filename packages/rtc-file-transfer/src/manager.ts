@@ -2350,6 +2350,19 @@ export function createFileTransferManager(
       if (source) {
         source.caps = offer.caps;
         source.have = offer.have ?? offer.size;
+      } else if (existing.direction === "incoming") {
+        // Found by its id, but no longer listed: this peer was reported gone
+        // — a socket blip — and has come back offering the same file.
+        existing.sources = [
+          ...(existing.sources ?? []),
+          {
+            peerId: from,
+            offerId: offer.offerId,
+            have: offer.have ?? offer.size,
+            ...(offer.caps && { caps: offer.caps }),
+          },
+        ];
+        emit();
       }
       if (existing.peerId === from && existing.offerId === offer.offerId) {
         existing.caps = offer.caps;

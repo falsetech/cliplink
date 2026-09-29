@@ -1371,6 +1371,34 @@ describe("verified blocks and resume", () => {
       assert.deepEqual(new Uint8Array(await incoming(carol)[0].blob!.arrayBuffer()), source);
     });
 
+    it("takes a source back when it returns under the same offer", async () => {
+      const store = memoryStore();
+      bus = new FakeSignaling();
+      const alice = bus.addPeer("peer-alice");
+      const bob = bus.addPeer("peer-bob00", { resume: store.provider, keepReceived: true });
+      // Carol is here first, so her row is keyed by alice's offer.
+      const carol = bus.addPeer("peer-carol");
+      alice.manager.offerFiles([new File([randomBytes(2 * MB)], "blip.bin")], { digest: true });
+      await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+      await waitFor(() => incoming(carol)[0]?.digest !== undefined);
+      assert.equal(incoming(carol)[0].peerId, "peer-alice");
+      bob.manager.request(incoming(bob)[0].id);
+      await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 5000);
+      bob.manager.announce();
+      await waitFor(() => (incoming(carol)[0]?.sources?.length ?? 0) === 2, 5000);
+
+      // Alice's socket blips: she is reported gone, then re-announces.
+      carol.manager.handleSignal("peer-alice", { type: "peer-left" });
+      await waitFor(() => incoming(carol)[0].sources!.length === 1);
+      alice.manager.announce();
+      await waitFor(() => incoming(carol)[0].sources!.length === 2, 2000);
+
+      // So bob leaving no longer takes the file away.
+      carol.manager.handleSignal("peer-bob00", { type: "peer-left" });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(incoming(carol)[0].status, "offered");
+    });
+
   });
 
   it("keeps a row per peer when an offer carries no digest", async () => {
