@@ -236,7 +236,7 @@ button.addEventListener("click", async () => {
 
 `bestSink(item)` tries the picker, then OPFS, and resolves `undefined` when neither exists. OPFS files stay until `clearOpfs()` removes them; remove them only after the user has saved the Blob, since it stops being readable once its file is gone. `canPickFile`, `canPickDirectory` and `hasOpfs` report what the browser supports.
 
-To write your own, implement `write`, `close` and `abort`. Writes are serialized. `close` runs once every byte has arrived; return a `Blob` from it to expose one as `item.blob`, or return nothing and the item gets `savedToSink: true`. `abort` runs if the download fails or never starts, and a sink that throws fails the transfer with `write-error`. With `flow` on both sides the sink sets the pace, so a slow disk can't pile up in memory; against a peer without it, bytes that arrive faster than the sink writes them still queue.
+To write your own, implement `write`, `close` and `abort`. Writes are serialized. `close` runs once every byte has arrived; return a `Blob` from it to expose one as `item.blob`, or return nothing and the item gets `savedToSink: true`. A returned Blob must be the whole file: one of another size fails the download with `write-error`. `abort` runs if the download fails or never starts, and a sink that throws fails the transfer with `write-error`. With `flow` on both sides the sink sets the pace, so a slow disk can't pile up in memory; against a peer without it, bytes that arrive faster than the sink writes them still queue.
 
 ### Verifying the whole file
 

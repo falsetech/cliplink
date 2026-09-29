@@ -1445,6 +1445,26 @@ describe("verified blocks and resume", () => {
       assert.ok(sent <= 1 + Math.floor(seconds / 5), `${sent} announces in ${seconds.toFixed(1)} s`);
     });
 
+    it("fails a download whose sink hands back fewer bytes than arrived", async () => {
+      bus = new FakeSignaling();
+      const alice = bus.addPeer("peer-alice");
+      const bob = bus.addPeer("peer-bob00");
+      const source = randomBytes(2 * MB + 5);
+      alice.manager.offerFiles([new File([source], "short.bin")]);
+      await waitFor(() => incoming(bob).length === 1);
+      const kept: Uint8Array<ArrayBuffer>[] = [];
+      bob.manager.request(incoming(bob)[0].id, {
+        sink: {
+          write: (chunk) => void kept.push(chunk.slice()),
+          // A store that lost a part: whole on the way in, short on the way out.
+          close: () => new Blob(kept.slice(1) as BlobPart[]),
+          abort: () => {},
+        },
+      });
+      await waitFor(() => failure(bob) !== undefined || bob.notices.some((n) => n.type === "received"), 5000);
+      assert.equal(failure(bob)?.code, "write-error");
+    });
+
   });
 
   it("keeps a row per peer when an offer carries no digest", async () => {

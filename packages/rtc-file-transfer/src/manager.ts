@@ -1980,6 +1980,14 @@ export function createFileTransferManager(
       failTransfer(transfer, "write-error", true);
       return;
     }
+    // Every byte passed on the way in, but the file handed back is not all of
+    // them — a store that lost a part under us. What it kept can't be trusted
+    // to resume from either.
+    if (result instanceof Blob && result.size !== item.size && !download.settled) {
+      forgetStored(item);
+      failTransfer(transfer, "write-error", true);
+      return;
+    }
     // Until close resolves the download stays abortable, so a cancel during
     // it releases the sink and this finds it settled.
     if (download.settled) {
