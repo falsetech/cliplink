@@ -80,8 +80,10 @@ export function parseFileSignal(
   }
 
   switch (input.type) {
-    case "hello":
-      return { type: "hello" };
+    case "hello": {
+      const caps = parseCaps(input.caps);
+      return { type: "hello", ...(caps && { caps }) };
+    }
 
     case "file-offer": {
       const { offerId, name, size, mime } = input;
@@ -99,6 +101,13 @@ export function parseFileSignal(
       const caps = parseCaps(input.caps);
       const path =
         isBoundedString(input.path, max.maxPathChars) && sanitizeRelativePath(input.path);
+      // A prefix, never the whole file and never nothing: a `have` of `size`
+      // is a complete offer and says so by leaving the field out.
+      const have =
+        typeof input.have === "number" &&
+        Number.isSafeInteger(input.have) &&
+        input.have > 0 &&
+        input.have < size;
       return {
         type: "file-offer",
         offerId,
@@ -106,6 +115,7 @@ export function parseFileSignal(
         size,
         mime,
         ...(caps && { caps }),
+        ...(have && { have: input.have as number }),
         ...(path && { path }),
         ...(isValidId(input.batchId) && { batchId: input.batchId }),
         ...(typeof input.digest === "string" && HASH_PATTERN.test(input.digest)

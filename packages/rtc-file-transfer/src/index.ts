@@ -4,6 +4,7 @@ export {
   type FileItem,
   type FileItemStatus,
   type FileSink,
+  type ItemSource,
   type FileTransferManager,
   type FileTransferOptions,
   type OfferEntry,
@@ -16,6 +17,8 @@ export {
   type ResumeKey,
   type ResumeProvider,
   type ResumeState,
+  type StoredFile,
+  type StoredMeta,
   type TransferNotice,
 } from "./manager.ts";
 export { sanitizeFileName, sanitizeRelativePath } from "./names.ts";

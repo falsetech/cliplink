@@ -1,13 +1,19 @@
-import type { FileSink } from "@thebkht/rtc-file-transfer";
+import type {
+  FileSink,
+  ResumeProvider,
+  StoredFile,
+} from "@thebkht/rtc-file-transfer";
 import {
   canPickFile,
   clearOpfs,
   directorySink,
   hasOpfs,
+  opfsResume,
   opfsSink,
   pickFileSink,
 } from "@thebkht/rtc-file-transfer/sinks";
 
+import { SEED_BUDGET_BYTES } from "./constants";
 import { createRandomId } from "./session";
 
 export { canPickDirectory, pickDirectory } from "@thebkht/rtc-file-transfer/sinks";
@@ -82,5 +88,209 @@ export async function pickDiskSink(name: string): Promise<FileSink | null> {
 export function releaseDiskFiles() {
   if (opfsClaimed) {
     void clearOpfs({ directory: opfsDirectory });
+  }
+}
+
+// -----------------------------------------------------------------------------
+// The seed store
+//
+// Received files stay here so this device can pass them on to the rest of the
+// room: the sender can close its tab, and a third device pulls from whoever is
+// nearest. It doubles as the resume store, because a partial download and a
+// file worth seeding are the same bytes at different points.
+//
+// It outlives a tab, unlike the per-tab download folders above, so the app —
+// not a Web Lock — decides what stays: files from this room, young enough to
+// still have a room to belong to, inside a byte budget.
+
+/** Also named in public/sw.js, which serves files out of it. */
+const SEED_DIRECTORY = "cliplink-resume";
+
+/**
+ * Bytes per part file. The store records progress only as a part closes, so
+ * this is also how far a video has to arrive before it can start playing, and
+ * how much a reload refetches. Small enough that playback starts in seconds;
+ * large enough that a 2 GB file is a few hundred files rather than thousands.
+ */
+export const SEED_SEGMENT_BYTES = 4 * 1024 * 1024;
+
+/** Tagged with the room, so a sweep can tell this room's files from another's. */
+export function createSeedStore(tag: () => string | null): ResumeProvider {
+  // The tag is read when the store is built, which is the first time a file is
+  // written — by then the room is joined.
+  return opfsResume({
+    directory: SEED_DIRECTORY,
+    segmentBytes: SEED_SEGMENT_BYTES,
+    tag: tag() ?? undefined,
+  });
+}
+
+function sweepStore() {
+  return opfsResume({ directory: SEED_DIRECTORY, segmentBytes: SEED_SEGMENT_BYTES });
+}
+
+/**
+ * Whether a download can go into the seed store rather than a picked file:
+ * that is what lets it survive a reload, be passed on, and play while it
+ * arrives. It needs the private file system, and an offer with a digest.
+ */
+export function canUseSeedStore(item: { digest?: string }) {
+  return item.digest !== undefined && hasOpfs();
+}
+
+/**
+ * Whether this file can play while it arrives: audio or video, headed for the
+ * seed store, on a page the service worker controls — it is the worker that
+ * answers the player's range requests out of the store. Anything else falls
+ * back to downloading first and opening after, as before.
+ */
+export function canStream(item: { digest?: string; mime: string }) {
+  return (
+    canUseSeedStore(item) &&
+    (item.mime.startsWith("video/") || item.mime.startsWith("audio/")) &&
+    typeof navigator !== "undefined" &&
+    navigator.serviceWorker?.controller != null
+  );
+}
+
+/** Where public/sw.js serves a stored file from. */
+export function streamUrl(digest: string) {
+  return `/_stream/${digest}`;
+}
+
+/** A file this device holds, as a disk-backed Blob, for saving it again. */
+export async function readHeld(key: {
+  digest: string;
+  size: number;
+  name: string;
+}): Promise<Blob | null> {
+  if (!hasOpfs()) {
+    return null;
+  }
+  try {
+    return (await sweepStore().read?.(key)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Every tab of this origin shares the store, and a tab only knows its own
+ * room. So each tab holds a shared Web Lock named for the room it is in, and a
+ * sweep leaves alone any room another tab holds — the same way the per-tab
+ * download folders above are kept from each other.
+ */
+const SEED_LOCK_PREFIX = "cliplink-seed:";
+let heldTag: { tag: string; release: () => void } | null = null;
+
+/** Marks this tab as using the files tagged `tag`, or none, until changed. */
+export function holdSeedTag(tag: string | null) {
+  if (heldTag?.tag === tag) {
+    return;
+  }
+  heldTag?.release();
+  heldTag = null;
+  if (!tag || typeof navigator === "undefined" || !navigator.locks) {
+    return;
+  }
+  let release = () => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  void navigator.locks
+    .request(`${SEED_LOCK_PREFIX}${tag}`, { mode: "shared" }, () => released)
+    .catch(() => {});
+  heldTag = { tag, release };
+}
+
+/** Rooms some tab of this origin is in right now, this one included. */
+async function tagsInUse() {
+  try {
+    const { held = [] } = await navigator.locks.query();
+    return new Set(
+      held
+        .map((lock) => lock.name ?? "")
+        .filter((name) => name.startsWith(SEED_LOCK_PREFIX))
+        .map((name) => name.slice(SEED_LOCK_PREFIX.length)),
+    );
+  } catch {
+    return new Set<string>();
+  }
+}
+
+/**
+ * The ceiling on what is kept, lowered on a device that hasn't the room for
+ * it. `quota` is the whole origin's allowance, so half of it leaves as much
+ * again for downloads in flight, zips being built, and everything else.
+ */
+async function seedBudget() {
+  try {
+    const { quota } = await navigator.storage.estimate();
+    return quota && quota > 0
+      ? Math.min(SEED_BUDGET_BYTES, Math.floor(quota / 2))
+      : SEED_BUDGET_BYTES;
+  } catch {
+    return SEED_BUDGET_BYTES;
+  }
+}
+
+/** Complete files this device holds for `tag`, ready to be re-offered. */
+export async function heldFiles(tag: string): Promise<StoredFile[]> {
+  if (!hasOpfs()) {
+    return [];
+  }
+  try {
+    const held = (await sweepStore().list?.()) ?? [];
+    return held.filter(
+      (entry) =>
+        entry.meta.tag === tag && entry.state.verifiedBytes === entry.key.size,
+    );
+  } catch {
+    // No private file system, or it refused: this device simply doesn't seed.
+    return [];
+  }
+}
+
+/**
+ * Drops what is no longer worth keeping: files from a room no tab is in, and —
+ * oldest first — whatever of this room's is over budget. A room some tab is
+ * in is alive however old its files are, and is that tab's to budget; a room
+ * no tab is in is gone however new they are, which also covers a tab that was
+ * closed without leaving. Called on joining and on leaving, and every failure
+ * is silent: not seeding is a smaller problem than a broken app.
+ */
+export async function sweepSeedStore(keepTag: string | null) {
+  if (!hasOpfs()) {
+    return;
+  }
+  try {
+    const store = sweepStore();
+    const held = (await store.list?.()) ?? [];
+    const budget = await seedBudget();
+    const inUse = await tagsInUse();
+    const live = (tag: string | undefined) =>
+      tag !== undefined && (tag === keepTag || inUse.has(tag));
+
+    // Newest first, so the budget is spent on what is most likely wanted.
+    const keep = held
+      .filter((entry) => live(entry.meta.tag))
+      .sort((left, right) => right.meta.ts - left.meta.ts);
+
+    let kept = 0;
+    const drop = held.filter((entry) => !keep.includes(entry));
+    for (const entry of keep) {
+      if (entry.meta.tag !== keepTag) {
+        continue;
+      }
+      kept += entry.state.verifiedBytes;
+      if (kept > budget) {
+        drop.push(entry);
+      }
+    }
+    for (const entry of drop) {
+      await Promise.resolve(store.forget(entry.key)).catch(() => {});
+    }
+  } catch {
+    // Leftovers wait for the next sweep.
   }
 }

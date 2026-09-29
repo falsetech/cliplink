@@ -10,7 +10,6 @@ import {
   type OfferRejection,
   type TransferNotice,
 } from "@thebkht/rtc-file-transfer";
-import { opfsResume } from "@thebkht/rtc-file-transfer/sinks";
 
 import {
   DISK_SINK_MIN_BYTES,
@@ -22,10 +21,16 @@ import {
 import type { ShareEntry } from "@/lib/cliplink/dropped-files";
 import {
   canPickDiskSink,
+  canUseSeedStore,
   createDirectorySink,
+  createSeedStore,
+  heldFiles,
+  holdSeedTag,
   pickDiskSink,
   pickDirectory,
+  readHeld,
   releaseDiskFiles,
+  sweepSeedStore,
 } from "@/lib/cliplink/file-sink";
 import type { PeerId, SignalPayload } from "@/lib/cliplink/types";
 import { createZip } from "@/lib/cliplink/zip";
@@ -33,6 +38,11 @@ import { createZip } from "@/lib/cliplink/zip";
 export type FileListItem = FileItem & {
   /** Object URL for a completed incoming file (download + image thumbnail). */
   objectUrl?: string;
+  /**
+   * This incoming file is also being passed on to the rest of the room, to
+   * this many devices right now: the folded offer's `activeTransfers`.
+   */
+  passingOn?: number;
 };
 
 type ToastTone = "success" | "info" | "error";
@@ -41,6 +51,12 @@ type UseFileTransferOptions = {
   peerId: PeerId;
   sendSignal: (payload: SignalPayload, to?: PeerId) => boolean;
   pushToast: (message: string, tone?: ToastTone) => void;
+  /**
+   * The room this device is in, or null outside one. Read through a ref rather
+   * than a dependency: it arrives after the hook does, and rebuilding the
+   * manager when it lands would drop every transfer in flight.
+   */
+  roomCode: string | null;
 };
 
 /** Reads `NEXT_PUBLIC_ICE_SERVERS` (JSON array) so a TURN relay can be added without code changes. */
@@ -121,6 +137,7 @@ export function useFileTransfer({
   peerId,
   sendSignal,
   pushToast,
+  roomCode,
 }: UseFileTransferOptions) {
   const [items, setItems] = useState<FileListItem[]>([]);
 
@@ -135,9 +152,11 @@ export function useFileTransfer({
   /** Batches already announced, so a folder of 50 files makes one toast. */
   const announcedRef = useRef(new Set<string>());
   const toastRef = useRef(pushToast);
+  const roomRef = useRef(roomCode);
 
   useEffect(() => {
     toastRef.current = pushToast;
+    roomRef.current = roomCode;
   });
 
   const api = useMemo(() => {
@@ -162,7 +181,36 @@ export function useFileTransfer({
           urls.delete(id);
         }
       }
-      setItems(next.map((item) => ({ ...item, objectUrl: urls.get(item.id) })));
+      // A file this device is downloading, or has, is one row: its own. The
+      // offer passing it on is folded into that row, and listed by itself
+      // only once the row is gone — after a reload, or a dismiss.
+      const downloading = new Set(
+        next.filter((item) => item.direction === "incoming").map((item) => item.digest),
+      );
+      const passing = new Map(
+        next
+          .filter((item) => item.direction === "outgoing" && item.seeded)
+          .map((item) => [item.digest, item.activeTransfers]),
+      );
+      setItems(
+        next
+          .filter(
+            (item) =>
+              !(
+                item.direction === "outgoing" &&
+                item.seeded &&
+                item.digest !== undefined &&
+                downloading.has(item.digest)
+              ),
+          )
+          .map((item) => ({
+            ...item,
+            objectUrl: urls.get(item.id),
+            ...(item.direction === "incoming" &&
+              item.digest !== undefined &&
+              passing.has(item.digest) && { passingOn: passing.get(item.digest) }),
+          })),
+      );
     }
 
     function startDownload(id: string, target: BatchTarget) {
@@ -345,6 +393,21 @@ export function useFileTransfer({
       }
     }
 
+    /** Runs once per room: sweep what is stale, then offer what is left. */
+    async function startSeeding() {
+      const room = roomRef.current;
+      // Before sweeping, so no other tab's sweep takes this room's files.
+      holdSeedTag(room);
+      await sweepSeedStore(room);
+      if (!room || roomRef.current !== room || !managerRef.current) {
+        return;
+      }
+      const held = await heldFiles(room);
+      if (held.length > 0 && roomRef.current === room) {
+        managerRef.current?.seed(held);
+      }
+    }
+
     function getManager() {
       if (!managerRef.current) {
         managerRef.current = createFileTransferManager({
@@ -355,9 +418,11 @@ export function useFileTransfer({
           onNotice: handleNotice,
           iceServers: resolveIceServers(),
           limits: { maxFileBytes: MAX_FILE_BYTES, maxItems: MAX_FILE_ITEMS },
-          // Lets a refreshed tab pick a download back up: keyed by digest+size,
-          // not by room, so it survives leaving and re-entering a room too.
-          resume: opfsResume({ directory: "cliplink-resume" }),
+          // Lets a refreshed tab pick a download back up, and keeps the file
+          // afterwards so this device can pass it on to the rest of the room:
+          // the sender is then free to close its tab.
+          resume: createSeedStore(() => roomRef.current),
+          keepReceived: true,
         });
       }
       return managerRef.current;
@@ -372,6 +437,9 @@ export function useFileTransfer({
 
       announce() {
         getManager().announce();
+        // Joining, or a reconnect: re-offer whatever this device is holding
+        // for this room. Seeding the same digest twice is a no-op.
+        void startSeeding();
       },
 
       offerFiles(entries: ShareEntry[]) {
@@ -387,6 +455,10 @@ export function useFileTransfer({
         }
         const { offered, rejected } = getManager().offerFiles(entries, {
           batch: entries.length > 1,
+          // The digest is what identifies a file across devices and reloads:
+          // it is what lets a receiver resume, keep, pass on and stream it.
+          // Hashing runs in the background; the offer goes out straight away.
+          digest: true,
         });
         // Each rejection is its own toast only while there are few of them.
         if (rejected.length > 3) {
@@ -487,6 +559,11 @@ export function useFileTransfer({
           !item ||
           // A resumable download keeps writing into the sink it already has.
           item.resumableBytes !== undefined ||
+          // Into the seed store, whatever its size: that is where a file is
+          // kept to pass on and to play while it arrives, and it is on disk,
+          // so size is no reason to ask for somewhere else. It saves like any
+          // other download once it has arrived.
+          canUseSeedStore(item) ||
           item.size < DISK_SINK_MIN_BYTES ||
           !canPickDiskSink()
         ) {
@@ -533,7 +610,26 @@ export function useFileTransfer({
         const url = urls.get(id);
         if (url) {
           saveFile(url, name);
+          return;
         }
+        // A file this device is passing on: it has no row of its own to save
+        // from — a reload took that — but the store still has every byte.
+        const item = latestRef.current.find((candidate) => candidate.id === id);
+        if (!item?.digest || item.have !== undefined) {
+          return;
+        }
+        void readHeld({ digest: item.digest, size: item.size, name: item.name }).then(
+          (blob) => {
+            if (!blob) {
+              toastRef.current("This file is no longer on this device.", "error");
+              return;
+            }
+            const held = URL.createObjectURL(blob);
+            saveFile(held, name);
+            // The download has taken its own reference to the bytes by now.
+            setTimeout(() => URL.revokeObjectURL(held), 60_000);
+          },
+        );
       },
 
       /** Drops every offer, transfer, and in-memory file (on leaving the room). */
@@ -550,6 +646,10 @@ export function useFileTransfer({
         urls.clear();
         // After the object URLs: those are what still pointed at these files.
         releaseDiskFiles();
+        // Leaving the room ends this tab's reason to hold its files — unless
+        // another tab is still in it.
+        holdSeedTag(null);
+        void sweepSeedStore(null);
         setItems([]);
       },
     };
