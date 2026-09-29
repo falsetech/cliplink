@@ -187,6 +187,8 @@ export function directorySink(
   });
 }
 
+export { prefixRange, type PrefixRange } from "./range.ts";
+
 export const OPFS_DIRECTORY = "rtc-file-transfer";
 
 export type OpfsSinkOptions = {
