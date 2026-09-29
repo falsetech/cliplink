@@ -38,6 +38,8 @@ import { createZip } from "@/lib/cliplink/zip";
 export type FileListItem = FileItem & {
   /** Object URL for a completed incoming file (download + image thumbnail). */
   objectUrl?: string;
+  /** This incoming file is also being passed on to the rest of the room. */
+  passingOn?: boolean;
 };
 
 type ToastTone = "success" | "info" | "error";
@@ -176,7 +178,36 @@ export function useFileTransfer({
           urls.delete(id);
         }
       }
-      setItems(next.map((item) => ({ ...item, objectUrl: urls.get(item.id) })));
+      // A file this device is downloading, or has, is one row: its own. The
+      // offer passing it on is folded into that row, and listed by itself
+      // only once the row is gone — after a reload, or a dismiss.
+      const downloading = new Set(
+        next.filter((item) => item.direction === "incoming").map((item) => item.digest),
+      );
+      const passing = new Set(
+        next
+          .filter((item) => item.direction === "outgoing" && item.seeded)
+          .map((item) => item.digest),
+      );
+      setItems(
+        next
+          .filter(
+            (item) =>
+              !(
+                item.direction === "outgoing" &&
+                item.seeded &&
+                item.digest !== undefined &&
+                downloading.has(item.digest)
+              ),
+          )
+          .map((item) => ({
+            ...item,
+            objectUrl: urls.get(item.id),
+            ...(item.direction === "incoming" &&
+              item.digest !== undefined &&
+              passing.has(item.digest) && { passingOn: true }),
+          })),
+      );
     }
 
     function startDownload(id: string, target: BatchTarget) {

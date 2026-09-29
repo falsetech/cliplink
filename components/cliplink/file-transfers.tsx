@@ -86,10 +86,15 @@ function statusText(item: FileListItem) {
       if (item.etaMs !== undefined) {
         parts.push(`${formatDuration(item.etaMs)} left`);
       }
+      if (item.passingOn) {
+        parts.push("Passing it on");
+      }
       return parts.join(" · ");
     }
-    case "done":
-      return item.savedToSink ? `${size} · Saved to disk` : `${size} · Saved`;
+    case "done": {
+      const saved = item.savedToSink ? `${size} · Saved to disk` : `${size} · Saved`;
+      return item.passingOn ? `${saved} · Passing it on` : saved;
+    }
     case "failed":
       return item.error ?? "Transfer failed.";
     case "revoked":
