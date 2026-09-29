@@ -154,16 +154,25 @@ Packages release independently. To publish one, bump its version and changelog, 
 
 ## Roadmap
 
+Planned for the next year, through September 2027:
+
 - **Test coverage** — both packages are tested; the app itself, starting with the room UI's retry and fallback state machine, is not yet
 - **WebRTC reliability** across restrictive NATs
+- **A Content-Security-Policy** for the app
+
+Deliberately not planned, because each would break a design guarantee:
+
+- **Accounts or sign-in** — rooms stay zero-auth and ephemeral
+- **Server-side file storage or relaying** — files stay peer-to-peer
+- **Incompatible wire protocol changes** — protocol v1 stays readable by every deployed client
 
 Have an idea? [Open an issue](https://github.com/thebkht/cliplink/issues/new/choose).
 
 ## Contributing
 
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Please read the [Code of Conduct](CODE_OF_CONDUCT.md).
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Please read the [Code of Conduct](CODE_OF_CONDUCT.md). [GOVERNANCE.md](GOVERNANCE.md) covers who decides what.
 
-For security issues, do **not** open a public issue. See [SECURITY.md](SECURITY.md).
+For security issues, do **not** open a public issue. See [SECURITY.md](SECURITY.md). [ASSURANCE.md](ASSURANCE.md) sets out why the design meets its security requirements.
 
 ## License
 
