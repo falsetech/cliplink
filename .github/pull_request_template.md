@@ -9,7 +9,7 @@
 ## How it was verified
 
 <!--
-There is no test suite yet, so describe your manual verification.
+The packages have test suites; the app does not yet, so describe your manual verification.
 Most changes need two clients — two tabs for text sync, two devices for files.
 -->
 
@@ -18,5 +18,6 @@ Most changes need two clients — two tabs for text sync, two devices for files.
 - [ ] `pnpm lint` passes
 - [ ] `pnpm type-check` passes
 - [ ] `pnpm build` passes
+- [ ] Tests added or updated (if the change touches `packages/`)
 - [ ] Verified across two clients (if the change affects sync or file transfer)
 - [ ] Verified on both transports (if the change touches WebSocket or polling)

@@ -39,6 +39,8 @@ The packages are tested and built first, and on their own: they are published, a
 
 Both workspace packages have test suites. The app itself has **no test suite yet** — adding one is on the roadmap and PRs that start it are very welcome. In the meantime, describe how you verified your change by hand.
 
+**New behaviour in `packages/` comes with tests.** A change that adds to or alters what a package does adds or updates a test in that package's `test/` directory, and a bug fix adds the test that would have caught it. Changes to the app, until it has a suite, describe their manual verification instead.
+
 ## Manual verification
 
 Most of CLIPLINK is about two devices talking, so most changes need two clients. Two browser tabs work for text sync; two separate browsers (or a phone on the same network) are better for file transfer.
