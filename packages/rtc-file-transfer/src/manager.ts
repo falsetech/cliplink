@@ -1475,9 +1475,13 @@ export function createFileTransferManager(
    * block. False when there is nowhere to continue, which is the caller's cue
    * to settle the item as a failure.
    *
-   * The sink, the verified watermark and the block hashes are all
-   * source-agnostic: every block was checked against a hash that came from the
-   * same digest, so who sent it makes no difference to what is on disk.
+   * The sink, the verified watermark and the block hashes carry over: each
+   * block was checked against the hash sent beside it, whoever sent it. Those
+   * hashes come in-band from the sender, though, so blocks from different
+   * sources are only known to belong to the offered file once the whole-file
+   * digest matches at the end. A peer that claims a digest it doesn't hold
+   * fails the download there — `digest-mismatch`, with nothing kept — rather
+   * than corrupting it silently.
    */
   function handoff(item: FileItem, download: Download, failed?: PeerId): boolean {
     const state = handoffState(item.id, download.verifiedBytes);
@@ -1967,6 +1971,9 @@ export function createFileTransferManager(
         return;
       }
       if (digest !== item.digest) {
+        // Not the file that was offered, and not a prefix of it either: a
+        // reload must not resume from what was kept, nor a peer be served it.
+        forgetStored(item);
         failTransfer(transfer, "digest-mismatch", true);
         return;
       }

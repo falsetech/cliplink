@@ -1465,6 +1465,22 @@ describe("verified blocks and resume", () => {
       assert.equal(failure(bob)?.code, "write-error");
     });
 
+    it("forgets what it stored of a file that turned out not to be the one offered", async () => {
+      const store = memoryStore();
+      bus = new FakeSignaling();
+      const alice = bus.addPeer("peer-alice");
+      const bob = bus.addPeer("peer-bob00", { resume: store.provider });
+      const wrong = "a".repeat(64);
+      bus.transform = (payload) =>
+        payload.type === "file-offer" && payload.digest ? { ...payload, digest: wrong } : payload;
+      alice.manager.offerFiles([new File([randomBytes(2 * MB)], "lie.bin")], { digest: true });
+      await waitFor(() => incoming(bob)[0]?.digest === wrong);
+      bob.manager.request(incoming(bob)[0].id);
+      await waitFor(() => failure(bob) !== undefined, 5000);
+      assert.equal(failure(bob)!.code, "digest-mismatch");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(store.states.has(wrong), false, "a reload must not resume from it");
+    });
   });
 
   it("keeps a row per peer when an offer carries no digest", async () => {
