@@ -1445,6 +1445,25 @@ describe("verified blocks and resume", () => {
       assert.ok(sent <= 1 + Math.floor(seconds / 5), `${sent} announces in ${seconds.toFixed(1)} s`);
     });
 
+    it("reports what is written apart from what has merely arrived", async () => {
+      const store = memoryStore({ writeDelayMs: 40 });
+      bus = new FakeSignaling();
+      const alice = bus.addPeer("peer-alice");
+      const bob = bus.addPeer("peer-bob00", { resume: store.provider, keepReceived: true });
+      alice.manager.offerFiles([new File([randomBytes(6 * MB)], "slow.bin")], { digest: true });
+      await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+      bob.manager.request(incoming(bob)[0].id);
+
+      // A slow disk: the wire runs ahead of it, up to the flow window.
+      await waitFor(() => (incoming(bob)[0]?.verifiedBytes ?? 0) >= MB, 5000);
+      const midway = incoming(bob)[0];
+      assert.equal(midway.status, "transferring");
+      assert.ok(midway.verifiedBytes! <= midway.bytes, "written never leads arrived");
+      assert.equal(midway.verifiedBytes! % MB, 0, "a whole number of checked blocks");
+      await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 10_000);
+      assert.equal(incoming(bob)[0].verifiedBytes, undefined, "not reported once it is done");
+    });
+
     it("fails a download whose sink hands back fewer bytes than arrived", async () => {
       bus = new FakeSignaling();
       const alice = bus.addPeer("peer-alice");

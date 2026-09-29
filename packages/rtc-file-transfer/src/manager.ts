@@ -118,6 +118,14 @@ export type FileItem = FileOffer & {
   /** The download completed into a custom sink that kept the bytes itself. */
   savedToSink?: boolean;
   /**
+   * Bytes of a running download that have passed their block check and been
+   * written to its sink (incoming, blocks mode). Trails `bytes`, which counts
+   * what has arrived — with a slow disk, by up to `limits.windowBytes`. What a
+   * player can rely on being there is this, not `bytes`. Cleared when the
+   * download ends.
+   */
+  verifiedBytes?: number;
+  /**
    * Verified bytes a failed download kept (incoming only). `request` picks up
    * from here instead of starting over, into the same sink.
    */
@@ -924,9 +932,11 @@ export function createFileTransferManager(
   // ---------------------------------------------------------------------------
   // Transfer lifecycle
 
+  /** What only means something while a download runs. */
   function clearRate(item: FileItem) {
     item.bytesPerSecond = undefined;
     item.etaMs = undefined;
+    item.verifiedBytes = undefined;
   }
 
   function sampleRate(transfer: Transfer, item: FileItem) {
@@ -1545,6 +1555,10 @@ export function createFileTransferManager(
     item.savedToSink = undefined;
     item.resumableBytes = undefined;
     clearRate(item);
+    // Resuming, or handed to another source: what is written carries over.
+    if (blocks && offset > 0) {
+      item.verifiedBytes = offset;
+    }
     touch(transfer);
     emit();
     return true;
@@ -1919,6 +1933,10 @@ export function createFileTransferManager(
       // not record progress for, or re-offer, a download that has ended.
       if (download.settled || downloads.get(item.id) !== download) {
         return;
+      }
+      if (item.status === "transferring" || item.status === "connecting") {
+        item.verifiedBytes = download.verifiedBytes;
+        emitSoon();
       }
       if (download.key && resumeStore && !disposed) {
         // The store decides how much of this is durable; a reload resumes from
