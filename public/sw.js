@@ -1,8 +1,13 @@
 /*
- * CLIPLINK service worker. It exists for one thing: receiving the OS share
- * sheet. The manifest's share_target POSTs the shared text and files to
- * /share-target, and this worker answers that request itself, so the files
- * stay on the device and never reach the server.
+ * CLIPLINK service worker. It answers two kinds of request itself, and both
+ * keep files on the device:
+ *
+ * - The OS share sheet. The manifest's share_target POSTs the shared text and
+ *   files to /share-target, and this worker takes them there instead of the
+ *   server.
+ * - /_stream/<digest>, which plays a file while it downloads. Received files
+ *   are kept in the origin's private file system, and this answers a media
+ *   element's Range requests out of whatever has been verified so far.
  *
  * Every other request passes straight through. There is deliberately no
  * offline cache: a stale copy of a realtime app is worse than an honest
@@ -23,14 +28,151 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  if (
-    event.request.method === "POST" &&
-    url.origin === self.location.origin &&
-    url.pathname === "/share-target"
-  ) {
+  if (url.origin !== self.location.origin) {
+    return;
+  }
+  if (event.request.method === "POST" && url.pathname === "/share-target") {
     event.respondWith(receiveShare(event.request));
+    return;
+  }
+  if (event.request.method === "GET" && url.pathname.startsWith(STREAM_PATH)) {
+    event.respondWith(streamStored(event.request, url.pathname.slice(STREAM_PATH.length)));
   }
 });
+
+// -----------------------------------------------------------------------------
+// Playing a file while it downloads
+
+const STREAM_PATH = "/_stream/";
+/** The seed store's folder: SEED_DIRECTORY in lib/cliplink/file-sink.ts. */
+const STORE_DIRECTORY = "cliplink-resume";
+const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
+/** How long a request for bytes that haven't arrived yet waits for them. */
+const PENDING_WAIT_MS = 4000;
+const PENDING_POLL_MS = 250;
+
+/**
+ * prefixRange from @thebkht/rtc-file-transfer/sinks, which is where it is
+ * tested. A classic service worker can't import a module, so this is a copy:
+ * change both or neither.
+ */
+function prefixRange(size, available, header) {
+  const have = Math.max(0, Math.min(available, size));
+  const unsatisfiable = (pending) => ({
+    status: 416,
+    contentRange: `bytes */${size}`,
+    pending,
+  });
+  const first = (header ?? "").split(",")[0].trim();
+  const match = /^bytes=(\d*)-(\d*)$/.exec(first);
+  let start = 0;
+  let end = size - 1;
+  if (match && (match[1] !== "" || match[2] !== "")) {
+    if (match[1] === "") {
+      start = Math.max(0, size - Number(match[2]));
+    } else {
+      start = Number(match[1]);
+      if (match[2] !== "") {
+        end = Number(match[2]);
+      }
+    }
+  }
+  if (start >= size || end < start) {
+    return unsatisfiable(false);
+  }
+  if (start >= have) {
+    return unsatisfiable(true);
+  }
+  end = Math.min(end, size - 1, have - 1);
+  return { status: 206, start, end, contentRange: `bytes ${start}-${end}/${size}` };
+}
+
+function partName(index) {
+  return `part-${String(index).padStart(5, "0")}`;
+}
+
+/** The store's record of this file, or null. Written by opfsResume. */
+async function readStored(folder) {
+  try {
+    const handle = await folder.getFileHandle("state.json");
+    const state = JSON.parse(await (await handle.getFile()).text());
+    return typeof state.size === "number" &&
+      typeof state.verifiedBytes === "number" &&
+      typeof state.segmentBytes === "number" &&
+      state.segmentBytes > 0
+      ? state
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Serves a Range out of the part files. Only closed parts are readable, and
+ * the store records progress only as parts close, so the verified count in
+ * state.json is exactly what can be served — nothing unverified ever leaves.
+ */
+async function streamStored(request, digest) {
+  if (!DIGEST_PATTERN.test(digest)) {
+    return new Response(null, { status: 404 });
+  }
+  try {
+    const root = await navigator.storage.getDirectory();
+    const folder = await (
+      await root.getDirectoryHandle(STORE_DIRECTORY)
+    ).getDirectoryHandle(digest);
+
+    const header = request.headers.get("Range");
+    let state = await readStored(folder);
+    let range = state && prefixRange(state.size, state.verifiedBytes, header);
+    // Asked for bytes that are on their way: wait a little for them rather
+    // than make the player give up and retry on its own schedule.
+    for (
+      let waited = 0;
+      range?.status === 416 && range.pending && waited < PENDING_WAIT_MS;
+      waited += PENDING_POLL_MS
+    ) {
+      await sleep(PENDING_POLL_MS);
+      state = await readStored(folder);
+      range = state && prefixRange(state.size, state.verifiedBytes, header);
+    }
+    if (!state || !range) {
+      return new Response(null, { status: 404 });
+    }
+    if (range.status === 416) {
+      return new Response(null, {
+        status: 416,
+        headers: { "Content-Range": range.contentRange, "Cache-Control": "no-store" },
+      });
+    }
+
+    const segment = state.segmentBytes;
+    const firstPart = Math.floor(range.start / segment);
+    const lastPart = Math.floor(range.end / segment);
+    const parts = [];
+    for (let index = firstPart; index <= lastPart; index += 1) {
+      parts.push(await (await folder.getFileHandle(partName(index))).getFile());
+    }
+    const from = range.start - firstPart * segment;
+    const length = range.end - range.start + 1;
+    const type = state.meta?.mime || "application/octet-stream";
+    return new Response(new Blob(parts).slice(from, from + length, type), {
+      status: 206,
+      headers: {
+        "Accept-Ranges": "bytes",
+        "Content-Range": range.contentRange,
+        "Content-Length": String(length),
+        "Content-Type": type,
+        "Cache-Control": "no-store",
+      },
+    });
+  } catch {
+    // No private file system, no such file, or a part went missing under us.
+    return new Response(null, { status: 404 });
+  }
+}
 
 /**
  * Parks the share in Cache Storage and sends the browser to /share, which

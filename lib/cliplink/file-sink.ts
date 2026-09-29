@@ -103,17 +103,55 @@ export function releaseDiskFiles() {
 // not a Web Lock — decides what stays: files from this room, young enough to
 // still have a room to belong to, inside a byte budget.
 
+/** Also named in public/sw.js, which serves files out of it. */
 const SEED_DIRECTORY = "cliplink-resume";
+
+/**
+ * Bytes per part file. The store records progress only as a part closes, so
+ * this is also how far a video has to arrive before it can start playing, and
+ * how much a reload refetches. Small enough that playback starts in seconds;
+ * large enough that a 2 GB file is a few hundred files rather than thousands.
+ */
+export const SEED_SEGMENT_BYTES = 4 * 1024 * 1024;
 
 /** Tagged with the room, so a sweep can tell this room's files from another's. */
 export function createSeedStore(tag: () => string | null): ResumeProvider {
   // The tag is read when the store is built, which is the first time a file is
   // written — by then the room is joined.
-  return opfsResume({ directory: SEED_DIRECTORY, tag: tag() ?? undefined });
+  return opfsResume({
+    directory: SEED_DIRECTORY,
+    segmentBytes: SEED_SEGMENT_BYTES,
+    tag: tag() ?? undefined,
+  });
 }
 
 function sweepStore() {
-  return opfsResume({ directory: SEED_DIRECTORY });
+  return opfsResume({ directory: SEED_DIRECTORY, segmentBytes: SEED_SEGMENT_BYTES });
+}
+
+/**
+ * Whether a download can go into the seed store rather than a picked file:
+ * that is what lets it survive a reload, be passed on, and play while it
+ * arrives. It needs the private file system, and an offer with a digest.
+ */
+export function canUseSeedStore(item: { digest?: string }) {
+  return item.digest !== undefined && hasOpfs();
+}
+
+/** A file this device holds, as a disk-backed Blob, for saving it again. */
+export async function readHeld(key: {
+  digest: string;
+  size: number;
+  name: string;
+}): Promise<Blob | null> {
+  if (!hasOpfs()) {
+    return null;
+  }
+  try {
+    return (await sweepStore().read?.(key)) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**

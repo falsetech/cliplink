@@ -123,11 +123,18 @@ function FileActions({
 }) {
   if (item.direction === "outgoing") {
     return (
-      <RowAction
-        onClick={() => onRevoke(item.id)}
-      >
-        Stop Sharing
-      </RowAction>
+      <>
+        {/* A file this device received and is passing on can be saved from
+            here: after a reload, this is the only row it has. */}
+        {item.seeded && item.have === undefined ? (
+          <RowAction onClick={() => onSave(item.id, item.name)}>Save</RowAction>
+        ) : null}
+        <RowAction
+          onClick={() => onRevoke(item.id)}
+        >
+          Stop Sharing
+        </RowAction>
+      </>
     );
   }
 

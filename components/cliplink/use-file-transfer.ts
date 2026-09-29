@@ -21,11 +21,13 @@ import {
 import type { ShareEntry } from "@/lib/cliplink/dropped-files";
 import {
   canPickDiskSink,
+  canUseSeedStore,
   createDirectorySink,
   createSeedStore,
   heldFiles,
   pickDiskSink,
   pickDirectory,
+  readHeld,
   releaseDiskFiles,
   sweepSeedStore,
 } from "@/lib/cliplink/file-sink";
@@ -416,6 +418,10 @@ export function useFileTransfer({
         }
         const { offered, rejected } = getManager().offerFiles(entries, {
           batch: entries.length > 1,
+          // The digest is what identifies a file across devices and reloads:
+          // it is what lets a receiver resume, keep, pass on and stream it.
+          // Hashing runs in the background; the offer goes out straight away.
+          digest: true,
         });
         // Each rejection is its own toast only while there are few of them.
         if (rejected.length > 3) {
@@ -516,6 +522,11 @@ export function useFileTransfer({
           !item ||
           // A resumable download keeps writing into the sink it already has.
           item.resumableBytes !== undefined ||
+          // Into the seed store, whatever its size: that is where a file is
+          // kept to pass on and to play while it arrives, and it is on disk,
+          // so size is no reason to ask for somewhere else. It saves like any
+          // other download once it has arrived.
+          canUseSeedStore(item) ||
           item.size < DISK_SINK_MIN_BYTES ||
           !canPickDiskSink()
         ) {
@@ -562,7 +573,26 @@ export function useFileTransfer({
         const url = urls.get(id);
         if (url) {
           saveFile(url, name);
+          return;
         }
+        // A file this device is passing on: it has no row of its own to save
+        // from — a reload took that — but the store still has every byte.
+        const item = latestRef.current.find((candidate) => candidate.id === id);
+        if (!item?.digest || item.have !== undefined) {
+          return;
+        }
+        void readHeld({ digest: item.digest, size: item.size, name: item.name }).then(
+          (blob) => {
+            if (!blob) {
+              toastRef.current("This file is no longer on this device.", "error");
+              return;
+            }
+            const held = URL.createObjectURL(blob);
+            saveFile(held, name);
+            // The download has taken its own reference to the bytes by now.
+            setTimeout(() => URL.revokeObjectURL(held), 60_000);
+          },
+        );
       },
 
       /** Drops every offer, transfer, and in-memory file (on leaving the room). */
