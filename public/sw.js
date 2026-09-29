@@ -145,11 +145,12 @@ async function streamStored(request, digest) {
     const header = request.headers.get("Range");
     let state = await readStored(folder);
     let range = state && prefixRange(state.size, state.verifiedBytes, header);
-    // Asked for bytes that are on their way: wait a little for them rather
-    // than make the player give up and retry on its own schedule.
+    // Asked for bytes that are on their way — including a download whose
+    // folder exists but hasn't recorded its first part yet: wait a little for
+    // them rather than make the player give up and retry on its own schedule.
     for (
       let waited = 0;
-      range?.status === 416 && range.pending && waited < PENDING_WAIT_MS;
+      (!range || (range.status === 416 && range.pending)) && waited < PENDING_WAIT_MS;
       waited += PENDING_POLL_MS
     ) {
       await sleep(PENDING_POLL_MS);
