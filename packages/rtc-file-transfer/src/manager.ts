@@ -347,8 +347,10 @@ export type FileTransferOptions = {
   /**
    * Offer a download's verified prefix to the rest of the room while it is
    * still arriving, so the second device to get a file starts serving the
-   * third before it has finished. On by default where `partial` is
-   * advertised; turn it off to keep this device's uplink to itself.
+   * third before it has finished — and, under `keepReceived`, the finished
+   * file once it has. On by default (the prefix only where `partial` is
+   * advertised); turn it off to keep this device's uplink to itself until
+   * `seed` is called.
    */
   seedWhileDownloading?: boolean;
 };
@@ -1971,7 +1973,15 @@ export function createFileTransferManager(
     keepOrForget(item, download);
     // Kept, the partial offer becomes a complete one; forgotten, the store
     // has nothing left to serve it from.
-    settlePartialSeed(item.id, keepReceived && resumeStore?.keep !== undefined);
+    const kept = keepReceived && resumeStore?.keep !== undefined;
+    if (partialSeeds.has(item.id)) {
+      settlePartialSeed(item.id, kept);
+    } else if (kept) {
+      // No prefix was ever offered — a file of one block or less, say — so
+      // there is nothing to promote: offer the finished file now, rather than
+      // leaving it unoffered until the next `seed`.
+      passOn(item, download);
+    }
     item.blob = result instanceof Blob ? result : undefined;
     item.savedToSink = !(result instanceof Blob);
     item.status = "done";
@@ -2276,6 +2286,27 @@ export function createFileTransferManager(
         announcePartial(item.id);
       }, REANNOUNCE_MS);
     }
+  }
+
+  /** Offers a download that just finished and was kept, if nothing else does. */
+  function passOn(item: FileItem, download: Download) {
+    const key = download.key;
+    if (
+      !seedWhileDownloading ||
+      !key ||
+      !resumeStore?.read ||
+      withdrawn.has(key.digest) ||
+      outgoingItems().some((candidate) => candidate.digest === key.digest)
+    ) {
+      return;
+    }
+    const seed = addSeed(
+      key,
+      download.blockHashes.slice(),
+      { name: item.name, mime: item.mime, path: item.path },
+      item.size,
+    );
+    announceOffer(seed);
   }
 
   /**

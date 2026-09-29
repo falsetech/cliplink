@@ -1348,6 +1348,29 @@ describe("verified blocks and resume", () => {
       assert.equal(bob.manager.seed(await store.provider.list()).length, 0, "nor from the store");
     });
 
+    it("passes on a small file as soon as it has it", async () => {
+      const store = memoryStore();
+      bus = new FakeSignaling();
+      const alice = bus.addPeer("peer-alice");
+      const bob = bus.addPeer("peer-bob00", { resume: store.provider, keepReceived: true });
+      const source = randomBytes(500 * 1024);
+      alice.manager.offerFiles([new File([source], "photo.jpg")], { digest: true });
+      await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+      bob.manager.request(incoming(bob)[0].id);
+      await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 5000);
+
+      // Smaller than a block, so there was never a prefix to offer.
+      await waitFor(() => outgoingOf(bob).length === 1, 2000);
+      alice.manager.dispose();
+      bus.peers.delete("peer-alice");
+      const carol = bus.addPeer("peer-carol");
+      carol.manager.announce();
+      await waitFor(() => incoming(carol).length === 1, 5000);
+      carol.manager.request(incoming(carol)[0].id);
+      await waitFor(() => carol.notices.some((notice) => notice.type === "received"), 5000);
+      assert.deepEqual(new Uint8Array(await incoming(carol)[0].blob!.arrayBuffer()), source);
+    });
+
   });
 
   it("keeps a row per peer when an offer carries no digest", async () => {
