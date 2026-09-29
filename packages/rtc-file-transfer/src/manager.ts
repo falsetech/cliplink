@@ -621,9 +621,11 @@ export type FileTransferManager = {
    * returned by that store's `list`. Returns the items created.
    *
    * Nothing is hashed: the digest came with the offer and was checked against
-   * every block on arrival, so it is already known and already trusted. Files
-   * this device is offering under the same digest are skipped, and so — for
-   * now — is anything less than complete.
+   * every block on arrival, so it is already known and already trusted. A
+   * prefix is offered as a partial seed where `partial` is advertised, and
+   * skipped otherwise. Skipped too: files this device is already offering
+   * under the same digest, and any digest it was asked to stop passing on —
+   * `revoke` on a seeded item — for the rest of the manager's life.
    */
   seed(entries: StoredFile[]): FileItem[];
   /** Stop sharing an outgoing file, cutting off any download in flight. */
@@ -742,6 +744,12 @@ export function createFileTransferManager(
     string,
     { offerId: string; announced: number; timer: Timer | null }
   >();
+  /**
+   * Digests this device was told to stop passing on. Remembered for the
+   * manager's life, so a growing download or a later `seed` doesn't quietly
+   * offer again what someone just withdrew.
+   */
+  const withdrawn = new Set<string>();
   let emitTimer: Timer | null = null;
   let disposed = false;
 
@@ -2230,6 +2238,7 @@ export function createFileTransferManager(
       !seedWhileDownloading ||
       !selfCaps.includes("partial") ||
       !key ||
+      withdrawn.has(key.digest) ||
       !resumeStore?.read ||
       download.verifiedBytes < BLOCK_BYTES ||
       download.verifiedBytes >= item.size
@@ -2721,7 +2730,8 @@ export function createFileTransferManager(
           state.verifiedBytes > key.size ||
           // A prefix can only be offered where there is a way to say so.
           (state.verifiedBytes < key.size && !selfCaps.includes("partial")) ||
-          already.has(key.digest)
+          already.has(key.digest) ||
+          withdrawn.has(key.digest)
         ) {
           continue;
         }
@@ -2746,6 +2756,11 @@ export function createFileTransferManager(
       const item = items.get(id);
       if (!item || item.direction !== "outgoing") {
         return;
+      }
+      // Stopping a file this device was passing on is a decision about the
+      // content, not this one offer of it.
+      if (item.seeded && item.digest) {
+        withdrawn.add(item.digest);
       }
       for (const [incomingId, entry] of partialSeeds) {
         if (entry.offerId === item.offerId) {
@@ -2851,6 +2866,7 @@ export function createFileTransferManager(
       offerBlockHashes.clear();
       peerCaps.clear();
       handoffs.clear();
+      withdrawn.clear();
       emit();
       disposed = true;
     },

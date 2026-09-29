@@ -1332,6 +1332,22 @@ describe("verified blocks and resume", () => {
       assert.deepEqual(outgoingOf(bob), [], "nothing left offering an aborted download");
     });
 
+    it("keeps a partial offer withdrawn once it is stopped, as the download goes on", async () => {
+      const store = memoryStore({ writeDelayMs: 5 });
+      bus = new FakeSignaling();
+      const alice = bus.addPeer("peer-alice");
+      const bob = bus.addPeer("peer-bob00", { resume: store.provider, keepReceived: true });
+      alice.manager.offerFiles([new File([randomBytes(12 * MB)], "stop.bin")], { digest: true });
+      await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+      bob.manager.request(incoming(bob)[0].id);
+      await waitFor(() => outgoingOf(bob).length === 1, 5000);
+
+      bob.manager.revoke(outgoingOf(bob)[0].id);
+      await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 10_000);
+      assert.deepEqual(outgoingOf(bob), [], "not while it downloads, and not once it finishes");
+      assert.equal(bob.manager.seed(await store.provider.list()).length, 0, "nor from the store");
+    });
+
   });
 
   it("keeps a row per peer when an offer carries no digest", async () => {
