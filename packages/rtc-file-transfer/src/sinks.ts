@@ -388,7 +388,16 @@ export function opfsResume(options: ResumeOptions = {}): ResumeProvider {
   return {
     async load(key) {
       const state = await readState(key);
-      if (!state || state.size !== key.size || state.verifiedBytes <= 0) {
+      if (
+        !state ||
+        state.size !== key.size ||
+        state.verifiedBytes <= 0 ||
+        // Written with other part sizes: appending would number the new parts
+        // from a different stride and leave a gap, and `close` stops at the
+        // first missing part. `read` still works — the parts are whole — but
+        // a download has to start over.
+        state.segmentBytes !== SEGMENT_BYTES
+      ) {
         return null;
       }
       return {

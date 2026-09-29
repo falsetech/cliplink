@@ -281,6 +281,25 @@ describe("sinks", () => {
     assert.equal((await store.load(key))?.verifiedBytes, 9000, "but it still resumes");
   });
 
+  it("won't resume a file stored with a different part size", async () => {
+    const root = new FakeDirectory();
+    const key = { digest: "f".repeat(64), size: 12_288, name: "layout.bin" };
+    const source = randomBytes(key.size);
+    const before = opfsResume({ root: asDirectory(root), segmentBytes: 8192 });
+    const sink = await before.open(key, { verifiedBytes: 0, blockHashes: [] });
+    await sink!.write(source.slice(0, 8192));
+    await before.checkpoint(key, { verifiedBytes: 8192, blockHashes: [] });
+    assert.equal((await before.load(key))?.verifiedBytes, 8192);
+
+    // Appending 4 KiB parts after an 8 KiB one would leave a gap in the part
+    // numbering, and the file would be read back short. Start over instead.
+    const after = opfsResume({ root: asDirectory(root), segmentBytes: 4096 });
+    assert.equal(await after.load(key), null);
+    // What is there is still whole, so it can still be read and served.
+    const blob = await after.read!(key);
+    assert.deepEqual(new Uint8Array(await blob!.arrayBuffer()), source.slice(0, 8192));
+  });
+
   it("reports nothing available outside a browser", async () => {
     assert.equal(canPickFile(), false);
     assert.equal(canPickDirectory(), false);
