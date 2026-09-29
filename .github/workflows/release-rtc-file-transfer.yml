@@ -1,16 +1,20 @@
 name: Release rtc-file-transfer
 
 # Push a tag like `rtc-file-transfer@v0.1.0` after bumping the version in
-# packages/rtc-file-transfer/package.json and its CHANGELOG. The job publishes
-# to npm, then creates the GitHub release from that version's CHANGELOG section.
+# packages/rtc-file-transfer/package.json and its CHANGELOG. `publish`
+# publishes to npm and signs the packed tarball with build provenance; `release`
+# then creates the GitHub release from that version's CHANGELOG section, with
+# the tarball and its Sigstore bundle attached. Check a download with
+# `gh attestation verify <file>.tgz -R thebkht/cliplink`.
 on:
   push:
     tags:
       - "rtc-file-transfer@v*"
 
-# Read-only for the workflow as a whole. The writes below belong to the one
-# job that needs them, so a job added to this file later cannot inherit the
-# token that publishes to npm without saying so itself.
+# Read-only for the workflow as a whole. Each job names the writes it needs,
+# so a job added to this file later cannot inherit the token that publishes to
+# npm without saying so itself — and the job that can write to the repository
+# never holds that token.
 permissions:
   contents: read
 
@@ -18,10 +22,12 @@ jobs:
   publish:
     name: Publish to npm
     permissions:
-      # Creating the GitHub release.
-      contents: write
-      # npm trusted publishing and provenance: no long-lived NPM_TOKEN.
+      contents: read
+      # npm trusted publishing and provenance: no long-lived NPM_TOKEN. Also
+      # signs the release attestation below.
       id-token: write
+      # Recording the tarball's build provenance.
+      attestations: write
     # A protected environment with a required reviewer. Pushing the tag no
     # longer publishes on its own — the run waits here until a human
     # approves it, so a stolen credential that can push a tag still cannot
@@ -69,14 +75,61 @@ jobs:
         if: steps.version.outputs.published != 'true'
         run: pnpm -F @thebkht/rtc-file-transfer publish --provenance --access public --no-git-checks
 
+      # Packed and signed even when the publish above was skipped, so re-running
+      # an old tag still gives its release a signed tarball. pnpm pack applies
+      # publishConfig and resolves workspace:* just as publish does. The bundle
+      # is named *.sigstore.json, the suffix Scorecard's Signed-Releases check
+      # looks for.
+      - name: Pack
+        id: pack
+        run: |
+          mkdir dist-release
+          pnpm -F @thebkht/rtc-file-transfer pack --pack-destination "${PWD}/dist-release"
+          echo "tarball=$(ls dist-release/*.tgz)" >> "$GITHUB_OUTPUT"
+
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.pack.outputs.tarball }}
+
+      - name: Keep the Sigstore bundle beside the tarball
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: cp "${BUNDLE}" "${TARBALL}.sigstore.json"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-release
+          path: dist-release/
+          if-no-files-found: error
+
+  release:
+    name: Create the GitHub release
+    needs: publish
+    permissions:
+      # Creating the GitHub release and uploading its assets.
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist-release
+          path: dist-release/
+
       # Runs after a skipped publish too, so re-running an old tag backfills a
-      # missing release. An existing release is left as it is.
+      # missing release. An existing release keeps its notes and gets the
+      # signed tarball attached.
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            echo "::notice::Release ${GITHUB_REF_NAME} already exists; leaving it."
+            echo "::notice::Release ${GITHUB_REF_NAME} already exists; attaching the signed tarball."
+            gh release upload "${GITHUB_REF_NAME}" dist-release/* --clobber
             exit 0
           fi
           version=$(node -p "require('./packages/rtc-file-transfer/package.json').version")
@@ -96,4 +149,5 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" \
             --verify-tag \
             --title "@thebkht/rtc-file-transfer ${version}" \
-            --notes-file release-notes.md
+            --notes-file release-notes.md \
+            dist-release/*

@@ -10,6 +10,7 @@
   <a href="https://www.npmjs.com/package/@thebkht/cliplink"><img alt="npm version: @thebkht/cliplink" src="https://img.shields.io/npm/v/@thebkht/cliplink.svg?style=for-the-badge&amp;labelColor=000000&amp;label=cliplink" height="28"></a>
   <a href="https://www.npmjs.com/package/@thebkht/rtc-file-transfer"><img alt="npm version: @thebkht/rtc-file-transfer" src="https://img.shields.io/npm/v/@thebkht/rtc-file-transfer.svg?style=for-the-badge&amp;labelColor=000000&amp;label=rtc-file-transfer" height="28"></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/thebkht/cliplink"><img alt="OpenSSF Scorecard" src="https://img.shields.io/ossf-scorecard/github.com/thebkht/cliplink?style=for-the-badge&amp;labelColor=000000&amp;label=scorecard" height="28"></a>
+  <a href="https://www.bestpractices.dev/projects/15083"><img alt="OpenSSF Best Practices" src="https://img.shields.io/cii/level/15083?style=for-the-badge&amp;labelColor=000000&amp;label=best%20practices" height="28"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/LICENSE-MIT-0a0a0a.svg?style=for-the-badge&amp;labelColor=000000" height="28"></a>
 </p>
 
