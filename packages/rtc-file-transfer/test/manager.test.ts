@@ -1423,6 +1423,28 @@ describe("verified blocks and resume", () => {
       await waitFor(() => partialOffers("peer-carol", "peer-bob00").length > 0, 5000);
     });
 
+    it("re-announces a growing prefix on a time floor, not every few megabytes", async () => {
+      const store = memoryStore();
+      bus = new FakeSignaling();
+      const alice = bus.addPeer("peer-alice");
+      const bob = bus.addPeer("peer-bob00", { resume: store.provider, keepReceived: true });
+      const carol = bus.addPeer("peer-carol");
+      for (const peer of [alice, bob, carol]) {
+        peer.manager.announce();
+      }
+      alice.manager.offerFiles([new File([randomBytes(40 * MB)], "fast.bin")], { digest: true });
+      await waitFor(() => incoming(bob)[0]?.digest !== undefined, 5000);
+      const started = Date.now();
+      bob.manager.request(incoming(bob)[0].id);
+      await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 20_000);
+      const seconds = (Date.now() - started) / 1000;
+
+      // One on creation, then at most one per five seconds: every signal to
+      // every peer counts against the relay's rate limit.
+      const sent = partialOffers("peer-bob00", "peer-carol").length;
+      assert.ok(sent <= 1 + Math.floor(seconds / 5), `${sent} announces in ${seconds.toFixed(1)} s`);
+    });
+
   });
 
   it("keeps a row per peer when an offer carries no digest", async () => {

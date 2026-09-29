@@ -442,11 +442,13 @@ const PART_PREFIX = '{"t":"part"';
  */
 const MAX_HANDOFF_ATTEMPTS = 8;
 /**
- * How often a download that is also being offered re-announces how much it
- * has: whichever of these comes first. Every announce is a signal to every
- * capable peer, so this trades how current `have` is against signaling load.
+ * How often, at most, a download that is also being offered re-announces how
+ * much it has. Time rather than bytes: every announce is a signal to every
+ * capable peer, and on a fast link a byte cadence would spend a relay's
+ * signal budget on bookkeeping and starve the handshakes that move files.
+ * A stale `have` costs little — a peer asking for more than is there gets
+ * what there is and a `part`, and continues elsewhere.
  */
-const REANNOUNCE_BYTES = 8 * 1024 * 1024;
 const REANNOUNCE_MS = 5_000;
 const ACK_MESSAGE = "ack";
 const PROGRESS_EMIT_MS = 100;
@@ -740,12 +742,9 @@ export function createFileTransferManager(
   const handoffs = new Map<string, { attempts: number; bytes: number; tried: Set<PeerId> }>();
   /**
    * Incoming item id → the outgoing offer passing its verified prefix on,
-   * while it downloads, and when that offer last said how much it had.
+   * while it downloads, and the timer for its next re-announce.
    */
-  const partialSeeds = new Map<
-    string,
-    { offerId: string; announced: number; timer: Timer | null }
-  >();
+  const partialSeeds = new Map<string, { offerId: string; timer: Timer | null }>();
   /**
    * Digests this device was told to stop passing on. Remembered for the
    * manager's life, so a growing download or a later `seed` doesn't quietly
@@ -2249,17 +2248,15 @@ export function createFileTransferManager(
       clearTimeout(entry.timer);
       entry.timer = null;
     }
-    entry.announced = seed.have ?? seed.size;
     announceOffer(seed);
     emitSoon();
   }
 
   /**
    * Keeps a download's partial offer in step with it: made once the first
-   * block is verified, then re-announced as more arrives — every
-   * REANNOUNCE_BYTES, or REANNOUNCE_MS after the last change, whichever comes
-   * first. This is what lets the second device to get a file start serving
-   * the third before it has finished.
+   * block is verified, then re-announced as more arrives, no more often than
+   * every REANNOUNCE_MS. This is what lets the second device to get a file
+   * start serving the third before it has finished.
    *
    * Only for downloads the store is keeping, since the store is where a peer's
    * request is served from.
@@ -2291,19 +2288,14 @@ export function createFileTransferManager(
         { name: item.name, mime: item.mime, path: item.path },
         download.verifiedBytes,
       );
-      partialSeeds.set(item.id, {
-        offerId: created.offerId,
-        announced: 0,
-        timer: null,
-      });
+      partialSeeds.set(item.id, { offerId: created.offerId, timer: null });
       announcePartial(item.id);
       emit();
       return;
     }
     seed.have = download.verifiedBytes;
-    if (seed.have - entry.announced >= REANNOUNCE_BYTES) {
-      announcePartial(item.id);
-    } else if (entry.timer === null) {
+    emitSoon();
+    if (entry.timer === null) {
       entry.timer = setTimeout(() => {
         entry.timer = null;
         announcePartial(item.id);
