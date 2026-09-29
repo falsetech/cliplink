@@ -47,6 +47,24 @@ const STREAM_PATH = "/_stream/";
 /** The seed store's folder: SEED_DIRECTORY in lib/cliplink/file-sink.ts. */
 const STORE_DIRECTORY = "cliplink-resume";
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
+/**
+ * The only requests this route answers: a media element fetching what it
+ * plays. A stored file's type comes from the peer that offered it, so a
+ * navigation here must never render one — an HTML "video" would otherwise run
+ * as this origin.
+ */
+const MEDIA_DESTINATIONS = new Set(["audio", "video"]);
+const MEDIA_TYPE = /^(audio|video)\/[a-z0-9][a-z0-9.+-]*$/i;
+/**
+ * On every answer, in case one is ever opened some other way: no sniffing a
+ * script out of the bytes, and no document it could run in.
+ */
+const STREAM_HEADERS = {
+  "Cache-Control": "no-store",
+  "X-Content-Type-Options": "nosniff",
+  "Content-Security-Policy": "default-src 'none'; sandbox",
+  "Cross-Origin-Resource-Policy": "same-origin",
+};
 /** How long a request for bytes that haven't arrived yet waits for them. */
 const PENDING_WAIT_MS = 4000;
 const PENDING_POLL_MS = 250;
@@ -115,8 +133,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * state.json is exactly what can be served — nothing unverified ever leaves.
  */
 async function streamStored(request, digest) {
-  if (!DIGEST_PATTERN.test(digest)) {
-    return new Response(null, { status: 404 });
+  if (!DIGEST_PATTERN.test(digest) || !MEDIA_DESTINATIONS.has(request.destination)) {
+    return new Response(null, { status: 404, headers: STREAM_HEADERS });
   }
   try {
     const root = await navigator.storage.getDirectory();
@@ -138,13 +156,16 @@ async function streamStored(request, digest) {
       state = await readStored(folder);
       range = state && prefixRange(state.size, state.verifiedBytes, header);
     }
-    if (!state || !range) {
-      return new Response(null, { status: 404 });
+    // Only a type a media element plays; anything else the peer called it is
+    // not this route's to serve, whatever the bytes are.
+    const type = state?.meta?.mime;
+    if (!state || !range || typeof type !== "string" || !MEDIA_TYPE.test(type)) {
+      return new Response(null, { status: 404, headers: STREAM_HEADERS });
     }
     if (range.status === 416) {
       return new Response(null, {
         status: 416,
-        headers: { "Content-Range": range.contentRange, "Cache-Control": "no-store" },
+        headers: { ...STREAM_HEADERS, "Content-Range": range.contentRange },
       });
     }
 
@@ -157,20 +178,19 @@ async function streamStored(request, digest) {
     }
     const from = range.start - firstPart * segment;
     const length = range.end - range.start + 1;
-    const type = state.meta?.mime || "application/octet-stream";
     return new Response(new Blob(parts).slice(from, from + length, type), {
       status: 206,
       headers: {
+        ...STREAM_HEADERS,
         "Accept-Ranges": "bytes",
         "Content-Range": range.contentRange,
         "Content-Length": String(length),
         "Content-Type": type,
-        "Cache-Control": "no-store",
       },
     });
   } catch {
     // No private file system, no such file, or a part went missing under us.
-    return new Response(null, { status: 404 });
+    return new Response(null, { status: 404, headers: STREAM_HEADERS });
   }
 }
 
