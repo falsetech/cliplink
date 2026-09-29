@@ -300,6 +300,28 @@ describe("sinks", () => {
     assert.deepEqual(new Uint8Array(await blob!.arrayBuffer()), source.slice(0, 8192));
   });
 
+  it("keeps a finished file whole, where a checkpoint would have clamped it", async () => {
+    const root = new FakeDirectory();
+    const segmentBytes = 4096;
+    const store = opfsResume({ root: asDirectory(root), segmentBytes, tag: "ROOM02" });
+    const key = { digest: "9".repeat(64), size: 10_000, name: "done.bin", mime: "video/webm" };
+    const source = randomBytes(key.size);
+
+    const sink = await store.open(key, { verifiedBytes: 0, blockHashes: [] });
+    await sink!.write(source);
+    // A checkpoint from before the last part closed, still in flight.
+    const stale = store.checkpoint(key, { verifiedBytes: key.size, blockHashes: ["a".repeat(64)] });
+    await sink!.close();
+    await store.keep!(key, { verifiedBytes: key.size, blockHashes: ["a".repeat(64)] });
+    await stale;
+
+    const [held] = await store.list!();
+    assert.equal(held?.state.verifiedBytes, key.size, "all of it, not what a segment held");
+    assert.equal(held.meta.tag, "ROOM02");
+    const blob = await store.read!(key);
+    assert.deepEqual(new Uint8Array(await blob!.arrayBuffer()), source);
+  });
+
   it("reports nothing available outside a browser", async () => {
     assert.equal(canPickFile(), false);
     assert.equal(canPickDirectory(), false);

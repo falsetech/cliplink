@@ -387,6 +387,34 @@ export function opfsResume(options: ResumeOptions = {}): ResumeProvider {
   const committed = new Map<string, number>();
   const pending = new Map<string, Promise<void>>();
 
+  function metaFor(key: ResumeKey): StoredMeta {
+    return {
+      name: key.name,
+      mime: key.mime ?? "",
+      ...(key.path !== undefined && { path: key.path }),
+      ...(options.tag !== undefined && { tag: options.tag }),
+      ts: Date.now(),
+    };
+  }
+
+  /** One state write per file at a time, in the order they were asked for. */
+  function queueState(key: ResumeKey, verified: number, blockHashes: string[]) {
+    const previous = pending.get(key.digest) ?? Promise.resolve();
+    const next = previous
+      .then(() =>
+        writeState(key, {
+          verifiedBytes: verified,
+          blockHashes: blockHashes.slice(0, Math.ceil(verified / BLOCK_BYTES)),
+          size: key.size,
+          segmentBytes: SEGMENT_BYTES,
+          meta: metaFor(key),
+        }),
+      )
+      .catch(() => {});
+    pending.set(key.digest, next);
+    return next;
+  }
+
   return {
     async load(key) {
       const state = await readState(key);
@@ -504,30 +532,19 @@ export function opfsResume(options: ResumeOptions = {}): ResumeProvider {
       if (verified <= 0) {
         return;
       }
-      // One write at a time, and only for blocks that are already on disk.
-      const previous = pending.get(key.digest) ?? Promise.resolve();
-      const next = previous
-        .then(() =>
-          writeState(key, {
-            verifiedBytes: verified,
-            blockHashes: state.blockHashes.slice(
-              0,
-              Math.ceil(verified / BLOCK_BYTES),
-            ),
-            size: key.size,
-            segmentBytes: SEGMENT_BYTES,
-            meta: {
-              name: key.name,
-              mime: key.mime ?? "",
-              ...(key.path !== undefined && { path: key.path }),
-              ...(options.tag !== undefined && { tag: options.tag }),
-              ts: Date.now(),
-            },
-          }),
-        )
-        .catch(() => {});
-      pending.set(key.digest, next);
-      return next;
+      // Only for blocks that are already on disk.
+      return queueState(key, verified, state.blockHashes);
+    },
+
+    /**
+     * The whole file, after `close`: every part is closed by then, so there is
+     * no open segment to clamp to. Queued behind any checkpoint still in
+     * flight, so a stale one can't land after it and claim less.
+     */
+    keep(key, state) {
+      committed.delete(key.digest);
+      const verified = Math.min(state.verifiedBytes, key.size);
+      return verified > 0 ? queueState(key, verified, state.blockHashes) : undefined;
     },
 
     /**
