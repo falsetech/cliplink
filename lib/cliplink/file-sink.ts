@@ -138,6 +138,26 @@ export function canUseSeedStore(item: { digest?: string }) {
   return item.digest !== undefined && hasOpfs();
 }
 
+/**
+ * Whether this file can play while it arrives: audio or video, headed for the
+ * seed store, on a page the service worker controls — it is the worker that
+ * answers the player's range requests out of the store. Anything else falls
+ * back to downloading first and opening after, as before.
+ */
+export function canStream(item: { digest?: string; mime: string }) {
+  return (
+    canUseSeedStore(item) &&
+    (item.mime.startsWith("video/") || item.mime.startsWith("audio/")) &&
+    typeof navigator !== "undefined" &&
+    navigator.serviceWorker?.controller != null
+  );
+}
+
+/** Where public/sw.js serves a stored file from. */
+export function streamUrl(digest: string) {
+  return `/_stream/${digest}`;
+}
+
 /** A file this device holds, as a disk-backed Blob, for saving it again. */
 export async function readHeld(key: {
   digest: string;

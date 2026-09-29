@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { MAX_ZIP_BYTES } from "@/lib/cliplink/constants";
+import { canStream } from "@/lib/cliplink/file-sink";
 import {
   formatBytes,
   formatDuration,
@@ -14,6 +15,7 @@ import { cn } from "@/lib/utils";
 
 import { DirectionLabel } from "./direction-label";
 import { IconChevron } from "./icons";
+import { readyToPlay } from "./player-sheet";
 import { rowClass } from "./ui";
 import { sharedFolder, type FileListItem } from "./use-file-transfer";
 
@@ -27,6 +29,8 @@ type FileTransfersProps = {
   onSave: (id: string, name: string) => void;
   onRevoke: (id: string) => void;
   onDismiss: (id: string) => void;
+  /** Opens the player on an audio or video file, while it arrives or after. */
+  onPlay: (id: string) => void;
 };
 
 /**
@@ -110,6 +114,22 @@ function downloadLabel(item: FileListItem) {
   return "Retry";
 }
 
+/**
+ * Whether Play belongs on this row. Only where the bytes are in the seed store
+ * — a file saved into a picked folder is not somewhere the player can reach —
+ * and only once the first part has landed, since that is the first thing
+ * there is to play.
+ */
+function playable(item: FileListItem) {
+  if (!canStream(item) || item.savedToSink) {
+    return false;
+  }
+  if (item.direction === "outgoing") {
+    return item.seeded === true && readyToPlay(item);
+  }
+  return (item.status === "transferring" || item.status === "done") && readyToPlay(item);
+}
+
 function FileActions({
   item,
   canTransfer,
@@ -118,12 +138,18 @@ function FileActions({
   onSave,
   onRevoke,
   onDismiss,
+  onPlay,
 }: Omit<FileTransfersProps, "items" | "onDownloadAll" | "onDownloadZip"> & {
   item: FileListItem;
 }) {
+  const play = playable(item) ? (
+    <RowAction onClick={() => onPlay(item.id)}>Play</RowAction>
+  ) : null;
+
   if (item.direction === "outgoing") {
     return (
       <>
+        {play}
         {/* A file this device received and is passing on can be saved from
             here: after a reload, this is the only row it has. */}
         {item.seeded && item.have === undefined ? (
@@ -163,11 +189,14 @@ function FileActions({
     case "connecting":
     case "transferring":
       return (
-        <RowAction
-          onClick={() => onCancel(item.id)}
-        >
-          Cancel
-        </RowAction>
+        <>
+          {play}
+          <RowAction
+            onClick={() => onCancel(item.id)}
+          >
+            Cancel
+          </RowAction>
+        </>
       );
     case "done":
       if (item.savedToSink) {
@@ -180,11 +209,14 @@ function FileActions({
         );
       }
       return (
-        <RowAction
-          onClick={() => onSave(item.id, item.name)}
-        >
-          Save Again
-        </RowAction>
+        <>
+          {play}
+          <RowAction
+            onClick={() => onSave(item.id, item.name)}
+          >
+            Save Again
+          </RowAction>
+        </>
       );
     default:
       return (
