@@ -439,6 +439,13 @@ const PART_PREFIX = '{"t":"part"';
  * long download that switches often is not punished for it.
  */
 const MAX_HANDOFF_ATTEMPTS = 8;
+/**
+ * How often a download that is also being offered re-announces how much it
+ * has: whichever of these comes first. Every announce is a signal to every
+ * capable peer, so this trades how current `have` is against signaling load.
+ */
+const REANNOUNCE_BYTES = 8 * 1024 * 1024;
+const REANNOUNCE_MS = 5_000;
 const ACK_MESSAGE = "ack";
 const PROGRESS_EMIT_MS = 100;
 const RECEIVER_CLOSE_GRACE_MS = 5_000;
@@ -727,6 +734,14 @@ export function createFileTransferManager(
    * all fail without progress can exhaust it.
    */
   const handoffs = new Map<string, { attempts: number; bytes: number; tried: Set<PeerId> }>();
+  /**
+   * Incoming item id → the outgoing offer passing its verified prefix on,
+   * while it downloads, and when that offer last said how much it had.
+   */
+  const partialSeeds = new Map<
+    string,
+    { offerId: string; announced: number; timer: Timer | null }
+  >();
   let emitTimer: Timer | null = null;
   let disposed = false;
 
@@ -857,6 +872,7 @@ export function createFileTransferManager(
   /** Forget a download and abort its sink once queued work has drained. */
   function releaseDownload(itemId: string) {
     handoffs.delete(itemId);
+    settlePartialSeed(itemId, false);
     const download = downloads.get(itemId);
     if (!download) {
       return;
@@ -1874,6 +1890,7 @@ export function createFileTransferManager(
           }),
         ).catch(() => {});
       }
+      refreshPartialSeed(item, download);
       if (transfer.flow && transfer.channel?.readyState === "open") {
         // Only what the sink has taken, so the sender's window bounds this
         // device's memory rather than trailing it.
@@ -1938,6 +1955,9 @@ export function createFileTransferManager(
     }
 
     keepOrForget(item, download);
+    // Kept, the partial offer becomes a complete one; forgotten, the store
+    // has nothing left to serve it from.
+    settlePartialSeed(item.id, keepReceived && resumeStore?.keep !== undefined);
     item.blob = result instanceof Blob ? result : undefined;
     item.savedToSink = !(result instanceof Blob);
     item.status = "done";
@@ -2121,6 +2141,155 @@ export function createFileTransferManager(
     return true;
   }
 
+  /**
+   * An outgoing offer for bytes the store holds — all of them, or a verified
+   * prefix of `have`. The caller announces it.
+   */
+  function addSeed(
+    key: ResumeKey,
+    blockHashes: string[],
+    what: { name: string; mime: string; path?: string },
+    have: number,
+  ): FileItem {
+    const offerId = createId();
+    const item: FileItem = {
+      id: itemKey(selfId, offerId),
+      offerId,
+      name: sanitizeFileName(what.name || "file"),
+      size: key.size,
+      mime: what.mime,
+      digest: key.digest,
+      ...(what.path !== undefined && { path: sanitizeRelativePath(what.path) }),
+      direction: "outgoing",
+      peerId: selfId,
+      ts: Date.now(),
+      status: "offered",
+      bytes: 0,
+      activeTransfers: 0,
+      completedTransfers: 0,
+      seeded: true,
+      ...(have < key.size && { have }),
+    };
+    outgoingSources.set(offerId, key);
+    // Already verified block by block on the way in, so a peer pulling this
+    // file is never made to wait for it to be hashed again.
+    offerBlockHashes.set(offerId, blockHashes);
+    addItem(item);
+    return item;
+  }
+
+  /** Drops an outgoing offer and tells the room, cutting off anyone pulling it. */
+  function withdraw(item: FileItem) {
+    outgoingFiles.delete(item.offerId);
+    outgoingSources.delete(item.offerId);
+    offerBlockHashes.delete(item.offerId);
+    items.delete(item.id);
+    sendSignal({ type: "file-revoke", offerId: item.offerId });
+    for (const transfer of [...transfers.values()]) {
+      if (transfer.itemId === item.id) {
+        failTransfer(transfer, "revoked", true);
+      }
+    }
+  }
+
+  function announcePartial(itemId: string) {
+    const entry = partialSeeds.get(itemId);
+    const seed = entry && items.get(itemKey(selfId, entry.offerId));
+    if (!entry || !seed) {
+      return;
+    }
+    if (entry.timer !== null) {
+      clearTimeout(entry.timer);
+      entry.timer = null;
+    }
+    entry.announced = seed.have ?? seed.size;
+    announceOffer(seed);
+    emitSoon();
+  }
+
+  /**
+   * Keeps a download's partial offer in step with it: made once the first
+   * block is verified, then re-announced as more arrives — every
+   * REANNOUNCE_BYTES, or REANNOUNCE_MS after the last change, whichever comes
+   * first. This is what lets the second device to get a file start serving
+   * the third before it has finished.
+   *
+   * Only for downloads the store is keeping, since the store is where a peer's
+   * request is served from.
+   */
+  function refreshPartialSeed(item: FileItem, download: Download) {
+    const key = download.key;
+    if (
+      disposed ||
+      !seedWhileDownloading ||
+      !selfCaps.includes("partial") ||
+      !key ||
+      !resumeStore?.read ||
+      download.verifiedBytes < BLOCK_BYTES ||
+      download.verifiedBytes >= item.size
+    ) {
+      return;
+    }
+    const entry = partialSeeds.get(item.id);
+    const seed = entry && items.get(itemKey(selfId, entry.offerId));
+    if (!entry || !seed) {
+      // Already offering this content some other way — a finished copy, say.
+      if (outgoingItems().some((candidate) => candidate.digest === key.digest)) {
+        return;
+      }
+      const created = addSeed(
+        key,
+        download.blockHashes,
+        { name: item.name, mime: item.mime, path: item.path },
+        download.verifiedBytes,
+      );
+      partialSeeds.set(item.id, {
+        offerId: created.offerId,
+        announced: 0,
+        timer: null,
+      });
+      announcePartial(item.id);
+      emit();
+      return;
+    }
+    seed.have = download.verifiedBytes;
+    if (seed.have - entry.announced >= REANNOUNCE_BYTES) {
+      announcePartial(item.id);
+    } else if (entry.timer === null) {
+      entry.timer = setTimeout(() => {
+        entry.timer = null;
+        announcePartial(item.id);
+      }, REANNOUNCE_MS);
+    }
+  }
+
+  /**
+   * The download a partial offer followed has ended. Finished and kept, the
+   * offer becomes a complete one; otherwise there is nothing behind it any
+   * more, and it is withdrawn.
+   */
+  function settlePartialSeed(itemId: string, complete: boolean) {
+    const entry = partialSeeds.get(itemId);
+    if (!entry) {
+      return;
+    }
+    partialSeeds.delete(itemId);
+    if (entry.timer !== null) {
+      clearTimeout(entry.timer);
+    }
+    const seed = items.get(itemKey(selfId, entry.offerId));
+    if (!seed) {
+      return;
+    }
+    if (complete) {
+      seed.have = undefined;
+      announceOffer(seed);
+    } else {
+      withdraw(seed);
+    }
+    emit();
+  }
+
   function handleOffer(from: PeerId, offer: FileOffer) {
     if (offer.size <= 0 || offer.size > limits.maxFileBytes) {
       return;
@@ -2170,6 +2339,17 @@ export function createFileTransferManager(
         },
       ];
       emit();
+      return;
+    }
+
+    // This device is the one offering it — the file it shared, passed back by
+    // a peer that received it. There is nothing to download.
+    if (
+      offer.digest &&
+      outgoingItems().some(
+        (candidate) => candidate.digest === offer.digest && candidate.size === offer.size,
+      )
+    ) {
       return;
     }
 
@@ -2540,32 +2720,12 @@ export function createFileTransferManager(
           continue;
         }
         already.add(key.digest);
-        const offerId = createId();
-        const item: FileItem = {
-          id: itemKey(selfId, offerId),
-          offerId,
-          name: sanitizeFileName(meta.name || key.name || "file"),
-          size: key.size,
-          mime: meta.mime,
-          digest: key.digest,
-          ...(meta.path !== undefined && {
-            path: sanitizeRelativePath(meta.path),
-          }),
-          direction: "outgoing",
-          peerId: selfId,
-          ts: Date.now(),
-          status: "offered",
-          bytes: 0,
-          activeTransfers: 0,
-          completedTransfers: 0,
-          seeded: true,
-          ...(state.verifiedBytes < key.size && { have: state.verifiedBytes }),
-        };
-        outgoingSources.set(offerId, { ...key, size: key.size });
-        // Already verified block by block on the way in, so a peer pulling
-        // this file is never made to wait for it to be hashed again.
-        offerBlockHashes.set(offerId, state.blockHashes.slice());
-        addItem(item);
+        const item = addSeed(
+          key,
+          state.blockHashes.slice(),
+          { name: meta.name || key.name, mime: meta.mime, path: meta.path },
+          state.verifiedBytes,
+        );
         announceOffer(item);
         offered.push({ ...item });
       }
@@ -2581,16 +2741,15 @@ export function createFileTransferManager(
       if (!item || item.direction !== "outgoing") {
         return;
       }
-      outgoingFiles.delete(item.offerId);
-      outgoingSources.delete(item.offerId);
-      offerBlockHashes.delete(item.offerId);
-      items.delete(id);
-      sendSignal({ type: "file-revoke", offerId: item.offerId });
-      for (const transfer of [...transfers.values()]) {
-        if (transfer.itemId === id) {
-          failTransfer(transfer, "revoked", true);
+      for (const [incomingId, entry] of partialSeeds) {
+        if (entry.offerId === item.offerId) {
+          if (entry.timer !== null) {
+            clearTimeout(entry.timer);
+          }
+          partialSeeds.delete(incomingId);
         }
       }
+      withdraw(item);
       emit();
     },
 
@@ -2665,6 +2824,15 @@ export function createFileTransferManager(
     },
 
     dispose() {
+      // First, so releasing the downloads below doesn't withdraw their partial
+      // offers one signal at a time: a tab going away says so once, through
+      // its signaling layer's peer-left.
+      for (const entry of partialSeeds.values()) {
+        if (entry.timer !== null) {
+          clearTimeout(entry.timer);
+        }
+      }
+      partialSeeds.clear();
       for (const transfer of [...transfers.values()]) {
         closeTransfer(transfer);
       }
