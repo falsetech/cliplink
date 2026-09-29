@@ -836,6 +836,29 @@ export function createFileTransferManager(
   }
 
   /**
+   * Records what a peer supports, from any signal that says. `hello` only
+   * reaches the peers already here when a device joins, so a device that was
+   * here first would never learn a later one's capabilities from it; offers
+   * and requests carry the same list, and every modern peer sends one or the
+   * other soon enough. A peer that turns out to take partial offers is sent
+   * any this device is making.
+   */
+  function learnCaps(from: PeerId, caps: Capability[] | undefined) {
+    if (!caps) {
+      return;
+    }
+    const before = peerCaps.get(from);
+    peerCaps.set(from, caps);
+    if (!before?.includes("partial") && caps.includes("partial")) {
+      for (const item of outgoingItems()) {
+        if (isPartial(item)) {
+          announceOffer(item, from);
+        }
+      }
+    }
+  }
+
+  /**
    * Announces an offer — to one peer, or to the room.
    *
    * A complete offer is broadcast, as it always has been. A partial one is
@@ -2517,6 +2540,7 @@ export function createFileTransferManager(
         return;
 
       case "file-offer":
+        learnCaps(from, payload.caps);
         handleOffer(from, payload);
         return;
 
@@ -2560,6 +2584,7 @@ export function createFileTransferManager(
       }
 
       case "file-request":
+        learnCaps(from, payload.caps);
         void startSend(from, payload);
         return;
 

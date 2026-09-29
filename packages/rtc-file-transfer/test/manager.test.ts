@@ -1399,6 +1399,30 @@ describe("verified blocks and resume", () => {
       assert.equal(incoming(carol)[0].status, "offered");
     });
 
+    it("exchanges partial offers between devices whatever order they joined in", async () => {
+      bus = new FakeSignaling();
+      const stores = [memoryStore({ writeDelayMs: 20 }), memoryStore({ writeDelayMs: 20 })];
+      const alice = bus.addPeer("peer-alice");
+      alice.manager.announce();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const bob = bus.addPeer("peer-bob00", { resume: stores[0].provider, keepReceived: true });
+      bob.manager.announce();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const carol = bus.addPeer("peer-carol", { resume: stores[1].provider, keepReceived: true });
+      carol.manager.announce();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      alice.manager.offerFiles([new File([randomBytes(8 * MB)], "both.bin")], { digest: true });
+      await waitFor(() => incoming(bob)[0]?.digest !== undefined && incoming(carol)[0]?.digest !== undefined);
+      bob.manager.request(incoming(bob)[0].id);
+      carol.manager.request(incoming(carol)[0].id);
+
+      // Bob heard carol's hello; carol never heard bob's. Each must still
+      // learn the other can take a prefix.
+      await waitFor(() => partialOffers("peer-bob00", "peer-carol").length > 0, 5000);
+      await waitFor(() => partialOffers("peer-carol", "peer-bob00").length > 0, 5000);
+    });
+
   });
 
   it("keeps a row per peer when an offer carries no digest", async () => {
