@@ -774,7 +774,7 @@ describe("verified blocks and resume", () => {
   });
 
   /** A ResumeProvider that keeps parts in memory, standing in for disk. */
-  function memoryStore() {
+  function memoryStore({ writeDelayMs = 0 }: { writeDelayMs?: number } = {}) {
     const files = new Map<string, Uint8Array<ArrayBuffer>[]>();
     const states = new Map<string, { verifiedBytes: number; blockHashes: string[] }>();
     const metas = new Map<string, StoredMeta>();
@@ -825,7 +825,12 @@ describe("verified blocks and resume", () => {
           }
           files.set(key.digest, prefix);
           return {
-            write: (chunk: Uint8Array<ArrayBuffer>) => void prefix.push(chunk.slice()),
+            write: async (chunk: Uint8Array<ArrayBuffer>) => {
+              if (writeDelayMs > 0) {
+                await new Promise((resolve) => setTimeout(resolve, writeDelayMs));
+              }
+              prefix.push(chunk.slice());
+            },
             close: () => new Blob(prefix as BlobPart[]),
             abort: () => {},
           };
@@ -1295,6 +1300,38 @@ describe("verified blocks and resume", () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal(incoming(alice).length, 0, "the file it is sharing is not also offered to it");
+  });
+
+  describe("swarm edge cases", () => {
+    const outgoingOf = (peer: TestPeer) =>
+      peer.items.filter((item) => item.direction === "outgoing");
+    const partialOffers = (from: string, to?: string) =>
+      bus.signals.filter(
+        (signal) =>
+          signal.from === from &&
+          (to === undefined || signal.to === to) &&
+          signal.payload.type === "file-offer" &&
+          signal.payload.have !== undefined,
+      );
+
+    it("withdraws the partial offer of a cancelled download for good", async () => {
+      const store = memoryStore({ writeDelayMs: 5 });
+      bus = new FakeSignaling();
+      const alice = bus.addPeer("peer-alice");
+      const bob = bus.addPeer("peer-bob00", { resume: store.provider, keepReceived: true });
+      alice.manager.offerFiles([new File([randomBytes(12 * MB)], "big.bin")], { digest: true });
+      await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+      bob.manager.request(incoming(bob)[0].id);
+      await waitFor(() => outgoingOf(bob).length === 1, 5000);
+      await waitFor(() => incoming(bob)[0].bytes > 3 * MB, 5000);
+
+      bob.manager.cancel(incoming(bob)[0].id);
+      // Blocks already in flight land after the cancel; none may bring it back.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      assert.equal(incoming(bob)[0].status, "failed");
+      assert.deepEqual(outgoingOf(bob), [], "nothing left offering an aborted download");
+    });
+
   });
 
   it("keeps a row per peer when an offer carries no digest", async () => {

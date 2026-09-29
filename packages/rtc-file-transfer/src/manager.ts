@@ -1878,6 +1878,12 @@ export function createFileTransferManager(
       await download.sink.write(block);
       download.blockHashes[message.index] = message.hash;
       download.verifiedBytes += block.byteLength;
+      // Settled while this block was in flight — cancelled, dismissed, revoked.
+      // `queueSinkWork` only checks before work starts, and this block must
+      // not record progress for, or re-offer, a download that has ended.
+      if (download.settled || downloads.get(item.id) !== download) {
+        return;
+      }
       if (download.key && resumeStore && !disposed) {
         // The store decides how much of this is durable; a reload resumes from
         // whatever it recorded, never from what merely arrived. A manager that
