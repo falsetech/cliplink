@@ -83,11 +83,19 @@ export async function rooms(
   if (args.forget !== null) {
     const code = normalizeRoomCode(extractRoomCode(args.forget) ?? args.forget);
     const forgotten = await forgetRoom(code, env);
-    if (!forgotten) {
+    if (forgotten.length === 0) {
       report.warn(`No room saved as ${code || args.forget}.`);
       return 1;
     }
-    report.note(`Forgot ${forgotten.code}.`);
+    // The same code can be saved against more than one server, so say which
+    // when more than one went: "Forgot X7KP2M" would understate it.
+    report.note(
+      forgotten.length === 1
+        ? `Forgot ${code}.`
+        : `Forgot ${code} on ${forgotten.length} servers: ${forgotten
+            .map((room) => room.baseUrl)
+            .join(", ")}.`,
+    );
     return 0;
   }
 

@@ -145,13 +145,15 @@ Anything else still works the way the example above does — an adapter is a con
 | `onItemsChange(items)` | Called with a fresh snapshot whenever state changes. Progress updates are coalesced to every 100 ms. |
 | `onNotice(notice)` | `incoming-offer`, `received`, or `failed` with a `code`. |
 | `iceServers` | Defaults to public Google and Cloudflare STUN servers. Add a TURN server for restrictive networks. Pass a function instead of an array and it is called for each connection, so short-lived TURN credentials can be refreshed — see [ICE servers](#ice-servers). |
-| `limits` | Any of `maxFileBytes` (64 GiB), `maxMemoryBytes` (500 MB), `chunkBytes` (64 KB), `bufferHighBytes` (4 MB), `bufferLowBytes` (1 MB), `windowBytes` (16 MB), `stallMs` (20 s), `maxItems` (20). |
+| `limits` | Any of `maxFileBytes` (64 GiB), `maxMemoryBytes` (500 MB), `chunkBytes` (64 KB), `bufferHighBytes` (4 MB), `bufferLowBytes` (1 MB), `windowBytes` (16 MB), `stallMs` (20 s), `iceRestartMs` (8 s), `maxItems` (20). |
 | `createId` | Id generator for offers and transfers. |
-| `capabilities` | Protocol features to advertise: `blocks`, `resume` and `flow`. Defaults to all of them where `crypto.subtle` exists. Pass `[]` to behave exactly like a v1 peer. |
+| `capabilities` | Protocol features to advertise: `blocks`, `resume`, `flow` and `partial`. Defaults to all of them where `crypto.subtle` exists. Pass `[]` to behave exactly like a v1 peer. |
 | `createPeerConnection` | For environments without a global `RTCPeerConnection`, such as Node with a WebRTC polyfill. |
 | `resume` | A `ResumeProvider` that keeps partial downloads across page loads. `opfsResume()` from `/sinks` is one. |
+| `keepReceived` | Keep a finished download in the `resume` store instead of deleting it, so `seed` can pass it on. See [Passing a file on](#passing-a-file-on). |
+| `seedWhileDownloading` | Offer a stored download's verified prefix to the room while it is still arriving. On by default where `partial` is advertised. |
 
-The manager returns `handleSignal`, `announce`, `offerFiles`, `request`, `pause`, `resume`, `cancel`, `revoke`, `dismiss`, `getItems`, `getItem` and `dispose`.
+The manager returns `handleSignal`, `announce`, `offerFiles`, `seed`, `request`, `pause`, `resume`, `cancel`, `revoke`, `dismiss`, `getItems`, `getItem` and `dispose`.
 
 `getItems()` returns the same snapshot `onItemsChange` receives, newest first, and `getItem(id)` returns one of them. Both hand back copies, so reading cannot disturb the manager. They are there for a caller that needs to ask rather than keep its own mirror of every change.
 
@@ -190,6 +192,25 @@ createFileTransferManager({
 
 TURN credentials are usually short-lived, and an array is read once when the manager is created — so a transfer started an hour later would dial with credentials that have expired. The function is synchronous on purpose: `request` returns a boolean, and awaiting here would make it async. Refresh on your own schedule and return the latest.
 
+### When a connection drops
+
+A connection that reports `failed` gets one ICE restart before the transfer is
+given up on as a `nat` failure. A restart gathers fresh candidates over the
+existing connection, so a transfer survives the things that routinely break a
+candidate pair mid-file — a laptop moving from Wi-Fi to Ethernet, a phone
+changing cell, a NAT binding expiring — instead of failing and having to be
+resumed by hand.
+
+Only the sender re-offers, along the path it already used for the first offer,
+so a peer running an older version takes part without knowing this exists. The
+restarted connection has `limits.iceRestartMs` (8 s) to come back; after that
+the transfer fails with `nat`, as it did before. One attempt, not a retry loop:
+a network that cannot carry the transfer should say so while the person is
+still watching.
+
+`iceServers` is resolved per connection, so a restart also picks up refreshed
+TURN credentials.
+
 ### Where received bytes go
 
 `request(id, { sink })` streams a download into a `FileSink` instead of memory. Without a sink, the download is assembled in memory as a `Blob`, and files over `limits.maxMemoryBytes` are refused: `request` returns `false` with a `needs-sink` failure notice.
@@ -215,7 +236,7 @@ button.addEventListener("click", async () => {
 
 `bestSink(item)` tries the picker, then OPFS, and resolves `undefined` when neither exists. OPFS files stay until `clearOpfs()` removes them; remove them only after the user has saved the Blob, since it stops being readable once its file is gone. `canPickFile`, `canPickDirectory` and `hasOpfs` report what the browser supports.
 
-To write your own, implement `write`, `close` and `abort`. Writes are serialized. `close` runs once every byte has arrived; return a `Blob` from it to expose one as `item.blob`, or return nothing and the item gets `savedToSink: true`. `abort` runs if the download fails or never starts, and a sink that throws fails the transfer with `write-error`. With `flow` on both sides the sink sets the pace, so a slow disk can't pile up in memory; against a peer without it, bytes that arrive faster than the sink writes them still queue.
+To write your own, implement `write`, `close` and `abort`. Writes are serialized. `close` runs once every byte has arrived; return a `Blob` from it to expose one as `item.blob`, or return nothing and the item gets `savedToSink: true`. A returned Blob must be the whole file: one of another size fails the download with `write-error`. `abort` runs if the download fails or never starts, and a sink that throws fails the transfer with `write-error`. With `flow` on both sides the sink sets the pace, so a slow disk can't pile up in memory; against a peer without it, bytes that arrive faster than the sink writes them still queue.
 
 ### Verifying the whole file
 
@@ -241,9 +262,43 @@ files.offerFiles([...input.files!], { digest: true });
 
 On the next load the offer comes back, the manager asks the store what it has, and the item shows `resumableBytes` before anything is requested. `request` then continues into the same file. The store also supplies the sink for a fresh download, so nothing else is needed for a file with a digest.
 
-`opfsResume()` writes fixed-size part files, closing each as it fills, because that is when bytes actually reach disk — so a reload replays at most one segment (64 MB by default; `segmentBytes` changes it). `close` returns the finished file as a Blob made of those parts, still backed by disk. A completed, revoked or dismissed file is deleted.
+`opfsResume()` writes fixed-size part files, closing each as it fills, because that is when bytes actually reach disk — so a reload replays at most one segment (64 MB by default; `segmentBytes` changes it). A file stored with a different `segmentBytes` starts over rather than resuming, since its parts wouldn't line up. `close` returns the finished file as a Blob made of those parts, still backed by disk. A completed file is deleted unless `keepReceived` is set; a revoked or dismissed one always is.
 
-Write your own by implementing `load`, `open`, `checkpoint` and `forget`. The one rule: `checkpoint` must report only what is durably written, because that is exactly what the next load resumes from.
+Write your own by implementing `load`, `open`, `checkpoint` and `forget`. The one rule: `checkpoint` must report only what is durably written, because that is exactly what the next load resumes from. `list`, `read` and `keep` are optional, and are what [passing a file on](#passing-a-file-on) needs.
+
+### Passing a file on
+
+A device that has a file can serve it, not only the one that first offered it. With `keepReceived`, a finished download stays in the store, and `seed` offers what the store holds:
+
+```ts
+const store = opfsResume({ tag: roomId });
+const files = createFileTransferManager({ ..., resume: store, keepReceived: true });
+
+// On joining — including after a reload, which is the point.
+files.seed((await store.list()).filter((held) => held.meta.tag === roomId));
+```
+
+A seeded offer carries the original digest, name and path under a fresh offer id. Nothing is hashed again: the block hashes are in the store, and the bytes are read back only when a peer asks. The item is `seeded: true`, so a UI can tell it from a file this device chose to share.
+
+On the receiving side, offers of the same content are one item. An incoming item's `sources` lists every peer offering its digest, and `peerId` is the one a download uses. When that source goes away or runs out, the download keeps its sink and every verified block and continues at the next — a handoff, not a failure, so nothing is reported and the item stays in flight. A source that has already let the download down is tried last, and a run of handoffs that makes no progress ends as the failure it would have been. A source leaving only revokes the item when it was the last one.
+
+With `seedWhileDownloading` (on by default), a stored download starts offering its verified prefix once the first block is in, and says how much it has as more arrives — at most every 5 s. Its item's `verifiedBytes` is how much is verified and written, which is what can be read back while it is still arriving; `bytes` counts what has come over the wire. The second device to get a file then serves the third before it has finished. The offer becomes a complete one when the download completes, and is withdrawn if it is dropped.
+
+The store grows with every file this device keeps. What is worth keeping, and for how long, is the application's call: `opfsResume`'s `tag` records what a file belongs to, `list` returns every file with its `meta.ts`, and `forget` removes one.
+
+### Playing while it downloads
+
+A stored file is on disk in parts, and `read(key)` returns its verified prefix as a Blob. To play a video before it has finished, answer a media element's Range requests out of that prefix — from a service worker, typically. `prefixRange` from `/sinks` is the arithmetic:
+
+```ts
+import { prefixRange } from "@thebkht/rtc-file-transfer/sinks";
+
+const range = prefixRange(size, verifiedBytes, request.headers.get("Range"));
+// { status: 206, start, end, contentRange } — serve start..end, inclusive
+// { status: 416, contentRange, pending }   — pending: those bytes are on their way
+```
+
+A short `206` is legal, and a media element simply asks for the next range, so playback carries on as the file arrives. The type the file is served with came from the peer that offered it: serve only audio and video types, only to media requests, and with `X-Content-Type-Options: nosniff`, or a peer can offer an HTML "video" that runs as your origin.
 
 ### Pausing and resuming
 
@@ -275,6 +330,8 @@ Newer peers negotiate optional features through fields that v1 peers never send 
 - With `blocks`, the sender follows every `BLOCK_BYTES` (1 MiB) of data with the string `{"t":"block","i":<index>,"h":"<sha256 hex>"}`. The receiver checks each block before writing it to the sink.
 - With `resume` (which requires `blocks`), `file-request.offset` asks the sender to start at a block boundary.
 - With `flow` (which also requires `blocks`), the receiver answers each verified block with `{"t":"credit","b":<bytes committed>}`, and the sender stops once it is `windowBytes` ahead of that. Peers without it ignore the message and rely on `bufferedAmount` alone.
+- `hello.caps` says what a peer supports before any offer is made. Offers are broadcast, so it is the only way a sender learns who can take a partial one.
+- With `partial` (which requires `blocks` and `resume`), an offer's `have` says how much of the file the sender holds, and the sender ends with `{"t":"part","b":<bytes>}` instead of `"done"` when it runs out. The receiver keeps what arrived and continues elsewhere. A partial offer is only ever sent to a peer whose `hello` listed `partial`, and a peer without it is never sent a `part`.
 
 `file-offer` can also carry `path`, `batchId` and `digest`. These aren't capabilities: older peers drop them on receipt, showing loose files and skipping the whole-file check.
 
@@ -296,7 +353,7 @@ Where `maxMessageSize` is missing, chunks stay at `limits.chunkBytes` (64 KB), w
 
 Worth knowing before you pick this:
 
-- **NAT traversal.** The defaults are STUN only. Behind symmetric NAT a connection needs a TURN relay, which you supply through `iceServers` and pay bandwidth for.
+- **NAT traversal.** The defaults are STUN only. Behind symmetric NAT a connection needs a TURN relay, which you supply through `iceServers` and pay bandwidth for. A dropped connection is restarted once; a network that never had a path is not made to have one.
 - **The tab has to stay open.** Closing or reloading a page closes its peer connections. Resume survives that only with a `ResumeProvider`, and only on the receiving side; the sender has to still be there, holding the same file.
 - **Mobile backgrounding.** A hidden page can be frozen or discarded, which stops a transfer. Desktop Chrome exempts pages with an open data channel from intensive throttling, so the stall timer keeps working there.
 - **Throughput is SCTP's.** One congestion window per association, and a user-space stack on both ends. This package can't make a data channel faster than the browser makes it.

@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+- **A device that has a file can pass it on.** With `keepReceived`, a finished download stays in the `resume` store instead of being deleted, and `seed(entries)` offers what the store holds — after a reload too — under a fresh offer id and the original digest. Nothing is hashed again, and the bytes are read back only when a peer asks. Seeded items are `seeded: true`.
+- **Offers of the same content are one item.** Matched by `digest`, they collapse into one incoming item whose `sources` lists every peer offering it; `peerId` is the one a download uses. A source leaving only revokes the item when it was the last. Offers without a digest keep a row each, as before.
+- **A download continues at another peer** when its source goes away or runs out, keeping its sink and every verified block. That is a handoff, not a failure: nothing is reported. Sources that let the download down are tried last, and handoffs that make no progress are bounded.
+- **The `partial` capability** lets a sender offer a verified prefix. The offer's `have` says how much, and the sender ends with `{"t":"part","b":N}` instead of `"done"`. With `seedWhileDownloading` (on by default) a stored download offers its prefix while it is still arriving. `hello` now carries `caps`, since offers are broadcast and that is where a sender learns which peers can take a partial one.
+- **`ResumeProvider` gains optional `list`, `read` and `keep`**, implemented by `opfsResume`, which also takes a `tag`. `ResumeKey` may carry `mime` and `path`. A file stored with a different `segmentBytes` now starts over rather than resuming into misaligned parts.
+- **`prefixRange`** in `/sinks`: the Range arithmetic for playing a file while it downloads.
+- A device no longer lists an incoming offer for content it is itself offering.
+- **`FileItem.verifiedBytes`**: how much of a download has been verified and written, which on a slow disk trails `bytes`. Cleared when the download ends.
+- A growing prefix is re-announced at most every 5 s, and a finished download is offered on even when no prefix was. A content item that is withdrawn stays withdrawn for the session.
+- A peer's capabilities are learned from its offers and requests as well as its `hello`, and a source that returns under the same offer is taken back.
+- A download whose finished file is shorter than its size, or fails its digest, fails and forgets what was stored of it.
+- New exports: `ItemSource`, `StoredFile`, `StoredMeta`, `prefixRange`, `PrefixRange`.
+
+All additive. Every new field is optional and every new behaviour is negotiated, so a 1.2 peer — or a v1 one — interoperates exactly as before.
+
+## 1.2.0
+
+- **A failed connection is restarted once before the transfer is given up on.** `connectionState === "failed"` went straight to a `nat` failure, so the things that routinely break a candidate pair mid-file — moving from Wi-Fi to Ethernet, a phone changing cell, a NAT binding expiring — ended a transfer that the network could still have carried. The sender now re-offers with `iceRestart`, which gathers fresh candidates over the existing connection. Only the sender offers, along the path it already used, so the restart is answered by a peer running an older version with no new message type and no capability to negotiate. One attempt, not a retry loop.
+- **`limits.iceRestartMs`** (8 s) bounds how long a restarted connection has to come back. Shorter than `stallMs` by default, so a restart that does not take still reports `nat` rather than `stalled`.
+- `iceServers` was already resolved per connection, so a restart dials with refreshed TURN credentials without further work.
+
+No wire changes. An ICE restart is an ordinary `rtc-description` offer.
+
 ## 1.1.0
 
 - **Progress on files you are sending.** `FileItem.bytes` has always been the receiver's count, so a sender could see that a file was being pulled and by how many devices, but not how far along any of them was — there was no way to draw an upload bar. Outgoing items now carry `outgoingTransfers`, one entry per device pulling the file, with `bytes`, `bytesPerSecond` and `etaMs`. A single number would have to pick one receiver and be wrong about the rest. Each entry's `committed` says what its count means: with the `flow` capability it is what the receiver has written, and without it what the sender has handed to the channel, which can run ahead. A device joins the list when its transfer opens, before any byte moves, and leaves when it ends.

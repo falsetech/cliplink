@@ -6,6 +6,10 @@ import {
   sanitizeFileName,
   sanitizeRelativePath,
   type FileItem,
+  type ResumeKey,
+  type ResumeState,
+  type StoredFile,
+  type StoredMeta,
 } from "../src/index.ts";
 import { FakeSignaling, randomBytes, waitFor, type TestPeer } from "./fake-rtc.ts";
 
@@ -363,7 +367,7 @@ describe("file transfer", () => {
     assert.equal(outgoing(alice).completedTransfers, 0);
   });
 
-  it("reports a connection ICE could not establish", async () => {
+  it("reports a connection ICE could not establish, once the restart is spent", async () => {
     bus = new FakeSignaling();
     bus.addPeer("peer-alice");
     bus.addPeer("peer-bob00");
@@ -371,7 +375,79 @@ describe("file transfer", () => {
 
     const { bob } = await offerAndRequest(randomBytes(4096));
     bob.pcs()[0].failConnection();
+    // The first failure buys a restart, so it is not yet an answer.
+    assert.equal(failure(bob), undefined);
+
+    bob.pcs()[0].failConnection();
     assert.equal(failure(bob)?.code, "nat");
+  });
+
+  it("restarts ICE rather than failing the first time a connection drops", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice");
+    bus.addPeer("peer-bob00");
+    bus.net.setFlowing(false);
+
+    const { alice } = await offerAndRequest(randomBytes(4096));
+    await waitFor(() => alice.pcs().length === 1);
+    const pc = alice.pcs()[0];
+    await waitFor(() => pc.offerOptions.length === 1);
+    assert.deepEqual(pc.offerOptions, [{}]);
+
+    pc.failConnection();
+    await waitFor(() => pc.offerOptions.length === 2);
+
+    // A restart is a second offer on the same connection, not a new one, and
+    // the receiver answers it through the path it already had — so a peer on
+    // an older version needs no new message type to take part.
+    assert.deepEqual(pc.offerOptions[1], { iceRestart: true });
+    assert.equal(alice.pcs().length, 1);
+    assert.equal(failure(alice), undefined);
+  });
+
+  it("does not re-offer from the receiving side", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice");
+    bus.addPeer("peer-bob00", { limits: { iceRestartMs: 50 } });
+    bus.net.setFlowing(false);
+
+    const { bob } = await offerAndRequest(randomBytes(4096));
+    const pc = bob.pcs()[0];
+    pc.failConnection();
+    await waitFor(() => failure(bob)?.code === "nat");
+
+    // The receiver waits out the restart; only the offerer ever offers.
+    assert.deepEqual(pc.offerOptions, []);
+  });
+
+  it("carries on when the restart takes", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice");
+    bus.addPeer("peer-bob00", { limits: { iceRestartMs: 50 } });
+    bus.net.setFlowing(false);
+
+    const { bob } = await offerAndRequest(randomBytes(4096));
+    const pc = bob.pcs()[0];
+    pc.failConnection();
+    pc.recoverConnection();
+
+    // The grace deadline must not still fire on a connection that came back.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(failure(bob), undefined);
+  });
+
+  it("gives up when a restarted connection never comes back", async () => {
+    bus = new FakeSignaling();
+    bus.addPeer("peer-alice");
+    bus.addPeer("peer-bob00", { limits: { iceRestartMs: 50 } });
+    bus.net.setFlowing(false);
+
+    const { bob } = await offerAndRequest(randomBytes(4096));
+    // Silence, rather than a second `failed`: the deadline is the only thing
+    // that ends this, and without it the transfer would hang until the stall.
+    bob.pcs()[0].failConnection();
+
+    await waitFor(() => failure(bob)?.code === "nat");
   });
 
   it("revokes idle offers from a peer that left", async () => {
@@ -698,16 +774,40 @@ describe("verified blocks and resume", () => {
   });
 
   /** A ResumeProvider that keeps parts in memory, standing in for disk. */
-  function memoryStore() {
+  function memoryStore({ writeDelayMs = 0 }: { writeDelayMs?: number } = {}) {
     const files = new Map<string, Uint8Array<ArrayBuffer>[]>();
     const states = new Map<string, { verifiedBytes: number; blockHashes: string[] }>();
+    const metas = new Map<string, StoredMeta>();
+    const keys = new Map<string, ResumeKey>();
     /** Bytes handed to a sink but not yet "committed", as an open segment would be. */
     let uncommitted = 0;
     return {
       files,
       states,
+      metas,
       hold(bytes: number) {
         uncommitted = bytes;
+      },
+      /** Cut a stored file down to a prefix, as an eviction or a half-finished
+       * download would leave it. */
+      truncate(digest: string, bytes: number) {
+        const parts = files.get(digest) ?? [];
+        const joined = new Uint8Array(bytes);
+        let at = 0;
+        for (const part of parts) {
+          if (at >= bytes) {
+            break;
+          }
+          const take = Math.min(part.byteLength, bytes - at);
+          joined.set(part.subarray(0, take), at);
+          at += take;
+        }
+        const state = states.get(digest)!;
+        files.set(digest, [joined]);
+        states.set(digest, {
+          verifiedBytes: bytes,
+          blockHashes: state.blockHashes.slice(0, Math.ceil(bytes / MB)),
+        });
       },
       provider: {
         load: async (key: { digest: string }) => states.get(key.digest) ?? null,
@@ -725,30 +825,762 @@ describe("verified blocks and resume", () => {
           }
           files.set(key.digest, prefix);
           return {
-            write: (chunk: Uint8Array<ArrayBuffer>) => void prefix.push(chunk.slice()),
+            write: async (chunk: Uint8Array<ArrayBuffer>) => {
+              if (writeDelayMs > 0) {
+                await new Promise((resolve) => setTimeout(resolve, writeDelayMs));
+              }
+              prefix.push(chunk.slice());
+            },
             close: () => new Blob(prefix as BlobPart[]),
             abort: () => {},
           };
         },
-        checkpoint: (
-          key: { digest: string },
-          state: { verifiedBytes: number; blockHashes: string[] },
-        ) => {
+        checkpoint: (key: ResumeKey, state: ResumeState) => {
           const durable = Math.max(0, state.verifiedBytes - uncommitted);
           if (durable > 0) {
+            keys.set(key.digest, key);
+            metas.set(key.digest, {
+              name: key.name,
+              mime: key.mime ?? "",
+              ...(key.path !== undefined && { path: key.path }),
+              tag: "room",
+              ts: Date.now(),
+            });
             states.set(key.digest, {
               verifiedBytes: durable,
               blockHashes: state.blockHashes.slice(0, Math.ceil(durable / MB)),
             });
           }
         },
+        // The whole file is on disk by the time this is called, so unlike a
+        // checkpoint it is not clamped to what a closed segment holds.
+        keep: (key: ResumeKey, state: ResumeState) => {
+          keys.set(key.digest, key);
+          metas.set(key.digest, {
+            name: key.name,
+            mime: key.mime ?? "",
+            ...(key.path !== undefined && { path: key.path }),
+            tag: "room",
+            ts: Date.now(),
+          });
+          states.set(key.digest, { ...state, blockHashes: state.blockHashes.slice() });
+        },
+        list: async (): Promise<StoredFile[]> =>
+          [...states].flatMap(([digest, state]) => {
+            const meta = metas.get(digest);
+            const key = keys.get(digest);
+            return meta && key ? [{ key, state, meta }] : [];
+          }),
+        read: async (key: ResumeKey) => {
+          const state = states.get(key.digest);
+          const parts = files.get(key.digest);
+          return state && parts
+            ? new Blob(parts as BlobPart[]).slice(0, state.verifiedBytes)
+            : null;
+        },
         forget: (key: { digest: string }) => {
           states.delete(key.digest);
           files.delete(key.digest);
+          metas.delete(key.digest);
+          keys.delete(key.digest);
         },
       },
     };
   }
+
+  it("keeps a received file and serves it after the original sender is gone", async () => {
+    const store = memoryStore();
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    // Off, so the file is offered by `seed` below rather than while arriving.
+    const bob = bus.addPeer("peer-bob00", {
+      resume: store.provider,
+      keepReceived: true,
+      seedWhileDownloading: false,
+    });
+    const source = randomBytes(2 * MB + 5);
+
+    alice.manager.offerFiles([{ file: new File([source], "kept.bin"), path: "docs" }], {
+      digest: true,
+    });
+    await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+    const digest = incoming(bob)[0].digest!;
+    assert.equal(bob.manager.request(incoming(bob)[0].id), true);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 5000);
+
+    // The copy stays: that is what makes bob able to seed it.
+    assert.equal(store.states.get(digest)?.verifiedBytes, source.byteLength);
+    assert.equal(store.metas.get(digest)?.name, "kept.bin");
+    assert.equal(store.metas.get(digest)?.path, "docs");
+
+    // The original sender goes away entirely.
+    alice.manager.dispose();
+    bus.peers.delete("peer-alice");
+
+    const held = await store.provider.list();
+    assert.equal(held.length, 1);
+    const seeded = bob.manager.seed(held);
+    assert.equal(seeded.length, 1);
+    assert.equal(seeded[0].direction, "outgoing");
+    assert.equal(seeded[0].seeded, true, "held rather than chosen to share");
+    assert.equal(seeded[0].digest, digest);
+    assert.equal(seeded[0].name, "kept.bin");
+    assert.equal(seeded[0].path, "docs");
+    assert.notEqual(seeded[0].offerId, incoming(bob)[0].offerId, "a fresh offer id");
+
+    const carol = bus.addPeer("peer-carol");
+    bob.manager.announce();
+    await waitFor(() => incoming(carol)[0]?.digest === digest, 5000);
+    assert.equal(carol.manager.request(incoming(carol)[0].id), true);
+    await waitFor(() => carol.notices.some((notice) => notice.type === "received"), 5000);
+    assert.deepEqual(new Uint8Array(await incoming(carol)[0].blob!.arrayBuffer()), source);
+  });
+
+  it("collapses two peers offering the same content into one item with two sources", async () => {
+    const store = memoryStore();
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00", {
+      resume: store.provider,
+      keepReceived: true,
+    });
+    const source = randomBytes(MB + 9);
+
+    alice.manager.offerFiles([new File([source], "twice.bin")], { digest: true });
+    await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+    const digest = incoming(bob)[0].digest!;
+    bob.manager.request(incoming(bob)[0].id);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 5000);
+    bob.manager.seed(await store.provider.list());
+
+    // A late joiner hears the same file from both devices.
+    const carol = bus.addPeer("peer-carol");
+    alice.manager.announce();
+    bob.manager.announce();
+    await waitFor(() => (incoming(carol)[0]?.sources?.length ?? 0) === 2, 5000);
+
+    assert.equal(incoming(carol).length, 1, "one row, not one per device");
+    const item = incoming(carol)[0];
+    assert.equal(item.digest, digest);
+    assert.deepEqual(
+      item.sources!.map((entry) => entry.peerId).sort(),
+      ["peer-alice", "peer-bob00"],
+    );
+    assert.ok(item.sources!.every((entry) => entry.have === source.byteLength));
+    assert.equal(item.peerId, item.sources![0].peerId, "the first source is the active one");
+
+    // One device stops sharing: the row stays, with the other device behind it.
+    const other = item.sources!.find((entry) => entry.peerId !== item.peerId)!;
+    bus.peers
+      .get(other.peerId)!
+      .manager.revoke(
+        bus.peers
+          .get(other.peerId)!
+          .items.find((candidate) => candidate.direction === "outgoing")!.id,
+      );
+    await waitFor(() => incoming(carol)[0]?.sources?.length === 1, 5000);
+    assert.equal(incoming(carol)[0].status, "offered", "still downloadable");
+
+    // The last one goes too: now there is nothing left to download from.
+    const active = incoming(carol)[0].peerId;
+    bus.peers
+      .get(active)!
+      .manager.revoke(
+        bus.peers
+          .get(active)!
+          .items.find((candidate) => candidate.direction === "outgoing")!.id,
+      );
+    await waitFor(() => incoming(carol)[0]?.status === "revoked", 5000);
+  });
+
+  it("seeds again after a reload, from the store alone", async () => {
+    const store = memoryStore();
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    let bob = bus.addPeer("peer-bob00", {
+      resume: store.provider,
+      keepReceived: true,
+      seedWhileDownloading: false,
+    });
+    const source = randomBytes(2 * MB + 77);
+
+    alice.manager.offerFiles([new File([source], "reseed.bin")], { digest: true });
+    await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+    const digest = incoming(bob)[0].digest!;
+    bob.manager.request(incoming(bob)[0].id);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 5000);
+
+    // The tab reloads and the sender is gone: the store is all that is left.
+    bob.manager.dispose();
+    bus.peers.delete("peer-bob00");
+    alice.manager.dispose();
+    bus.peers.delete("peer-alice");
+    bob = bus.addPeer("peer-bob00", { resume: store.provider, keepReceived: true });
+
+    const held = await store.provider.list();
+    const seeded = bob.manager.seed(held);
+    assert.equal(seeded.length, 1);
+    assert.equal(seeded[0].digest, digest, "the digest survives the reload");
+
+    const carol = bus.addPeer("peer-carol");
+    bob.manager.announce();
+    await waitFor(() => incoming(carol).length === 1, 5000);
+    assert.equal(carol.manager.request(incoming(carol)[0].id), true);
+    await waitFor(() => carol.notices.some((notice) => notice.type === "received"), 5000);
+    const item = incoming(carol)[0];
+    assert.equal(item.digest, digest, "and the receiver checks the file against it");
+    assert.deepEqual(new Uint8Array(await item.blob!.arrayBuffer()), source);
+
+    // Seeding twice from the same store is one offer, not two.
+    assert.equal(bob.manager.seed(held).length, 0);
+  });
+
+  /** Two devices holding the same file, and nobody else. Returns both stores. */
+  async function twoHolders(source: Uint8Array<ArrayBuffer>, name = "shared.bin") {
+    const stores = [memoryStore(), memoryStore()];
+    const alice = bus.addPeer("peer-alice");
+    const holders = stores.map((store, index) =>
+      bus.addPeer(`peer-hold${index}`, {
+        resume: store.provider,
+        keepReceived: true,
+        seedWhileDownloading: false,
+      }),
+    );
+    alice.manager.offerFiles([new File([source], name)], { digest: true });
+    for (const holder of holders) {
+      await waitFor(() => incoming(holder)[0]?.digest !== undefined);
+      holder.manager.request(incoming(holder)[0].id);
+    }
+    for (const holder of holders) {
+      await waitFor(
+        () => holder.notices.some((notice) => notice.type === "received"),
+        8000,
+      );
+    }
+    const digest = incoming(holders[0])[0].digest!;
+    alice.manager.dispose();
+    bus.peers.delete("peer-alice");
+    return { holders, stores, digest };
+  }
+
+  it("finishes the download at another peer when the active source dies", async () => {
+    bus = new FakeSignaling();
+    const source = randomBytes(4 * MB);
+    const { holders, stores } = await twoHolders(source, "failover.bin");
+    for (const [index, holder] of holders.entries()) {
+      holder.manager.seed(await stores[index].provider.list());
+    }
+
+    const carol = bus.addPeer("peer-carol");
+    carol.manager.announce();
+    for (const holder of holders) {
+      holder.manager.announce();
+    }
+    await waitFor(() => (incoming(carol)[0]?.sources?.length ?? 0) === 2, 5000);
+
+    // The holders' own downloads already ran through this counter.
+    bus.net.deliveredBytes = 0;
+    bus.net.pauseAfterBytes = MB + 64 * 1024;
+    assert.equal(carol.manager.request(incoming(carol)[0].id), true);
+    await waitFor(() => incoming(carol)[0].bytes >= MB, 5000);
+    const active = incoming(carol)[0].peerId;
+    const reached = incoming(carol)[0].bytes;
+
+    // The device it was pulling from goes away mid-transfer.
+    bus.peers.get(active)!.manager.dispose();
+    bus.net.setFlowing(true);
+
+    await waitFor(() => carol.notices.some((notice) => notice.type === "received"), 8000);
+    const item = incoming(carol)[0];
+    assert.notEqual(item.peerId, active, "it carried on somewhere else");
+    assert.deepEqual(new Uint8Array(await item.blob!.arrayBuffer()), source);
+    assert.ok(reached > 0, "and it had already taken bytes from the first one");
+    assert.equal(
+      carol.notices.filter((notice) => notice.type === "failed").length,
+      0,
+      "a handoff is not a failure",
+    );
+  });
+
+  it("serves the prefix it holds, says so, and the rest comes from elsewhere", async () => {
+    bus = new FakeSignaling();
+    const source = randomBytes(3 * MB);
+    const { holders, stores, digest } = await twoHolders(source, "prefix.bin");
+    const [partial, whole] = holders;
+
+    // One of them keeps only two blocks of it.
+    stores[0].truncate(digest, 2 * MB);
+    const seeded = partial.manager.seed(await stores[0].provider.list());
+    assert.equal(seeded.length, 1);
+    assert.equal(seeded[0].have, 2 * MB, "a partial offer says how much it has");
+
+    const carol = bus.addPeer("peer-carol");
+    carol.manager.announce();
+    partial.manager.announce();
+    await waitFor(() => incoming(carol).length === 1, 5000);
+    assert.equal(incoming(carol)[0].sources![0].have, 2 * MB);
+
+    assert.equal(carol.manager.request(incoming(carol)[0].id), true);
+    // Nobody else has it yet, so the handoff has nowhere to go — but the two
+    // blocks that did arrive are kept.
+    await waitFor(() => incoming(carol)[0].status === "failed", 8000);
+    assert.equal(incoming(carol)[0].resumableBytes, 2 * MB);
+    assert.ok(
+      bus.net.strings.some((message) => message.includes('"t":"part"')),
+      "the sender said it had run out rather than going quiet",
+    );
+
+    // Now a device with the whole file turns up.
+    whole.manager.seed(await stores[1].provider.list());
+    whole.manager.announce();
+    await waitFor(() => (incoming(carol)[0].sources?.length ?? 0) === 2, 5000);
+    assert.equal(carol.manager.resume(incoming(carol)[0].id), true);
+    await waitFor(() => carol.notices.some((notice) => notice.type === "received"), 8000);
+    const item = incoming(carol)[0];
+    assert.equal(item.peerId, whole.id, "from the one that has the rest");
+    assert.deepEqual(new Uint8Array(await item.blob!.arrayBuffer()), source);
+  });
+
+  it("hands over cleanly when a sender's have turns out to be a lie", async () => {
+    bus = new FakeSignaling();
+    const source = randomBytes(3 * MB);
+    const { holders, stores, digest } = await twoHolders(source, "liar.bin");
+    const [liar, honest] = holders;
+    stores[0].truncate(digest, 2 * MB);
+
+    // It claims the whole file: `have` is dropped on the way out.
+    bus.transform = (payload) =>
+      payload.type === "file-offer" && payload.have !== undefined
+        ? { ...payload, have: undefined }
+        : payload;
+
+    liar.manager.seed(await stores[0].provider.list());
+    const carol = bus.addPeer("peer-carol");
+    carol.manager.announce();
+    liar.manager.announce();
+    await waitFor(() => incoming(carol).length === 1, 5000);
+    assert.equal(incoming(carol)[0].sources![0].have, 3 * MB, "taken at its word");
+
+    honest.manager.seed(await stores[1].provider.list());
+    honest.manager.announce();
+    await waitFor(() => (incoming(carol)[0].sources?.length ?? 0) === 2, 5000);
+
+    assert.equal(carol.manager.request(incoming(carol)[0].id), true);
+    await waitFor(() => carol.notices.some((notice) => notice.type === "received"), 8000);
+    const item = incoming(carol)[0];
+    assert.equal(item.peerId, honest.id);
+    assert.deepEqual(new Uint8Array(await item.blob!.arrayBuffer()), source);
+  });
+
+  it("never sends a partial offer, or a part, to a peer that can't understand one", async () => {
+    bus = new FakeSignaling();
+    const source = randomBytes(3 * MB);
+    const { holders, stores, digest } = await twoHolders(source, "locked.bin");
+    const [partial] = holders;
+    stores[0].truncate(digest, 2 * MB);
+    partial.manager.seed(await stores[0].provider.list());
+
+    // Everything but `partial`: exactly what a peer on the previous version
+    // advertises.
+    const older = bus.addPeer("peer-older0", {
+      capabilities: ["blocks", "resume", "flow"],
+    });
+    const newer = bus.addPeer("peer-newer0");
+    older.manager.announce();
+    newer.manager.announce();
+    partial.manager.announce();
+
+    await waitFor(() => incoming(newer).length === 1, 5000);
+    assert.equal(incoming(older).length, 0, "a prefix is not offered to it at all");
+    assert.equal(
+      bus.signals.some(
+        (signal) => signal.to === "peer-older0" && signal.payload.type === "file-offer",
+      ),
+      false,
+    );
+    assert.equal(
+      bus.net.strings.some((message) => message.includes('"t":"part"')),
+      false,
+      "and it is never sent one",
+    );
+  });
+
+  it("offers what it has verified while the download is still arriving", async () => {
+    const store = memoryStore();
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00", { resume: store.provider, keepReceived: true });
+    const carol = bus.addPeer("peer-carol");
+    for (const peer of [alice, bob, carol]) {
+      peer.manager.announce();
+    }
+    const source = randomBytes(4 * MB);
+
+    alice.manager.offerFiles([new File([source], "early.bin")], { digest: true });
+    await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+    const digest = incoming(bob)[0].digest!;
+    bus.net.pauseAfterBytes = 2 * MB + 64 * 1024;
+    bob.manager.request(incoming(bob)[0].id);
+
+    // Two blocks in, bob is already passing the file on.
+    await waitFor(
+      () => bob.items.some((item) => item.direction === "outgoing" && (item.have ?? 0) >= MB),
+      5000,
+    );
+    const seed = bob.items.find((item) => item.direction === "outgoing")!;
+    assert.equal(seed.digest, digest);
+    assert.equal(seed.seeded, true);
+    assert.ok(seed.have! < source.byteLength);
+    await waitFor(
+      () =>
+        incoming(carol)[0]?.sources?.some(
+          (entry) => entry.peerId === bob.id && entry.have < source.byteLength,
+        ) === true,
+      5000,
+    );
+    assert.equal(incoming(carol).length, 1, "the same file, so one row with two sources");
+
+    // Finished: the partial offer becomes a complete one.
+    bus.net.setFlowing(true);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 8000);
+    await waitFor(
+      () =>
+        incoming(carol)[0]?.sources?.find((entry) => entry.peerId === bob.id)?.have ===
+        source.byteLength,
+      5000,
+    );
+    assert.equal(
+      bob.items.find((item) => item.direction === "outgoing")!.have,
+      undefined,
+      "no longer partial",
+    );
+  });
+
+  it("keeps its uplink to itself with seedWhileDownloading off", async () => {
+    const store = memoryStore();
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00", {
+      resume: store.provider,
+      keepReceived: true,
+      seedWhileDownloading: false,
+    });
+    const source = randomBytes(3 * MB);
+
+    alice.manager.offerFiles([new File([source], "quiet.bin")], { digest: true });
+    await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+    bob.manager.request(incoming(bob)[0].id);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 8000);
+    assert.equal(
+      bob.items.filter((item) => item.direction === "outgoing").length,
+      0,
+    );
+  });
+
+  it("doesn't list its own file when another device offers it back", async () => {
+    const store = memoryStore();
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00", { resume: store.provider, keepReceived: true });
+    alice.manager.announce();
+    bob.manager.announce();
+
+    alice.manager.offerFiles([new File([randomBytes(MB + 1)], "mine.bin")], { digest: true });
+    await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+    bob.manager.request(incoming(bob)[0].id);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 8000);
+    bob.manager.seed(await store.provider.list());
+    bob.manager.announce();
+    await waitFor(
+      () =>
+        bus.signals.some(
+          (signal) => signal.from === bob.id && signal.payload.type === "file-offer",
+        ),
+      5000,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(incoming(alice).length, 0, "the file it is sharing is not also offered to it");
+  });
+
+  describe("swarm edge cases", () => {
+    const outgoingOf = (peer: TestPeer) =>
+      peer.items.filter((item) => item.direction === "outgoing");
+    const partialOffers = (from: string, to?: string) =>
+      bus.signals.filter(
+        (signal) =>
+          signal.from === from &&
+          (to === undefined || signal.to === to) &&
+          signal.payload.type === "file-offer" &&
+          signal.payload.have !== undefined,
+      );
+
+    it("withdraws the partial offer of a cancelled download for good", async () => {
+      const store = memoryStore({ writeDelayMs: 5 });
+      bus = new FakeSignaling();
+      const alice = bus.addPeer("peer-alice");
+      const bob = bus.addPeer("peer-bob00", { resume: store.provider, keepReceived: true });
+      alice.manager.offerFiles([new File([randomBytes(12 * MB)], "big.bin")], { digest: true });
+      await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+      bob.manager.request(incoming(bob)[0].id);
+      await waitFor(() => outgoingOf(bob).length === 1, 5000);
+      await waitFor(() => incoming(bob)[0].bytes > 3 * MB, 5000);
+
+      bob.manager.cancel(incoming(bob)[0].id);
+      // Blocks already in flight land after the cancel; none may bring it back.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      assert.equal(incoming(bob)[0].status, "failed");
+      assert.deepEqual(outgoingOf(bob), [], "nothing left offering an aborted download");
+    });
+
+    it("keeps a partial offer withdrawn once it is stopped, as the download goes on", async () => {
+      const store = memoryStore({ writeDelayMs: 5 });
+      bus = new FakeSignaling();
+      const alice = bus.addPeer("peer-alice");
+      const bob = bus.addPeer("peer-bob00", { resume: store.provider, keepReceived: true });
+      alice.manager.offerFiles([new File([randomBytes(12 * MB)], "stop.bin")], { digest: true });
+      await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+      bob.manager.request(incoming(bob)[0].id);
+      await waitFor(() => outgoingOf(bob).length === 1, 5000);
+
+      bob.manager.revoke(outgoingOf(bob)[0].id);
+      await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 10_000);
+      assert.deepEqual(outgoingOf(bob), [], "not while it downloads, and not once it finishes");
+      assert.equal(bob.manager.seed(await store.provider.list()).length, 0, "nor from the store");
+    });
+
+    it("passes on a small file as soon as it has it", async () => {
+      const store = memoryStore();
+      bus = new FakeSignaling();
+      const alice = bus.addPeer("peer-alice");
+      const bob = bus.addPeer("peer-bob00", { resume: store.provider, keepReceived: true });
+      const source = randomBytes(500 * 1024);
+      alice.manager.offerFiles([new File([source], "photo.jpg")], { digest: true });
+      await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+      bob.manager.request(incoming(bob)[0].id);
+      await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 5000);
+
+      // Smaller than a block, so there was never a prefix to offer.
+      await waitFor(() => outgoingOf(bob).length === 1, 2000);
+      alice.manager.dispose();
+      bus.peers.delete("peer-alice");
+      const carol = bus.addPeer("peer-carol");
+      carol.manager.announce();
+      await waitFor(() => incoming(carol).length === 1, 5000);
+      carol.manager.request(incoming(carol)[0].id);
+      await waitFor(() => carol.notices.some((notice) => notice.type === "received"), 5000);
+      assert.deepEqual(new Uint8Array(await incoming(carol)[0].blob!.arrayBuffer()), source);
+    });
+
+    it("takes a source back when it returns under the same offer", async () => {
+      const store = memoryStore();
+      bus = new FakeSignaling();
+      const alice = bus.addPeer("peer-alice");
+      const bob = bus.addPeer("peer-bob00", { resume: store.provider, keepReceived: true });
+      // Carol is here first, so her row is keyed by alice's offer.
+      const carol = bus.addPeer("peer-carol");
+      alice.manager.offerFiles([new File([randomBytes(2 * MB)], "blip.bin")], { digest: true });
+      await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+      await waitFor(() => incoming(carol)[0]?.digest !== undefined);
+      assert.equal(incoming(carol)[0].peerId, "peer-alice");
+      bob.manager.request(incoming(bob)[0].id);
+      await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 5000);
+      bob.manager.announce();
+      await waitFor(() => (incoming(carol)[0]?.sources?.length ?? 0) === 2, 5000);
+
+      // Alice's socket blips: she is reported gone, then re-announces.
+      carol.manager.handleSignal("peer-alice", { type: "peer-left" });
+      await waitFor(() => incoming(carol)[0].sources!.length === 1);
+      alice.manager.announce();
+      await waitFor(() => incoming(carol)[0].sources!.length === 2, 2000);
+
+      // So bob leaving no longer takes the file away.
+      carol.manager.handleSignal("peer-bob00", { type: "peer-left" });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(incoming(carol)[0].status, "offered");
+    });
+
+    it("exchanges partial offers between devices whatever order they joined in", async () => {
+      bus = new FakeSignaling();
+      const stores = [memoryStore({ writeDelayMs: 20 }), memoryStore({ writeDelayMs: 20 })];
+      const alice = bus.addPeer("peer-alice");
+      alice.manager.announce();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const bob = bus.addPeer("peer-bob00", { resume: stores[0].provider, keepReceived: true });
+      bob.manager.announce();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const carol = bus.addPeer("peer-carol", { resume: stores[1].provider, keepReceived: true });
+      carol.manager.announce();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      alice.manager.offerFiles([new File([randomBytes(8 * MB)], "both.bin")], { digest: true });
+      await waitFor(() => incoming(bob)[0]?.digest !== undefined && incoming(carol)[0]?.digest !== undefined);
+      bob.manager.request(incoming(bob)[0].id);
+      carol.manager.request(incoming(carol)[0].id);
+
+      // Bob heard carol's hello; carol never heard bob's. Each must still
+      // learn the other can take a prefix.
+      await waitFor(() => partialOffers("peer-bob00", "peer-carol").length > 0, 5000);
+      await waitFor(() => partialOffers("peer-carol", "peer-bob00").length > 0, 5000);
+    });
+
+    it("re-announces a growing prefix on a time floor, not every few megabytes", async () => {
+      const store = memoryStore();
+      bus = new FakeSignaling();
+      const alice = bus.addPeer("peer-alice");
+      const bob = bus.addPeer("peer-bob00", { resume: store.provider, keepReceived: true });
+      const carol = bus.addPeer("peer-carol");
+      for (const peer of [alice, bob, carol]) {
+        peer.manager.announce();
+      }
+      alice.manager.offerFiles([new File([randomBytes(40 * MB)], "fast.bin")], { digest: true });
+      await waitFor(() => incoming(bob)[0]?.digest !== undefined, 5000);
+      const started = Date.now();
+      bob.manager.request(incoming(bob)[0].id);
+      await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 20_000);
+      const seconds = (Date.now() - started) / 1000;
+
+      // One on creation, then at most one per five seconds: every signal to
+      // every peer counts against the relay's rate limit.
+      const sent = partialOffers("peer-bob00", "peer-carol").length;
+      assert.ok(sent <= 1 + Math.floor(seconds / 5), `${sent} announces in ${seconds.toFixed(1)} s`);
+    });
+
+    it("reports what is written apart from what has merely arrived", async () => {
+      const store = memoryStore({ writeDelayMs: 40 });
+      bus = new FakeSignaling();
+      const alice = bus.addPeer("peer-alice");
+      const bob = bus.addPeer("peer-bob00", { resume: store.provider, keepReceived: true });
+      alice.manager.offerFiles([new File([randomBytes(6 * MB)], "slow.bin")], { digest: true });
+      await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+      bob.manager.request(incoming(bob)[0].id);
+
+      // A slow disk: the wire runs ahead of it, up to the flow window.
+      await waitFor(() => (incoming(bob)[0]?.verifiedBytes ?? 0) >= MB, 5000);
+      const midway = incoming(bob)[0];
+      assert.equal(midway.status, "transferring");
+      assert.ok(midway.verifiedBytes! <= midway.bytes, "written never leads arrived");
+      assert.equal(midway.verifiedBytes! % MB, 0, "a whole number of checked blocks");
+      await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 10_000);
+      assert.equal(incoming(bob)[0].verifiedBytes, undefined, "not reported once it is done");
+    });
+
+    it("fails a download whose sink hands back fewer bytes than arrived", async () => {
+      bus = new FakeSignaling();
+      const alice = bus.addPeer("peer-alice");
+      const bob = bus.addPeer("peer-bob00");
+      const source = randomBytes(2 * MB + 5);
+      alice.manager.offerFiles([new File([source], "short.bin")]);
+      await waitFor(() => incoming(bob).length === 1);
+      const kept: Uint8Array<ArrayBuffer>[] = [];
+      bob.manager.request(incoming(bob)[0].id, {
+        sink: {
+          write: (chunk) => void kept.push(chunk.slice()),
+          // A store that lost a part: whole on the way in, short on the way out.
+          close: () => new Blob(kept.slice(1) as BlobPart[]),
+          abort: () => {},
+        },
+      });
+      await waitFor(() => failure(bob) !== undefined || bob.notices.some((n) => n.type === "received"), 5000);
+      assert.equal(failure(bob)?.code, "write-error");
+    });
+
+    it("forgets what it stored of a file that turned out not to be the one offered", async () => {
+      const store = memoryStore();
+      bus = new FakeSignaling();
+      const alice = bus.addPeer("peer-alice");
+      const bob = bus.addPeer("peer-bob00", { resume: store.provider });
+      const wrong = "a".repeat(64);
+      bus.transform = (payload) =>
+        payload.type === "file-offer" && payload.digest ? { ...payload, digest: wrong } : payload;
+      alice.manager.offerFiles([new File([randomBytes(2 * MB)], "lie.bin")], { digest: true });
+      await waitFor(() => incoming(bob)[0]?.digest === wrong);
+      bob.manager.request(incoming(bob)[0].id);
+      await waitFor(() => failure(bob) !== undefined, 5000);
+      assert.equal(failure(bob)!.code, "digest-mismatch");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(store.states.has(wrong), false, "a reload must not resume from it");
+    });
+  });
+
+  it("keeps a row per peer when an offer carries no digest", async () => {
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00");
+    const carol = bus.addPeer("peer-carol");
+    const source = randomBytes(4096);
+
+    // Byte-for-byte the same file, but nothing on the wire says so: without a
+    // digest there is no way to know, so they stay two offers.
+    alice.manager.offerFiles([new File([source], "same.bin")]);
+    bob.manager.offerFiles([new File([source], "same.bin")]);
+    await waitFor(() => incoming(carol).length === 2);
+    assert.deepEqual(
+      incoming(carol).map((item) => item.sources?.length),
+      [1, 1],
+    );
+  });
+
+  it("promotes another source when the active one leaves", async () => {
+    const store = memoryStore();
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00", {
+      resume: store.provider,
+      keepReceived: true,
+    });
+    const source = randomBytes(MB + 1);
+
+    alice.manager.offerFiles([new File([source], "handoff.bin")], { digest: true });
+    await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+    bob.manager.request(incoming(bob)[0].id);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 5000);
+    bob.manager.seed(await store.provider.list());
+
+    const carol = bus.addPeer("peer-carol");
+    alice.manager.announce();
+    bob.manager.announce();
+    await waitFor(() => (incoming(carol)[0]?.sources?.length ?? 0) === 2, 5000);
+    const wasActive = incoming(carol)[0].peerId;
+
+    carol.manager.handleSignal(wasActive, { type: "peer-left" });
+    await waitFor(() => incoming(carol)[0]?.peerId !== wasActive, 5000);
+    assert.equal(incoming(carol)[0].status, "offered");
+    assert.equal(incoming(carol)[0].sources!.length, 1);
+
+    assert.equal(carol.manager.request(incoming(carol)[0].id), true);
+    await waitFor(() => carol.notices.some((notice) => notice.type === "received"), 5000);
+    assert.deepEqual(new Uint8Array(await incoming(carol)[0].blob!.arrayBuffer()), source);
+  });
+
+  it("cancels cleanly when the store no longer has a file it is seeding", async () => {
+    const store = memoryStore();
+    bus = new FakeSignaling();
+    const alice = bus.addPeer("peer-alice");
+    const bob = bus.addPeer("peer-bob00", {
+      resume: store.provider,
+      keepReceived: true,
+    });
+    const source = randomBytes(MB + 3);
+
+    alice.manager.offerFiles([new File([source], "evicted.bin")], { digest: true });
+    await waitFor(() => incoming(bob)[0]?.digest !== undefined);
+    bob.manager.request(incoming(bob)[0].id);
+    await waitFor(() => bob.notices.some((notice) => notice.type === "received"), 5000);
+
+    alice.manager.dispose();
+    bus.peers.delete("peer-alice");
+    bob.manager.seed(await store.provider.list());
+
+    const carol = bus.addPeer("peer-carol");
+    bob.manager.announce();
+    await waitFor(() => incoming(carol).length === 1, 5000);
+    // Evicted between the offer and the request: the download must end, not hang.
+    store.files.clear();
+    store.states.clear();
+    assert.equal(carol.manager.request(incoming(carol)[0].id), true);
+    await waitFor(() => failure(carol) !== undefined, 5000);
+    assert.equal(failure(carol)!.code, "remote-canceled");
+  });
 
   it("picks a download back up after a reload, from what the store had committed", async () => {
     const store = memoryStore();
@@ -1168,6 +2000,35 @@ describe("verified blocks and resume", () => {
     assert.equal(resume(incoming(bob)[0].id), true);
     await waitFor(() => incoming(bob)[0].status === "done", 5_000);
     assert.deepEqual(new Uint8Array(await incoming(bob)[0].blob!.arrayBuffer()), source);
+  });
+});
+
+describe("capability announcements", () => {
+  function hellos(from: string) {
+    return bus.signals.filter(
+      (signal) => signal.from === from && signal.payload.type === "hello",
+    );
+  }
+
+  it("says what it supports when it announces, and a v1 peer says nothing", async () => {
+    bus = new FakeSignaling();
+    const modern = bus.addPeer("peer-alice");
+    const old = bus.addPeer("peer-bob00", { capabilities: [] });
+
+    modern.manager.announce();
+    old.manager.announce();
+    await waitFor(() => hellos("peer-alice").length + hellos("peer-bob00").length === 2);
+
+    const [hello] = hellos("peer-alice");
+    assert.deepEqual(
+      (hello.payload as { caps?: string[] }).caps,
+      ["blocks", "resume", "flow", "partial"],
+    );
+    assert.equal(
+      "caps" in (hellos("peer-bob00")[0].payload as object),
+      false,
+      "a v1 peer announces exactly as it always did",
+    );
   });
 });
 

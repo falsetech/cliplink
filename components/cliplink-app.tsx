@@ -15,6 +15,7 @@ import { useTheme } from "next-themes";
 import { ClipEditor } from "@/components/cliplink/clip-editor";
 import { CommandPalette } from "@/components/cliplink/command-palette";
 import { FileTransfers } from "@/components/cliplink/file-transfers";
+import { PlayerSheet } from "@/components/cliplink/player-sheet";
 import { HistoryList } from "@/components/cliplink/history-list";
 import { IconTheme } from "@/components/cliplink/icons";
 import { KeyPrompt } from "@/components/cliplink/key-prompt";
@@ -150,6 +151,8 @@ export default function CliplinkApp({
   const [joinCode, setJoinCode] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [showQrSheet, setShowQrSheet] = useState(false);
+  /** The file the player is open on, by id so it follows the live item. */
+  const [playingId, setPlayingId] = useState<string | null>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
   const [confirmingLeave, setConfirmingLeave] = useState(false);
@@ -204,15 +207,6 @@ export default function CliplinkApp({
     timer: number;
   } | null>(null);
 
-  const files = useFileTransfer({
-    peerId,
-    // The transport's own method, not a wrapper: useFileTransfer memoises on
-    // this identity, and a fresh closure each render resets the manager in a
-    // loop.
-    sendSignal: transport.sendSignal,
-    pushToast,
-  });
-
   const presence = usePresence({ sendSignal: transport.sendSignal });
 
   const room = useRoomSession({
@@ -224,6 +218,21 @@ export default function CliplinkApp({
       presence.handleSignal(from, payload);
       files.handleSignal(from, payload);
     },
+  });
+
+  // After the room, which it needs the code of: every reference to `files`
+  // above is inside a callback the room invokes later, never during this
+  // render.
+  const files = useFileTransfer({
+    peerId,
+    // The transport's own method, not a wrapper: useFileTransfer memoises on
+    // this identity, and a fresh closure each render resets the manager in a
+    // loop.
+    sendSignal: transport.sendSignal,
+    pushToast,
+    // What a received file is tagged with, so the room it belongs to is what
+    // decides whether this device keeps seeding it.
+    roomCode: room.roomCode,
   });
 
   const editor = useClipEditor({
@@ -480,6 +489,7 @@ export default function CliplinkApp({
     setShowQrSheet(false);
     setShowShortcuts(false);
     setShowPalette(false);
+    setPlayingId(null);
   }
 
   /**
@@ -838,7 +848,10 @@ export default function CliplinkApp({
   const latestIncoming = room.history.find(
     (clip) => clip.direction === "incoming",
   );
-  const sheetOpen = showQrSheet || showShortcuts || showPalette;
+  // The player counts: its media keys (space, arrows) must not reach the
+  // room's single-letter shortcuts.
+  const sheetOpen =
+    showQrSheet || showShortcuts || showPalette || playingId !== null;
   const expiresIn = useRoomExpiry(room.expiresAt);
   const status = room.locked
     ? { label: "Locked", tone: "warn" as const }
@@ -1037,6 +1050,7 @@ export default function CliplinkApp({
                   onSave={files.save}
                   onRevoke={files.revoke}
                   onDismiss={files.dismiss}
+                  onPlay={setPlayingId}
                 />
 
                 <HistoryList
@@ -1070,6 +1084,15 @@ export default function CliplinkApp({
         mismatch={keyPrompt?.mismatch ?? false}
         onClose={() => setKeyPrompt(null)}
         onSubmit={(value) => void submitRoomKey(value)}
+      />
+
+      <PlayerSheet
+        item={
+          playingId === null
+            ? null
+            : (files.items.find((item) => item.id === playingId) ?? null)
+        }
+        onClose={() => setPlayingId(null)}
       />
 
       <ShortcutsSheet

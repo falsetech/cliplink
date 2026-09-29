@@ -60,6 +60,36 @@ function isSavedRoom(value: unknown): value is SavedRoom {
 }
 
 /**
+ * The origin half of a saved room's identity.
+ *
+ * A room code is six characters and unique only to the server that issued it,
+ * so the same code can name one room on a dev server and a different one in
+ * production. Matching on the code alone offered a key from one for the other,
+ * which fails as a mismatch at best and is a key from the wrong room at worst.
+ *
+ * The path is kept, not just the origin: a deployment may live under one, and
+ * two paths on a host are two servers as far as a room code is concerned.
+ * `new URL` already lowercases the scheme and host and drops a default port.
+ */
+function identity(baseUrl: string) {
+  try {
+    const url = new URL(baseUrl);
+    return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    // Not a URL at all. Comparing what was given keeps an unparseable baseUrl
+    // matching itself rather than matching everything.
+    return baseUrl.replace(/\/+$/, "");
+  }
+}
+
+function isSameRoom(room: SavedRoom, code: string, baseUrl: string) {
+  return (
+    room.code.toUpperCase() === code.toUpperCase() &&
+    identity(room.baseUrl) === identity(baseUrl)
+  );
+}
+
+/**
  * Returns an empty list rather than throwing when the file is missing or
  * unreadable. Not finding a convenience is not a failure worth stopping for,
  * and the room can always be named on the command line instead.
@@ -76,13 +106,14 @@ export async function readSavedRooms(
   }
 }
 
+/** The room saved under this code *on this server*, or null. */
 export async function findSavedRoom(
   code: string,
+  baseUrl: string,
   env: Env = process.env,
 ): Promise<SavedRoom | null> {
-  const wanted = code.toUpperCase();
   const rooms = await readSavedRooms(env);
-  return rooms.find((room) => room.code.toUpperCase() === wanted) ?? null;
+  return rooms.find((room) => isSameRoom(room, code, baseUrl)) ?? null;
 }
 
 async function writeRooms(rooms: SavedRoom[], env: Env): Promise<string> {
@@ -97,7 +128,13 @@ async function writeRooms(rooms: SavedRoom[], env: Env): Promise<string> {
   return path;
 }
 
-/** Newest first, one entry per room code. */
+/**
+ * Newest first, one entry per room code *per server*.
+ *
+ * Deduplicating on the code alone would let a room saved against a dev server
+ * evict the production room of the same code, so the two could not both be
+ * held even once the lookup told them apart.
+ */
 export async function saveRoom(
   room: SavedRoom,
   env: Env = process.env,
@@ -105,9 +142,7 @@ export async function saveRoom(
   const existing = await readSavedRooms(env);
   const rooms = [
     room,
-    ...existing.filter(
-      (saved) => saved.code.toUpperCase() !== room.code.toUpperCase(),
-    ),
+    ...existing.filter((saved) => !isSameRoom(saved, room.code, room.baseUrl)),
   ].slice(0, MAX_SAVED_ROOMS);
 
   return writeRooms(rooms, env);
@@ -127,23 +162,29 @@ export function isExpired(room: SavedRoom, now = Date.now()) {
   return now >= (room.expiresAt ?? room.savedAt + MAX_ROOM_TTL_SECONDS * 1000);
 }
 
-/** The forgotten room, or null when no room was saved under that code. */
+/**
+ * The rooms forgotten, which is empty when the code was not saved.
+ *
+ * Every entry under the code goes, across servers. `rooms --forget` is given a
+ * code and nothing else, and someone clearing a code out has no reason to want
+ * a copy of it left behind on another origin they did not think to name.
+ */
 export async function forgetRoom(
   code: string,
   env: Env = process.env,
-): Promise<SavedRoom | null> {
+): Promise<SavedRoom[]> {
   const wanted = code.toUpperCase();
   const rooms = await readSavedRooms(env);
-  const room = rooms.find((saved) => saved.code.toUpperCase() === wanted);
-  if (!room) {
-    return null;
+  const forgotten = rooms.filter((saved) => saved.code.toUpperCase() === wanted);
+  if (forgotten.length === 0) {
+    return [];
   }
 
   await writeRooms(
     rooms.filter((saved) => saved.code.toUpperCase() !== wanted),
     env,
   );
-  return room;
+  return forgotten;
 }
 
 /**

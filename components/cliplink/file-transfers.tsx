@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { MAX_ZIP_BYTES } from "@/lib/cliplink/constants";
+import { canStream } from "@/lib/cliplink/file-sink";
 import {
   formatBytes,
   formatDuration,
@@ -14,6 +15,7 @@ import { cn } from "@/lib/utils";
 
 import { DirectionLabel } from "./direction-label";
 import { IconChevron } from "./icons";
+import { readyToPlay } from "./player-sheet";
 import { rowClass } from "./ui";
 import { sharedFolder, type FileListItem } from "./use-file-transfer";
 
@@ -27,6 +29,8 @@ type FileTransfersProps = {
   onSave: (id: string, name: string) => void;
   onRevoke: (id: string) => void;
   onDismiss: (id: string) => void;
+  /** Opens the player on an audio or video file, while it arrives or after. */
+  onPlay: (id: string) => void;
 };
 
 /**
@@ -49,11 +53,23 @@ function RowAction({
 
 const OFFLINE_HINT = "File transfer needs a live connection.";
 
+function passingOnText(sending: number) {
+  return sending > 0 ? `Sending to ${sending}` : "Passing it on";
+}
+
 function statusText(item: FileListItem) {
   const size = formatBytes(item.size);
 
   if (item.direction === "outgoing") {
-    const parts = [size, "Available while this tab is open"];
+    // A seeded row is a file this device received and is passing on, not one
+    // the person here chose to share — worth saying, since "Stop Sharing"
+    // means something different for each.
+    const parts = [
+      size,
+      item.seeded
+        ? "Received here · passing it on"
+        : "Available while this tab is open",
+    ];
     if (item.activeTransfers > 0) {
       parts.push(`Sending to ${item.activeTransfers}`);
     }
@@ -74,16 +90,26 @@ function statusText(item: FileListItem) {
       if (item.etaMs !== undefined) {
         parts.push(`${formatDuration(item.etaMs)} left`);
       }
+      if (item.passingOn !== undefined) {
+        parts.push(passingOnText(item.passingOn));
+      }
       return parts.join(" · ");
     }
-    case "done":
-      return item.savedToSink ? `${size} · Saved to disk` : `${size} · Saved`;
+    case "done": {
+      const saved = item.savedToSink ? `${size} · Saved to disk` : `${size} · Saved`;
+      return item.passingOn === undefined ? saved : `${saved} · ${passingOnText(item.passingOn)}`;
+    }
     case "failed":
       return item.error ?? "Transfer failed.";
     case "revoked":
       return `${size} · No longer available`;
-    default:
-      return size;
+    default: {
+      // Several devices in the room hold this file. Which one it comes from is
+      // the app's business, not the person's; how many there are is what tells
+      // them the download will survive one of them leaving.
+      const devices = item.sources?.length ?? 1;
+      return devices > 1 ? `${size} · On ${devices} devices` : size;
+    }
   }
 }
 
@@ -97,6 +123,22 @@ function downloadLabel(item: FileListItem) {
   return "Retry";
 }
 
+/**
+ * Whether Play belongs on this row. Only where the bytes are in the seed store
+ * — a file saved into a picked folder is not somewhere the player can reach —
+ * and only once the first part has landed, since that is the first thing
+ * there is to play.
+ */
+function playable(item: FileListItem) {
+  if (!canStream(item) || item.savedToSink) {
+    return false;
+  }
+  if (item.direction === "outgoing") {
+    return item.seeded === true && readyToPlay(item);
+  }
+  return (item.status === "transferring" || item.status === "done") && readyToPlay(item);
+}
+
 function FileActions({
   item,
   canTransfer,
@@ -105,16 +147,29 @@ function FileActions({
   onSave,
   onRevoke,
   onDismiss,
+  onPlay,
 }: Omit<FileTransfersProps, "items" | "onDownloadAll" | "onDownloadZip"> & {
   item: FileListItem;
 }) {
+  const play = playable(item) ? (
+    <RowAction onClick={() => onPlay(item.id)}>Play</RowAction>
+  ) : null;
+
   if (item.direction === "outgoing") {
     return (
-      <RowAction
-        onClick={() => onRevoke(item.id)}
-      >
-        Stop Sharing
-      </RowAction>
+      <>
+        {play}
+        {/* A file this device received and is passing on can be saved from
+            here: after a reload, this is the only row it has. */}
+        {item.seeded && item.have === undefined ? (
+          <RowAction onClick={() => onSave(item.id, item.name)}>Save</RowAction>
+        ) : null}
+        <RowAction
+          onClick={() => onRevoke(item.id)}
+        >
+          Stop Sharing
+        </RowAction>
+      </>
     );
   }
 
@@ -143,11 +198,14 @@ function FileActions({
     case "connecting":
     case "transferring":
       return (
-        <RowAction
-          onClick={() => onCancel(item.id)}
-        >
-          Cancel
-        </RowAction>
+        <>
+          {play}
+          <RowAction
+            onClick={() => onCancel(item.id)}
+          >
+            Cancel
+          </RowAction>
+        </>
       );
     case "done":
       if (item.savedToSink) {
@@ -160,11 +218,14 @@ function FileActions({
         );
       }
       return (
-        <RowAction
-          onClick={() => onSave(item.id, item.name)}
-        >
-          Save Again
-        </RowAction>
+        <>
+          {play}
+          <RowAction
+            onClick={() => onSave(item.id, item.name)}
+          >
+            Save Again
+          </RowAction>
+        </>
       );
     default:
       return (
@@ -442,7 +503,7 @@ export function FileTransfers({ items, ...handlers }: FileTransfersProps) {
       <div className="flex items-baseline justify-between gap-3 px-4">
         <h2 className="m-0 text-lg font-semibold text-foreground">Files</h2>
         <span className="text-xs text-muted-foreground">
-          Peer-to-peer · never stored
+          Peer-to-peer · never on the server
         </span>
       </div>
       <ul className="m-0 flex list-none flex-col gap-2 p-0">
