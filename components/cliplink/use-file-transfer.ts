@@ -38,8 +38,11 @@ import { createZip } from "@/lib/cliplink/zip";
 export type FileListItem = FileItem & {
   /** Object URL for a completed incoming file (download + image thumbnail). */
   objectUrl?: string;
-  /** This incoming file is also being passed on to the rest of the room. */
-  passingOn?: boolean;
+  /**
+   * This incoming file is also being passed on to the rest of the room, to
+   * this many devices right now: the folded offer's `activeTransfers`.
+   */
+  passingOn?: number;
 };
 
 type ToastTone = "success" | "info" | "error";
@@ -184,10 +187,10 @@ export function useFileTransfer({
       const downloading = new Set(
         next.filter((item) => item.direction === "incoming").map((item) => item.digest),
       );
-      const passing = new Set(
+      const passing = new Map(
         next
           .filter((item) => item.direction === "outgoing" && item.seeded)
-          .map((item) => item.digest),
+          .map((item) => [item.digest, item.activeTransfers]),
       );
       setItems(
         next
@@ -205,7 +208,7 @@ export function useFileTransfer({
             objectUrl: urls.get(item.id),
             ...(item.direction === "incoming" &&
               item.digest !== undefined &&
-              passing.has(item.digest) && { passingOn: true }),
+              passing.has(item.digest) && { passingOn: passing.get(item.digest) }),
           })),
       );
     }

@@ -53,6 +53,10 @@ function RowAction({
 
 const OFFLINE_HINT = "File transfer needs a live connection.";
 
+function passingOnText(sending: number) {
+  return sending > 0 ? `Sending to ${sending}` : "Passing it on";
+}
+
 function statusText(item: FileListItem) {
   const size = formatBytes(item.size);
 
@@ -86,14 +90,14 @@ function statusText(item: FileListItem) {
       if (item.etaMs !== undefined) {
         parts.push(`${formatDuration(item.etaMs)} left`);
       }
-      if (item.passingOn) {
-        parts.push("Passing it on");
+      if (item.passingOn !== undefined) {
+        parts.push(passingOnText(item.passingOn));
       }
       return parts.join(" · ");
     }
     case "done": {
       const saved = item.savedToSink ? `${size} · Saved to disk` : `${size} · Saved`;
-      return item.passingOn ? `${saved} · Passing it on` : saved;
+      return item.passingOn === undefined ? saved : `${saved} · ${passingOnText(item.passingOn)}`;
     }
     case "failed":
       return item.error ?? "Transfer failed.";
