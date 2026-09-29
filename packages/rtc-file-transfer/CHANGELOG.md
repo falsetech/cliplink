@@ -9,6 +9,10 @@
 - **`ResumeProvider` gains optional `list`, `read` and `keep`**, implemented by `opfsResume`, which also takes a `tag`. `ResumeKey` may carry `mime` and `path`. A file stored with a different `segmentBytes` now starts over rather than resuming into misaligned parts.
 - **`prefixRange`** in `/sinks`: the Range arithmetic for playing a file while it downloads.
 - A device no longer lists an incoming offer for content it is itself offering.
+- **`FileItem.verifiedBytes`**: how much of a download has been verified and written, which on a slow disk trails `bytes`. Cleared when the download ends.
+- A growing prefix is re-announced at most every 5 s, and a finished download is offered on even when no prefix was. A content item that is withdrawn stays withdrawn for the session.
+- A peer's capabilities are learned from its offers and requests as well as its `hello`, and a source that returns under the same offer is taken back.
+- A download whose finished file is shorter than its size, or fails its digest, fails and forgets what was stored of it.
 - New exports: `ItemSource`, `StoredFile`, `StoredMeta`, `prefixRange`, `PrefixRange`.
 
 All additive. Every new field is optional and every new behaviour is negotiated, so a 1.2 peer — or a v1 one — interoperates exactly as before.
