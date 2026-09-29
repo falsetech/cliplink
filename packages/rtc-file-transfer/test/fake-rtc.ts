@@ -228,7 +228,13 @@ export class FakePeerConnection extends EventTarget {
 type PeerOptions = Partial<
   Pick<
     FileTransferOptions,
-    "limits" | "createId" | "iceServers" | "capabilities" | "resume" | "keepReceived"
+    | "limits"
+    | "createId"
+    | "iceServers"
+    | "capabilities"
+    | "resume"
+    | "keepReceived"
+    | "seedWhileDownloading"
   >
 > & {
   /** Called with the config of every peer connection this peer opens. */

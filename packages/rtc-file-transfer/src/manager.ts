@@ -344,6 +344,13 @@ export type FileTransferOptions = {
    * decide.
    */
   keepReceived?: boolean;
+  /**
+   * Offer a download's verified prefix to the rest of the room while it is
+   * still arriving, so the second device to get a file starts serving the
+   * third before it has finished. On by default where `partial` is
+   * advertised; turn it off to keep this device's uplink to itself.
+   */
+  seedWhileDownloading?: boolean;
 };
 
 type Timer = ReturnType<typeof setTimeout>;
@@ -420,6 +427,18 @@ type Transfer = {
 const DONE_MESSAGE = "done";
 /** Receiver → sender, in blocks+flow mode: how many bytes are safely committed. */
 const CREDIT_PREFIX = '{"t":"credit"';
+/**
+ * Sender → receiver, in `partial` mode: this is everything I hold. Not a
+ * failure — the receiver keeps what arrived and continues at another peer.
+ */
+const PART_PREFIX = '{"t":"part"';
+/**
+ * How many times a download may change source before it gives up. A room of
+ * peers that all claim to have the file and none of which can serve it would
+ * otherwise spin; the count is cleared whenever bytes actually arrive, so a
+ * long download that switches often is not punished for it.
+ */
+const MAX_HANDOFF_ATTEMPTS = 8;
 const ACK_MESSAGE = "ack";
 const PROGRESS_EMIT_MS = 100;
 const RECEIVER_CLOSE_GRACE_MS = 5_000;
@@ -516,6 +535,27 @@ function parseCreditMessage(raw: string) {
       message !== null &&
       "t" in message &&
       message.t === "credit" &&
+      "b" in message &&
+      Number.isSafeInteger(message.b) &&
+      (message.b as number) >= 0
+    ) {
+      return message.b as number;
+    }
+  } catch {
+    // not JSON
+  }
+  return null;
+}
+
+/** The in-band end of a partial send: `{"t":"part","b":2097152}`. */
+function parsePartMessage(raw: string) {
+  try {
+    const message: unknown = JSON.parse(raw);
+    if (
+      typeof message === "object" &&
+      message !== null &&
+      "t" in message &&
+      message.t === "part" &&
       "b" in message &&
       Number.isSafeInteger(message.b) &&
       (message.b as number) >= 0
@@ -652,6 +692,7 @@ export function createFileTransferManager(
     options.createPeerConnection ?? ((config) => new RTCPeerConnection(config));
   const resumeStore = options.resume;
   const keepReceived = options.keepReceived === true;
+  const seedWhileDownloading = options.seedWhileDownloading !== false;
   const advertised = new Set(
     options.capabilities ?? (hasSubtleCrypto() ? CAPABILITIES : []),
   );
@@ -680,6 +721,12 @@ export function createFileTransferManager(
    * before it has anything to send them.
    */
   const peerCaps = new Map<PeerId, Capability[]>();
+  /**
+   * Per download: how many times it has changed source, and which peers let it
+   * down. Reset whenever bytes actually arrive, so only a run of sources that
+   * all fail without progress can exhaust it.
+   */
+  const handoffs = new Map<string, { attempts: number; bytes: number; tried: Set<PeerId> }>();
   let emitTimer: Timer | null = null;
   let disposed = false;
 
@@ -749,7 +796,45 @@ export function createFileTransferManager(
       ...(item.path && { path: item.path }),
       ...(item.batchId && { batchId: item.batchId }),
       ...(item.digest && { digest: item.digest }),
+      ...(isPartial(item) && { have: item.have }),
     };
+  }
+
+  /** An outgoing offer this device can only serve part of. */
+  function isPartial(item: FileItem) {
+    return (
+      item.direction === "outgoing" &&
+      item.have !== undefined &&
+      item.have > 0 &&
+      item.have < item.size
+    );
+  }
+
+  /**
+   * Announces an offer — to one peer, or to the room.
+   *
+   * A complete offer is broadcast, as it always has been. A partial one is
+   * sent only to peers that advertised `partial`, because a peer that doesn't
+   * understand `have` would read it as a whole file and get a `part` it has no
+   * way to act on. `hello` is where those peers become known, so this runs
+   * again for each one that arrives.
+   */
+  function announceOffer(item: FileItem, to?: PeerId) {
+    if (!isPartial(item) || !selfCaps.includes("partial")) {
+      sendSignal(toOffer(item), to);
+      return;
+    }
+    if (to !== undefined) {
+      if (peerCaps.get(to)?.includes("partial")) {
+        sendSignal(toOffer(item), to);
+      }
+      return;
+    }
+    for (const [peer, caps] of peerCaps) {
+      if (caps.includes("partial")) {
+        sendSignal(toOffer(item), peer);
+      }
+    }
   }
 
   function hasCap(cap: Capability, remote: Capability[] | undefined) {
@@ -771,6 +856,7 @@ export function createFileTransferManager(
 
   /** Forget a download and abort its sink once queued work has drained. */
   function releaseDownload(itemId: string) {
+    handoffs.delete(itemId);
     const download = downloads.get(itemId);
     if (!download) {
       return;
@@ -1034,6 +1120,18 @@ export function createFileTransferManager(
       if (item.status === "done") {
         return;
       }
+      // Another device in the room may have the rest. Trying it is not a
+      // retry of something that failed — nothing is wrong with the bytes so
+      // far — so nothing is reported and the item stays in flight.
+      if (
+        retain &&
+        code !== "paused" &&
+        downloads.get(item.id) === download &&
+        !download.settled &&
+        handoff(item, download, transfer.remotePeer)
+      ) {
+        return;
+      }
       if (retain && downloads.get(item.id) === download && !download.settled) {
         item.resumableBytes = download.verifiedBytes;
       } else {
@@ -1226,9 +1324,18 @@ export function createFileTransferManager(
           offset += chunk.byteLength;
         }
       }
-      if (!(await sendChunk(transfer, channel, DONE_MESSAGE))) {
+      // Everything this device holds, which is not everything there is: the
+      // receiver keeps it and picks the rest up from another peer.
+      const short = item !== undefined && source.size < item.size;
+      const end = short
+        ? JSON.stringify({ t: "part", b: source.size })
+        : DONE_MESSAGE;
+      if (!(await sendChunk(transfer, channel, end))) {
         return;
       }
+      // After a prefix there is no ack to wait for: the receiver closes once it
+      // has kept what arrived. Closing from this side instead could discard
+      // blocks still queued behind the message, so the wait is the same.
       transfer.doneSent = true;
       // Only the receiver's ack says the file was saved; its commit may take a
       // while, so wait for it instead of treating the quiet as a stall. Reusing
@@ -1277,6 +1384,68 @@ export function createFileTransferManager(
       onCredit: null,
     };
     return { ...base, pc: createPeerConnection(base) };
+  }
+
+  function handoffState(itemId: string, bytes: number) {
+    const state = handoffs.get(itemId);
+    if (!state || bytes > state.bytes) {
+      const fresh = { attempts: 0, bytes, tried: new Set<PeerId>() };
+      handoffs.set(itemId, fresh);
+      return fresh;
+    }
+    return state;
+  }
+
+  /**
+   * Which peer to pull this file from, starting at `from`.
+   *
+   * Downloads are strictly sequential, so what a peer has is always a prefix
+   * and a single number decides whether it is any use: a source that holds no
+   * more than this device already does has nothing to give. Among the rest, one
+   * that hasn't already let this download down is preferred, and then whichever
+   * holds the most — which for complete sources is all of them.
+   */
+  function pickSource(item: FileItem, from: number): ItemSource | null {
+    const usable = (item.sources ?? []).filter(
+      (source) =>
+        source.have > from &&
+        // Continuing part way through needs both the hashes and the offset.
+        (from === 0 ||
+          (hasCap("blocks", source.caps) && hasCap("resume", source.caps))),
+    );
+    if (usable.length === 0) {
+      return null;
+    }
+    const tried = handoffs.get(item.id)?.tried;
+    const fresh = tried ? usable.filter((source) => !tried.has(source.peerId)) : usable;
+    const pool = fresh.length > 0 ? fresh : usable;
+    return pool.reduce((best, source) => (source.have > best.have ? source : best));
+  }
+
+  /**
+   * Continues a download at another peer, keeping the sink and every verified
+   * block. False when there is nowhere to continue, which is the caller's cue
+   * to settle the item as a failure.
+   *
+   * The sink, the verified watermark and the block hashes are all
+   * source-agnostic: every block was checked against a hash that came from the
+   * same digest, so who sent it makes no difference to what is on disk.
+   */
+  function handoff(item: FileItem, download: Download, failed?: PeerId): boolean {
+    const state = handoffState(item.id, download.verifiedBytes);
+    if (failed !== undefined) {
+      state.tried.add(failed);
+    }
+    if (state.attempts >= MAX_HANDOFF_ATTEMPTS) {
+      return false;
+    }
+    const next = pickSource(item, download.verifiedBytes);
+    if (!next || next.peerId === failed) {
+      return false;
+    }
+    state.attempts += 1;
+    promoteSource(item, next);
+    return beginReceive(item, download, true);
   }
 
   /**
@@ -1488,7 +1657,7 @@ export function createFileTransferManager(
     if (disposed || items.get(item.id) !== item) {
       return;
     }
-    sendSignal(toOffer(item));
+    announceOffer(item);
     emit();
   }
 
@@ -1507,7 +1676,9 @@ export function createFileTransferManager(
     }
     try {
       const blob = await resumeStore.read(key);
-      return blob && blob.size >= key.size ? blob : null;
+      // Whatever is left, which may be a prefix: how much of the file that is
+      // is the caller's to check against the offer.
+      return blob && blob.size > 0 ? blob : null;
     } catch {
       return null;
     }
@@ -1546,6 +1717,13 @@ export function createFileTransferManager(
 
     const blocks = hasCap("blocks", request.caps);
     const flow = blocks && hasCap("flow", request.caps);
+    // Serving less than the whole file is only honest if the receiver knows to
+    // expect it; otherwise there is nothing to say so with, and a short stream
+    // would read as a truncated file.
+    if (source.size < item.size && !(blocks && hasCap("partial", request.caps))) {
+      gone();
+      return;
+    }
     const offset = blocks && selfCaps.includes("resume") ? (request.offset ?? 0) : 0;
     if (offset > source.size || (offset % BLOCK_BYTES !== 0 && offset !== source.size)) {
       sendSignal(
@@ -1754,6 +1932,7 @@ export function createFileTransferManager(
     }
     download.settled = true;
     downloads.delete(item.id);
+    handoffs.delete(item.id);
     if (transfer.closed || items.get(item.id) !== item) {
       return;
     }
@@ -1783,6 +1962,24 @@ export function createFileTransferManager(
     onNotice({ type: "received", item: { ...item } });
   }
 
+  /**
+   * The sender has served everything it holds. Record what that turned out to
+   * be and end this transfer; `failTransfer`'s resumable path keeps the sink
+   * and hands the download to another peer. `stalled` is only the fallback for
+   * when no peer has any more of it than this device does — in which case the
+   * prefix is kept and the person can try again later.
+   */
+  function handlePart(transfer: Transfer, item: FileItem, at: number) {
+    const source = item.sources?.find(
+      (candidate) =>
+        candidate.peerId === transfer.remotePeer && candidate.offerId === item.offerId,
+    );
+    if (source) {
+      source.have = Math.max(0, Math.min(at, item.size));
+    }
+    failTransfer(transfer, "stalled", false);
+  }
+
   function attachReceiveChannel(transfer: Transfer, channel: RTCDataChannel) {
     transfer.channel = channel;
     channel.binaryType = "arraybuffer";
@@ -1794,6 +1991,13 @@ export function createFileTransferManager(
       }
 
       if (typeof event.data === "string") {
+        if (transfer.blocks && event.data.startsWith(PART_PREFIX)) {
+          const at = parsePartMessage(event.data);
+          if (at !== null) {
+            handlePart(transfer, item, at);
+          }
+          return;
+        }
         if (transfer.blocks && event.data.startsWith("{")) {
           receiveBlockMessage(transfer, item, event.data);
           return;
@@ -1930,7 +2134,7 @@ export function createFileTransferManager(
       );
       if (source) {
         source.caps = offer.caps;
-        source.have = offer.size;
+        source.have = offer.have ?? offer.size;
       }
       if (existing.peerId === from && existing.offerId === offer.offerId) {
         existing.caps = offer.caps;
@@ -1959,7 +2163,9 @@ export function createFileTransferManager(
         {
           peerId: from,
           offerId: offer.offerId,
-          have: offer.size,
+          // A partial offer says how much; a complete one says nothing and
+          // means all of it.
+          have: offer.have ?? offer.size,
           ...(offer.caps && { caps: offer.caps }),
         },
       ];
@@ -1988,7 +2194,9 @@ export function createFileTransferManager(
         {
           peerId: from,
           offerId: offer.offerId,
-          have: offer.size,
+          // A partial offer says how much; a complete one says nothing and
+          // means all of it.
+          have: offer.have ?? offer.size,
           ...(offer.caps && { caps: offer.caps }),
         },
       ],
@@ -2065,7 +2273,7 @@ export function createFileTransferManager(
           peerCaps.delete(from);
         }
         for (const item of outgoingItems()) {
-          sendSignal(toOffer(item), from);
+          announceOffer(item, from);
         }
         return;
 
@@ -2173,6 +2381,10 @@ export function createFileTransferManager(
       return false;
     }
 
+    // Asked for by hand: whichever peers let an earlier attempt down get
+    // another chance, and the handoff budget starts again.
+    handoffs.delete(id);
+
     const retained = downloads.get(id);
     const resuming =
       retained !== undefined && hasCap("blocks", item.caps) && hasCap("resume", item.caps);
@@ -2181,7 +2393,15 @@ export function createFileTransferManager(
       if (options.sink) {
         abortSink(options.sink);
       }
+      const next = pickSource(item, retained.verifiedBytes);
+      if (next) {
+        promoteSource(item, next);
+      }
       return beginReceive(item, retained, true);
+    }
+    const start = pickSource(item, 0);
+    if (start) {
+      promoteSource(item, start);
     }
 
     // Nothing in memory, but the store may still have this file from an
@@ -2230,7 +2450,7 @@ export function createFileTransferManager(
         return;
       }
       for (const item of outgoingItems()) {
-        sendSignal(toOffer(item));
+        announceOffer(item);
       }
     },
 
@@ -2278,7 +2498,7 @@ export function createFileTransferManager(
         };
         outgoingFiles.set(offerId, file);
         addItem(item);
-        sendSignal(toOffer(item));
+        announceOffer(item);
         offered += 1;
         if (options.digest && selfCaps.includes("blocks")) {
           item.hashedBytes = 0;
@@ -2311,8 +2531,10 @@ export function createFileTransferManager(
           !HASH_PATTERN.test(key.digest) ||
           key.size <= 0 ||
           key.size > limits.maxFileBytes ||
-          // Phase one serves whole files only: a prefix needs a way to say so.
-          state.verifiedBytes !== key.size ||
+          state.verifiedBytes <= 0 ||
+          state.verifiedBytes > key.size ||
+          // A prefix can only be offered where there is a way to say so.
+          (state.verifiedBytes < key.size && !selfCaps.includes("partial")) ||
           already.has(key.digest)
         ) {
           continue;
@@ -2337,13 +2559,14 @@ export function createFileTransferManager(
           activeTransfers: 0,
           completedTransfers: 0,
           seeded: true,
+          ...(state.verifiedBytes < key.size && { have: state.verifiedBytes }),
         };
         outgoingSources.set(offerId, { ...key, size: key.size });
         // Already verified block by block on the way in, so a peer pulling
         // this file is never made to wait for it to be hashed again.
         offerBlockHashes.set(offerId, state.blockHashes.slice());
         addItem(item);
-        sendSignal(toOffer(item));
+        announceOffer(item);
         offered.push({ ...item });
       }
       if (offered.length > 0) {
@@ -2453,6 +2676,7 @@ export function createFileTransferManager(
       outgoingSources.clear();
       offerBlockHashes.clear();
       peerCaps.clear();
+      handoffs.clear();
       emit();
       disposed = true;
     },
