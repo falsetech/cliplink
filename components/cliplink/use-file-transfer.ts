@@ -25,6 +25,7 @@ import {
   createDirectorySink,
   createSeedStore,
   heldFiles,
+  holdSeedTag,
   pickDiskSink,
   pickDirectory,
   readHeld,
@@ -361,6 +362,8 @@ export function useFileTransfer({
     /** Runs once per room: sweep what is stale, then offer what is left. */
     async function startSeeding() {
       const room = roomRef.current;
+      // Before sweeping, so no other tab's sweep takes this room's files.
+      holdSeedTag(room);
       await sweepSeedStore(room);
       if (!room || roomRef.current !== room || !managerRef.current) {
         return;
@@ -609,7 +612,9 @@ export function useFileTransfer({
         urls.clear();
         // After the object URLs: those are what still pointed at these files.
         releaseDiskFiles();
-        // Leaving the room ends this device's reason to hold its files.
+        // Leaving the room ends this tab's reason to hold its files — unless
+        // another tab is still in it.
+        holdSeedTag(null);
         void sweepSeedStore(null);
         setItems([]);
       },

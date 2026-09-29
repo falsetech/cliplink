@@ -13,7 +13,7 @@ import {
   pickFileSink,
 } from "@thebkht/rtc-file-transfer/sinks";
 
-import { ROOM_TTL_SECONDS, SEED_BUDGET_BYTES } from "./constants";
+import { SEED_BUDGET_BYTES } from "./constants";
 import { createRandomId } from "./session";
 
 export { canPickDirectory, pickDirectory } from "@thebkht/rtc-file-transfer/sinks";
@@ -175,6 +175,50 @@ export async function readHeld(key: {
 }
 
 /**
+ * Every tab of this origin shares the store, and a tab only knows its own
+ * room. So each tab holds a shared Web Lock named for the room it is in, and a
+ * sweep leaves alone any room another tab holds — the same way the per-tab
+ * download folders above are kept from each other.
+ */
+const SEED_LOCK_PREFIX = "cliplink-seed:";
+let heldTag: { tag: string; release: () => void } | null = null;
+
+/** Marks this tab as using the files tagged `tag`, or none, until changed. */
+export function holdSeedTag(tag: string | null) {
+  if (heldTag?.tag === tag) {
+    return;
+  }
+  heldTag?.release();
+  heldTag = null;
+  if (!tag || typeof navigator === "undefined" || !navigator.locks) {
+    return;
+  }
+  let release = () => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  void navigator.locks
+    .request(`${SEED_LOCK_PREFIX}${tag}`, { mode: "shared" }, () => released)
+    .catch(() => {});
+  heldTag = { tag, release };
+}
+
+/** Rooms some tab of this origin is in right now, this one included. */
+async function tagsInUse() {
+  try {
+    const { held = [] } = await navigator.locks.query();
+    return new Set(
+      held
+        .map((lock) => lock.name ?? "")
+        .filter((name) => name.startsWith(SEED_LOCK_PREFIX))
+        .map((name) => name.slice(SEED_LOCK_PREFIX.length)),
+    );
+  } catch {
+    return new Set<string>();
+  }
+}
+
+/**
  * The ceiling on what is kept, lowered on a device that hasn't the room for
  * it. `quota` is the whole origin's allowance, so half of it leaves as much
  * again for downloads in flight, zips being built, and everything else.
@@ -208,10 +252,12 @@ export async function heldFiles(tag: string): Promise<StoredFile[]> {
 }
 
 /**
- * Drops what is no longer worth keeping: files from another room, files older
- * than a room lives, and — oldest first — whatever is over budget. Called on
- * joining and on leaving, and every failure is silent: not seeding is a
- * smaller problem than a broken app.
+ * Drops what is no longer worth keeping: files from a room no tab is in, and —
+ * oldest first — whatever of this room's is over budget. A room some tab is
+ * in is alive however old its files are, and is that tab's to budget; a room
+ * no tab is in is gone however new they are, which also covers a tab that was
+ * closed without leaving. Called on joining and on leaving, and every failure
+ * is silent: not seeding is a smaller problem than a broken app.
  */
 export async function sweepSeedStore(keepTag: string | null) {
   if (!hasOpfs()) {
@@ -221,16 +267,21 @@ export async function sweepSeedStore(keepTag: string | null) {
     const store = sweepStore();
     const held = (await store.list?.()) ?? [];
     const budget = await seedBudget();
-    const oldest = Date.now() - ROOM_TTL_SECONDS * 1000;
+    const inUse = await tagsInUse();
+    const live = (tag: string | undefined) =>
+      tag !== undefined && (tag === keepTag || inUse.has(tag));
 
     // Newest first, so the budget is spent on what is most likely wanted.
     const keep = held
-      .filter((entry) => entry.meta.tag === keepTag && entry.meta.ts > oldest)
+      .filter((entry) => live(entry.meta.tag))
       .sort((left, right) => right.meta.ts - left.meta.ts);
 
     let kept = 0;
     const drop = held.filter((entry) => !keep.includes(entry));
     for (const entry of keep) {
+      if (entry.meta.tag !== keepTag) {
+        continue;
+      }
       kept += entry.state.verifiedBytes;
       if (kept > budget) {
         drop.push(entry);
