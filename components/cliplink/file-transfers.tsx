@@ -494,7 +494,7 @@ export function FileTransfers({ items, ...handlers }: FileTransfersProps) {
       <div className="flex items-baseline justify-between gap-3 px-4">
         <h2 className="m-0 text-lg font-semibold text-foreground">Files</h2>
         <span className="text-xs text-muted-foreground">
-          Peer-to-peer · never stored
+          Peer-to-peer · never on the server
         </span>
       </div>
       <ul className="m-0 flex list-none flex-col gap-2 p-0">
