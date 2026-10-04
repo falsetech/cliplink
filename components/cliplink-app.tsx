@@ -489,7 +489,18 @@ export default function CliplinkApp({
     // It stays a fragment and never becomes a path segment or a query
     // parameter: those are sent to the server, and this must not be.
     const fragment = code ? roomKeyFragment(encodedKey) : "";
-    router.replace(code ? `/room/${code}${fragment}` : "/", { scroll: false });
+    const path = code ? `/room/${code}` : "/";
+    // Already on the page, so only the fragment can differ, and the router is
+    // kept out of it. It remembers the page it loaded with its fragment still
+    // attached and appends the one it is handed to that, which turns `#k=…`
+    // into `#k=…#k=…` — a key that no longer parses, and so a room that opens
+    // locked on the next reload. Setting it through the History API, which
+    // the router follows, leaves the address as written.
+    if (window.location.pathname === path) {
+      window.history.replaceState(null, "", `${path}${fragment}`);
+      return;
+    }
+    router.replace(`${path}${fragment}`, { scroll: false });
   }
 
   function toggleTheme() {
