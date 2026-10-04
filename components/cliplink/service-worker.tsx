@@ -3,9 +3,10 @@
 import { useEffect } from "react";
 
 /**
- * Registers public/sw.js, which receives the OS share sheet. Nothing else
- * depends on it, so a browser without service workers, or a failed
- * registration, just means CLIPLINK can't be a share target there.
+ * Registers public/sw.js, which receives the OS share sheet and shows clip
+ * notifications. Neither is load-bearing: a browser without service workers,
+ * or a failed registration, means CLIPLINK can't be a share target there, and
+ * notifications fall back to the page's own.
  */
 export function ServiceWorker() {
   useEffect(() => {

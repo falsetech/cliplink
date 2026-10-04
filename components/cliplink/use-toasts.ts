@@ -7,7 +7,14 @@ export type ToastTone = "success" | "info" | "error";
 export type PushToast = (
   message: string,
   tone?: ToastTone,
-  options?: { unprompted?: boolean },
+  options?: {
+    unprompted?: boolean;
+    /** Stays until dismissed, for a message that is waiting on the user. */
+    persistent?: boolean;
+    action?: { label: string; onClick: () => void };
+    /** Names the toast, so it replaces its predecessor and can be dismissed. */
+    id?: string;
+  },
 ) => void;
 
 const DISMISS_AFTER_MS = 2500;
@@ -19,10 +26,15 @@ const DISMISS_AFTER_MS = 2500;
  * `unprompted` is still accepted: Sonner's own entrance is soft enough for
  * both kinds of arrival, so it no longer changes the motion.
  */
-const push: PushToast = (message, tone = "info") => {
+const push: PushToast = (message, tone = "info", options) => {
+  const lifetime = options?.persistent
+    ? { duration: Infinity, closeButton: true }
+    : { duration: DISMISS_AFTER_MS };
+  const settings = { ...lifetime, action: options?.action, id: options?.id };
+
   switch (tone) {
     case "success":
-      toast.success(message, { duration: DISMISS_AFTER_MS });
+      toast.success(message, settings);
       return;
     case "error":
       // Errors stay until acknowledged. A failed send that vanishes in 2.5s
@@ -30,9 +42,13 @@ const push: PushToast = (message, tone = "info") => {
       toast.error(message, { duration: Infinity, closeButton: true });
       return;
     default:
-      toast.info(message, { duration: DISMISS_AFTER_MS });
+      toast.info(message, settings);
   }
 };
+
+export function dismissToast(id: string) {
+  toast.dismiss(id);
+}
 
 export function useToasts() {
   return { push };

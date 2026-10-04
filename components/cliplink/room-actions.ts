@@ -55,6 +55,9 @@ export type RoomActionContext = {
   copyLatestIncoming: () => void;
   focusEditor: () => void;
   toggleTheme: () => void;
+  /** Whether this device is told about clips that arrive in a hidden tab. */
+  notificationsOn: boolean;
+  toggleNotifications: () => void;
   openShortcuts: () => void;
   openPalette: () => void;
 };
@@ -219,6 +222,17 @@ export function createRoomActions(ctx: RoomActionContext): RoomAction[] {
       keywords: ["dark", "light", "appearance"],
       enabled: true,
       perform: ctx.toggleTheme,
+    },
+    {
+      id: "notifications",
+      label: ctx.notificationsOn
+        ? "Turn off notifications"
+        : "Turn on notifications",
+      group: "View",
+      chord: parseChord("n"),
+      keywords: ["notify", "alert", "background", "hidden tab", "badge"],
+      enabled: ctx.joined,
+      perform: ctx.toggleNotifications,
     },
     {
       id: "shortcuts",
