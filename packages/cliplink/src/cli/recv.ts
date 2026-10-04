@@ -1,4 +1,4 @@
-import { POLL_INTERVAL_MS, type Clip } from "../index.ts";
+import { POLL_INTERVAL_MS, UNDECRYPTABLE_TEXT, type Clip } from "../index.ts";
 
 import type { ParsedArgs } from "./args.ts";
 import { createRandomPeerId } from "./identity.ts";
@@ -49,8 +49,11 @@ export async function recv(
       for (const clip of fresh) {
         report.data(args.json ? line(clip) : clip.text);
         printed += 1;
-        if (clip.burn) {
+        if (clip.burn && clip.text !== UNDECRYPTABLE_TEXT) {
           // Printing it is reading it, and reading a one-time clip spends it.
+          // One that would not open was not read, so it is left for a device
+          // that can: anyone with the room code can post a clip marked
+          // one-time, and must not thereby get this to delete things.
           burning.push(
             session.transport.eraseClips(session.code, { ids: [clip.id] }).then(
               () => {},

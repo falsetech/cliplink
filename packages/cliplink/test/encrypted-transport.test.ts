@@ -481,6 +481,34 @@ describe("createEncryptedTransport", () => {
       assert.deepEqual([...response.ids].sort(), [1, 2]);
     });
 
+    it("discards a look that was under way when the room changed", async () => {
+      const { transport, state, wire } = await joined();
+      const connect = wire.connect;
+      let release = () => {};
+      wire.connect = () =>
+        new Promise((resolve) => {
+          release = () => resolve(connect(ROOM));
+        });
+      await serverNow(state, [3], 9);
+      state.pollGen = 9;
+      const stale = transport.pollClips(ROOM, 3);
+      await settle();
+
+      // Another room, joined while the first room's look is still out.
+      transport.setRoomKey(OTHER_ROOM, key);
+      release();
+      const response = await stale;
+      wire.connect = connect;
+
+      assert.equal("removed" in response, false);
+      // The other room's count is untouched by the first room's answer.
+      state.pollGen = 1;
+      await serverNow(state, [], 1);
+      state.connects = 0;
+      await transport.pollClips(OTHER_ROOM, 0);
+      assert.equal(state.connects, 0, "a first count is taken as given, not chased");
+    });
+
     it("starts over from a fresh connect", async () => {
       const { transport, state } = await joined();
       state.handlers = null;

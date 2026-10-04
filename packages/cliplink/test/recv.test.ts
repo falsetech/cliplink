@@ -408,6 +408,20 @@ describe("recv", () => {
       ]);
     });
 
+    it("does not delete a one-time clip it could not open, since it did not read it", async () => {
+      const { data, result } = await start(["--one"]);
+
+      FakeSocket.last.ready();
+      FakeSocket.last.deliver({
+        type: "clip",
+        clip: { id: 4, text: "v1.bm90LWEtcmVhbC1jbGlw", senderId: "anyone-at-all", ts: 1, burn: true },
+      });
+
+      assert.equal(await result, 0);
+      assert.equal(data.length, 1);
+      assert.deepEqual(server.erases, []);
+    });
+
     it("leaves an ordinary clip where it is", async () => {
       const { data } = await start();
 

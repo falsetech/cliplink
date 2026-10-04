@@ -123,6 +123,10 @@ export function useRoomSession({
   const erasableRef = useRef(false);
   // One-time clips this device has read but not yet managed to delete.
   const pendingBurnsRef = useRef<Set<number>>(new Set());
+  // One-time clips this device has read. A clip can be delivered twice when a
+  // poll and the socket overlap, and the second copy must not bring the row
+  // back or be read again.
+  const spentRef = useRef<Set<number>>(new Set());
 
   const missed = useMissedClips({ pushToast });
 
@@ -284,7 +288,8 @@ export function useRoomSession({
     );
   }
 
-  function applyIncomingClips(added: SessionClip[]) {
+  function applyIncomingClips(delivered: SessionClip[]) {
+    const added = delivered.filter((clip) => !spentRef.current.has(clip.id));
     if (added.length === 0) {
       return;
     }
@@ -401,6 +406,7 @@ export function useRoomSession({
     // Read, so gone from this list whatever the network does next. What the
     // toast says about every other device waits for the server's answer.
     setHistory((current) => current.filter((entry) => entry.id !== clip.id));
+    spentRef.current.add(clip.id);
     pendingBurnsRef.current.add(clip.id);
     if (await retryPendingBurns()) {
       said(
@@ -593,6 +599,12 @@ export function useRoomSession({
           lastSeenId,
         );
       }
+      // A deletion that landed between the snapshot and this poll is reported
+      // here and nowhere else: the transport has now accounted for it.
+      const removed = new Set(bootstrapDelta.removed ?? []);
+      if (removed.size > 0) {
+        nextHistory = nextHistory.filter((clip) => !removed.has(clip.id));
+      }
     } catch {
       // Ignore bootstrap delta errors and fall back to the initial snapshot.
     }
@@ -723,6 +735,7 @@ export function useRoomSession({
     setErasable(false);
     erasableRef.current = false;
     pendingBurnsRef.current.clear();
+    spentRef.current.clear();
     setExpiresAt(null);
     setStatus("offline");
     setEnteringIds(new Set());
