@@ -46,6 +46,12 @@ import { usePresence } from "@/components/cliplink/use-presence";
 import { useShortcuts } from "@/components/cliplink/use-shortcuts";
 import { useToasts } from "@/components/cliplink/use-toasts";
 
+import {
+  disableNotifications,
+  enableNotifications,
+  notificationsEnabled,
+  subscribeToNotifications,
+} from "@/lib/cliplink/attention";
 import { writeClipboard } from "@/lib/cliplink/clipboard";
 import { MAX_CLIP_CHARS, MAX_FILES_PER_SHARE } from "@/lib/cliplink/constants";
 import {
@@ -190,6 +196,11 @@ export default function CliplinkApp({
 
   const { resolvedTheme, setTheme } = useTheme();
   const { push: pushToast } = useToasts();
+  const notificationsOn = useSyncExternalStore(
+    subscribeToNotifications,
+    notificationsEnabled,
+    () => false,
+  );
 
   const senderIdRef = useRef("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -483,6 +494,26 @@ export default function CliplinkApp({
 
   function toggleTheme() {
     setTheme(resolvedTheme === "light" ? "dark" : "light");
+  }
+
+  async function toggleNotifications() {
+    if (notificationsOn) {
+      disableNotifications();
+      pushToast("Notifications off.", "info");
+      return;
+    }
+
+    const result = await enableNotifications();
+    if (result === "on") {
+      pushToast("You'll be notified of clips that arrive in the background.", "success");
+    } else if (result === "denied") {
+      pushToast(
+        "Notifications are blocked. Allow them in the browser's site settings.",
+        "info",
+      );
+    } else {
+      pushToast("This browser does not support notifications.", "info");
+    }
   }
 
   function closeOverlays() {
@@ -887,6 +918,8 @@ export default function CliplinkApp({
       void copyHistoryItem(latestIncoming?.text ?? ""),
     focusEditor: () => editor.focus(),
     toggleTheme,
+    notificationsOn,
+    toggleNotifications: () => void toggleNotifications(),
     openShortcuts: () => setShowShortcuts(true),
     openPalette: () => setShowPalette(true),
   });

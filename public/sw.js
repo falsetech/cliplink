@@ -9,6 +9,9 @@
  *   are kept in the origin's private file system, and this answers a media
  *   element's Range requests out of whatever has been verified so far.
  *
+ * It also hears a click on a clip notification, and brings the room's tab
+ * forward.
+ *
  * Every other request passes straight through. There is deliberately no
  * offline cache: a stale copy of a realtime app is worse than an honest
  * network error.
@@ -38,6 +41,34 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method === "GET" && url.pathname.startsWith(STREAM_PATH)) {
     event.respondWith(streamStored(event.request, url.pathname.slice(STREAM_PATH.length)));
   }
+});
+
+/**
+ * A clip notification was clicked. It carries the room's path and nothing
+ * else — never the key — so a tab that is still open is matched by path and
+ * focused, and one that was closed reopens the room locked.
+ */
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const path = event.notification.data?.path;
+  event.waitUntil(
+    (async () => {
+      const tabs = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      });
+      const tab = tabs.find((client) => new URL(client.url).pathname === path);
+      if (tab) {
+        await tab.focus();
+        return;
+      }
+      // Another CLIPLINK tab is not this room, so it is not brought forward
+      // in its place.
+      if (typeof path === "string" && /^\/(?!\/)/.test(path)) {
+        await self.clients.openWindow(path);
+      }
+    })(),
+  );
 });
 
 // -----------------------------------------------------------------------------

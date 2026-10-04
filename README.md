@@ -37,6 +37,7 @@ Nothing persists. Rooms expire on a timer, history is session-local, and files n
 - **Encrypted both ways** — private rooms generate an AES-GCM-256 key in the browser that never reaches the server, carried in the URL fragment or pasted in; open rooms derive their key from the code, so the code alone opens them. Private rooms joined without a key open locked and unlock in place
 - **Realtime text sync** — WebSocket transport, with HTTP polling as an automatic fallback
 - **Auto-copy on receive** — incoming clips land on your clipboard, with a toast and a subtle flash
+- **Nothing missed in a background tab** — a browser will not let a hidden tab write the clipboard, so a clip that arrives there is counted in the tab title and on the installed app's icon, and copied when you come back — or, where the browser wants a click first, offered with a Copy button. System notifications are opt-in, and say which room, never what the clip holds. They come from the open tab rather than a push server, so they last as long as the browser keeps the tab alive
 - **Session history** — last 20 clips with direction, timestamp, one-click copy, expand-in-place, and an Open action on link clips
 - **Keyboard-first** — every room action has a binding; `?` shows the cheat sheet and `⌘K`/`Ctrl+K` opens the command palette
 - **Know the state** — device count, a live expiry countdown, and a badge that says when you have dropped to the polling fallback
@@ -72,6 +73,7 @@ These work anywhere. The rest need focus to be outside the compose box:
 | `A` | Attach files |
 | `F` | Attach a folder |
 | `T` | Toggle the theme |
+| `N` | Turn notifications on or off |
 | `X` | Leave the room |
 | `1`–`9` | Copy that history row |
 | `Esc` | Close a sheet, cancel a pending Leave, or leave the editor |
