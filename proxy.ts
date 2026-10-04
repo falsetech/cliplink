@@ -1,5 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+/**
+ * A plain `host[:port]`. The Host header is the caller's to choose, and one
+ * carrying a `;` would end the directive it is written into and start another.
+ */
+const HOST_PATTERN = /^[a-z0-9.-]+(?::\d+)?$/i;
+
 type PolicyInput = {
   nonce: string;
   /** The host the page was requested on, which is where its room socket lives. */
@@ -33,10 +39,10 @@ function contentSecurityPolicy({ nonce, host, secure, dev }: PolicyInput): strin
     "media-src 'self' blob:",
     // Named as well as 'self': older Safari does not take 'self' to cover the
     // WebSocket scheme of the same host.
-    `connect-src 'self' ${secure ? "wss" : "ws"}://${host}`,
+    `connect-src 'self'${HOST_PATTERN.test(host) ? ` ${secure ? "wss" : "ws"}://${host}` : ""}`,
+    // Stated, where the manifest and fonts are left to default-src: a worker
+    // falls back to script-src first, and 'strict-dynamic' there drops 'self'.
     "worker-src 'self'",
-    "manifest-src 'self'",
-    "font-src 'self'",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -52,7 +58,9 @@ export function proxy(request: NextRequest) {
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
   const policy = contentSecurityPolicy({
     nonce,
-    host: request.nextUrl.host,
+    // The header, not `nextUrl.host`: outside Vercel that is the address the
+    // server is bound to, which is not where the browser opens the socket.
+    host: request.headers.get("host") ?? "",
     secure: request.nextUrl.protocol === "https:",
     dev: process.env.NODE_ENV === "development",
   });
@@ -76,7 +84,7 @@ export const config = {
       // render no document for a policy to protect. `/room/…` is a page, so
       // only `rooms` as a whole segment is skipped.
       source:
-        "/((?!rooms(?:/|$)|share-target|_next/static|_next/image|_vercel|.*\\.[\\w]+$).*)",
+        "/((?!rooms(?:/|$)|share-target|_next/static|_next/image|_vercel|.*\\.\\w+$).*)",
       missing: [
         { type: "header", key: "next-router-prefetch" },
         { type: "header", key: "purpose", value: "prefetch" },

@@ -72,7 +72,7 @@ These are accepted and documented rather than countered:
 - A malicious server can replay or reorder signaling messages.
 - WebRTC shows each peer the other's IP address.
 - Open rooms are not end-to-end encrypted.
-- The Content-Security-Policy allows inline styles, because a dependency injects a stylesheet that cannot carry the nonce.
+- The Content-Security-Policy allows inline styles: a dependency injects a stylesheet that cannot carry the nonce, and several components set `style` attributes, which a nonce does not cover.
 
 ## Verification
 
