@@ -14,6 +14,7 @@ import type {
 } from "@/lib/cliplink/types";
 import {
   validateClipCiphertext,
+  validateClipMeta,
   validateRoomCode,
   validateSenderId,
 } from "@/lib/cliplink/validation";
@@ -83,11 +84,18 @@ export async function POST(
     return errorResponse(400, "invalid_clip_text", validatedText.message);
   }
 
+  const validatedMeta = validateClipMeta(payload.meta);
+  if (!validatedMeta.ok) {
+    return errorResponse(400, "invalid_clip_meta", validatedMeta.message);
+  }
+
   const clip = {
     id: createClipId(),
     text: validatedText.text,
     senderId: payload.senderId,
     ts: Date.now(),
+    // Sealed like the text. Stored and relayed, never opened here.
+    ...(validatedMeta.meta ? { meta: validatedMeta.meta } : {}),
   };
 
   let room;

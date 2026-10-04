@@ -46,6 +46,7 @@ export type RoomActionContext = {
   enterRoomKey: () => void;
   shareRoom: () => void;
   openQr: () => void;
+  openDevices: () => void;
   leave: () => void;
   attach: () => void;
   attachFolder: () => void;
@@ -184,6 +185,15 @@ export function createRoomActions(ctx: RoomActionContext): RoomAction[] {
       keywords: ["scan", "phone", "camera"],
       enabled: ctx.joined,
       perform: ctx.openQr,
+    },
+    {
+      id: "devices",
+      label: "Devices in this room",
+      group: "Room",
+      chord: parseChord("d"),
+      keywords: ["name", "rename", "who", "presence", "peers"],
+      enabled: ctx.joined,
+      perform: ctx.openDevices,
     },
     {
       id: "leave",

@@ -2,11 +2,26 @@ import type { FileSignal, PeerId } from "@thebkht/rtc-file-transfer";
 
 export type RoomCode = string;
 
+/** Who sent a clip, as the sender described itself. Only ever sealed on the wire. */
+export type ClipMeta = {
+  name: string;
+  /**
+   * A mark the sending browser can recompute and nobody else can forge, so its
+   * own clips read as sent after a reload. Opaque to every other reader, and
+   * absent from senders that keep no identity, like the CLI.
+   */
+  device?: string;
+};
+
 export type Clip = {
   id: number;
   text: string;
   senderId: string;
   ts: number;
+  /** `from`, sealed. What the server stores and relays; it cannot open it. */
+  meta?: string;
+  /** Opened from `meta` by the encrypted transport. Never on the wire. */
+  from?: ClipMeta;
 };
 
 export type Room = {
@@ -72,6 +87,10 @@ export type GetRoomResponse = {
 export type CreateClipRequest = {
   text: string;
   senderId: string;
+  /** `from`, sealed by the encrypted transport. */
+  meta?: string;
+  /** Plaintext side only: the encrypted transport seals it into `meta`. */
+  from?: ClipMeta;
 };
 
 export type CreateClipResponse = {
@@ -120,7 +139,12 @@ export type TransportOptions = {
 export type SignalPayload =
   | FileSignal
   /** Reply to `hello`, so a peer with no open offers still announces itself. */
-  | { type: "hello-ack" };
+  | { type: "hello-ack" }
+  /**
+   * A peer's display name. `peer` repeats the sender's id inside the seal,
+   * because the `from` beside a signal is the server's word and this is not.
+   */
+  | { type: "presence"; name: string; peer: PeerId };
 
 /**
  * What the server relays. Sealed envelopes carry an encrypted `SignalPayload`

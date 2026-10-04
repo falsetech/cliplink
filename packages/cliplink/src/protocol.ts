@@ -25,6 +25,17 @@ export const MAX_CLIP_CIPHERTEXT_CHARS = 110_000;
 export const ROOM_KEY_CHARS = 52;
 /** Characters in the key's fingerprint — 8 bytes at 5 bits per character. */
 export const ROOM_KEY_CHECK_CHARS = 13;
+/**
+ * A device's display name. Short enough to sit beside a history row, and a
+ * bound a peer's name has to meet before it is shown.
+ */
+export const MAX_DEVICE_NAME_CHARS = 40;
+/**
+ * Sealed clip metadata — a name and a device id. Sized from the worst case
+ * (MAX_DEVICE_NAME_CHARS of 4-byte UTF-8, a 64-character id, JSON, nonce and
+ * tag, base64'd) with room to grow.
+ */
+export const MAX_CLIP_META_CHARS = 1024;
 // Sealing inflates a signal by base64's 4/3 plus a nonce and a tag, and an SDP
 // offer already approached the old 16 KB ceiling. Left there, the socket's
 // maxPayload would have dropped large offers with no error to see.

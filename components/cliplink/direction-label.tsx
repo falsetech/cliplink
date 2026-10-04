@@ -18,7 +18,7 @@ export function DirectionLabel({
   ts: number;
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-2.5 md:w-28 md:shrink-0">
+    <div className="flex min-w-0 items-center gap-2.5 md:w-40 md:shrink-0">
       <span
         aria-hidden="true"
         className={cn(
@@ -35,7 +35,10 @@ export function DirectionLabel({
         )}
       </span>
       <span className="flex min-w-0 flex-col">
-        <span className="text-xs font-medium text-foreground">{label}</span>
+        {/* Wide enough for "Received"; a device's name may not fit. */}
+        <span className="truncate text-xs font-medium text-foreground">
+          {label}
+        </span>
         <span className="text-xs text-muted-foreground tabular-nums">
           {formatHistoryTime(ts)}
         </span>

@@ -2,6 +2,7 @@
 export type {
   ApiError,
   Clip,
+  ClipMeta,
   CreateClipRequest,
   CreateClipResponse,
   CreateRoomRequest,

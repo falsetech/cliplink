@@ -134,6 +134,8 @@ function line(clip: Clip) {
     text: clip.text,
     senderId: clip.senderId,
     ts: clip.ts,
+    // Absent for a sender that gave no name, as older clients do not.
+    name: clip.from?.name,
   });
 }
 

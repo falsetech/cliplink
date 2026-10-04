@@ -430,7 +430,8 @@ export function useFileTransfer({
 
     return {
       handleSignal(from: PeerId, payload: SignalPayload) {
-        if (payload.type !== "hello-ack") {
+        // Presence traffic is the room's, not the file manager's.
+        if (payload.type !== "hello-ack" && payload.type !== "presence") {
           getManager().handleSignal(from, payload);
         }
       },

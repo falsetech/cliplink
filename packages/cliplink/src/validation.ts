@@ -3,7 +3,9 @@ import { parseFileSignal } from "@thebkht/rtc-file-transfer";
 import {
   CIPHERTEXT_PATTERN,
   MAX_CLIP_CHARS,
+  MAX_CLIP_META_CHARS,
   MAX_CLIP_CIPHERTEXT_CHARS,
+  MAX_DEVICE_NAME_CHARS,
   MAX_FILE_BYTES,
   MAX_FILE_NAME_CHARS,
   MAX_ROOM_TTL_SECONDS,
@@ -13,7 +15,7 @@ import {
   ROOM_TTL_SECONDS,
 } from "./protocol.ts";
 import { isValidRoomCode } from "./room-code.ts";
-import type { SignalPayload, WsClientMessage } from "./types.ts";
+import type { ClipMeta, SignalPayload, WsClientMessage } from "./types.ts";
 
 const MAX_ID_CHARS = 64;
 const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -43,6 +45,56 @@ export function validateClipCiphertext(text: unknown) {
   }
 
   return { ok: true as const, text };
+}
+
+/**
+ * Sealed like the text, so the same is true of it: shape and size are all the
+ * server can vouch for. Absent is fine — older clients send none.
+ */
+export function validateClipMeta(input: unknown) {
+  if (input === undefined || input === null) {
+    return { ok: true as const, meta: undefined };
+  }
+
+  if (
+    typeof input !== "string" ||
+    input.length > MAX_CLIP_META_CHARS ||
+    !CIPHERTEXT_PATTERN.test(input)
+  ) {
+    return { ok: false as const, message: "Invalid clip metadata." };
+  }
+
+  return { ok: true as const, meta: input };
+}
+
+/**
+ * A name as it may be shown: one line, no control characters, bounded. Null
+ * when nothing is left, so a caller falls back rather than showing a blank.
+ */
+export function normalizeDeviceName(input: unknown) {
+  if (typeof input !== "string") {
+    return null;
+  }
+
+  const name = [...input.replace(/[\p{Cc}\p{Cf}\s]+/gu, " ").trim()]
+    .slice(0, MAX_DEVICE_NAME_CHARS)
+    .join("")
+    .trim();
+  return name || null;
+}
+
+/** Rebuilds opened metadata from the fields we recognise, or rejects it. */
+export function parseClipMeta(input: unknown): ClipMeta | null {
+  if (!isRecord(input)) {
+    return null;
+  }
+
+  const name = normalizeDeviceName(input.name);
+  if (!name) {
+    return null;
+  }
+
+  return validatePeerId(input.device) ? { name, device: input.device } : { name };
 }
 
 /** Plaintext rules, for the client that can still see the plaintext. */
@@ -147,6 +199,12 @@ function isBoundedString(value: unknown, max: number): value is string {
 export function parseSignalPayload(input: unknown): SignalPayload | null {
   if (isRecord(input) && input.type === "hello-ack") {
     return { type: "hello-ack" };
+  }
+  if (isRecord(input) && input.type === "presence") {
+    const name = normalizeDeviceName(input.name);
+    return name && validatePeerId(input.peer)
+      ? { type: "presence", name, peer: input.peer }
+      : null;
   }
   return parseFileSignal(input, {
     maxFileBytes: MAX_FILE_BYTES,

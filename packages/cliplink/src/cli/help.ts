@@ -17,6 +17,8 @@ OPTIONS
       --open              Room with no key of its own: the code opens it.
       --save              Remember this room and key in the config file.
       --ttl <seconds>     Lifetime of a room being created (3600–86400).
+      --name <name>       send: the name the clip is shown under.
+                          Default is this machine's hostname.
   -1, --one               recv: print the next clip, then exit.
       --json              recv: print each clip as a JSON object.
       --last <n>          recv: replay the last n clips before listening.

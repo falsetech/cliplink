@@ -38,6 +38,8 @@ export type RoomKey = {
   encoded: string;
   clipKey: CryptoKey;
   signalKey: CryptoKey;
+  /** Seals what travels beside a clip's text: who sent it. */
+  metaKey: CryptoKey;
   /**
    * A short fingerprint the server may hold. Derived through the same one-way
    * KDF as the subkeys, so it reveals nothing, and it lets a joiner be told
@@ -122,7 +124,7 @@ async function deriveRoomKey(raw: Uint8Array<ArrayBuffer>): Promise<RoomKey> {
     info: encoder.encode(info),
   });
 
-  const [clipKey, signalKey, checkBits] = await Promise.all([
+  const [clipKey, signalKey, metaKey, checkBits] = await Promise.all([
     crypto.subtle.deriveKey(
       params("cliplink:clip"),
       base,
@@ -137,6 +139,13 @@ async function deriveRoomKey(raw: Uint8Array<ArrayBuffer>): Promise<RoomKey> {
       false,
       ["encrypt", "decrypt"],
     ),
+    crypto.subtle.deriveKey(
+      params("cliplink:meta"),
+      base,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["encrypt", "decrypt"],
+    ),
     crypto.subtle.deriveBits(params("cliplink:check"), base, CHECK_BYTES * 8),
   ]);
 
@@ -144,6 +153,7 @@ async function deriveRoomKey(raw: Uint8Array<ArrayBuffer>): Promise<RoomKey> {
     encoded: encodeBase32(raw),
     clipKey,
     signalKey,
+    metaKey,
     check: encodeBase32(new Uint8Array(checkBits)),
   };
 }
@@ -202,12 +212,13 @@ export async function importRoomKey(encoded: string): Promise<RoomKey | null> {
 
 /**
  * The room code is the additional data on every message, so a ciphertext
- * lifted out of one room cannot be replayed into another.
+ * lifted out of one room cannot be replayed into another. `aad` is the room
+ * code alone for clips and signals; clip metadata binds more, see below.
  */
-async function seal(key: CryptoKey, roomCode: string, plaintext: string) {
+async function seal(key: CryptoKey, aad: string, plaintext: string) {
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
   const sealed = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv, additionalData: encoder.encode(roomCode) },
+    { name: "AES-GCM", iv, additionalData: encoder.encode(aad) },
     key,
     encoder.encode(plaintext),
   );
@@ -218,7 +229,7 @@ async function seal(key: CryptoKey, roomCode: string, plaintext: string) {
   return WIRE_PREFIX + encodeBase64Url(packed);
 }
 
-async function open(key: CryptoKey, roomCode: string, wire: string) {
+async function open(key: CryptoKey, aad: string, wire: string) {
   if (!wire.startsWith(WIRE_PREFIX)) {
     return null;
   }
@@ -233,7 +244,7 @@ async function open(key: CryptoKey, roomCode: string, wire: string) {
       {
         name: "AES-GCM",
         iv: packed.subarray(0, IV_BYTES),
-        additionalData: encoder.encode(roomCode),
+        additionalData: encoder.encode(aad),
       },
       key,
       packed.subarray(IV_BYTES),
@@ -264,6 +275,43 @@ export async function openSignal(
   wire: string,
 ): Promise<unknown | null> {
   const plaintext = await open(key.signalKey, roomCode, wire);
+  if (plaintext === null) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(plaintext);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Metadata is bound to the sealed text it accompanies as well as to the room,
+ * so the server cannot move one clip's attribution onto another. Its own
+ * subkey keeps it out of the text slot too: a metadata ciphertext offered as
+ * a clip's text will not open.
+ */
+function metaAad(roomCode: string, textWire: string) {
+  return `${roomCode}\u0000${textWire}`;
+}
+
+export function sealClipMeta(
+  key: RoomKey,
+  roomCode: string,
+  textWire: string,
+  meta: unknown,
+) {
+  return seal(key.metaKey, metaAad(roomCode, textWire), JSON.stringify(meta));
+}
+
+export async function openClipMeta(
+  key: RoomKey,
+  roomCode: string,
+  textWire: string,
+  wire: string,
+): Promise<unknown | null> {
+  const plaintext = await open(key.metaKey, metaAad(roomCode, textWire), wire);
   if (plaintext === null) {
     return null;
   }
