@@ -56,8 +56,8 @@ export async function send(
     await session.transport.sendClip(session.code, {
       text: validated.text,
       senderId: createRandomSenderId(),
-      // A name and no device id: the name is sealed and only the room reads
-      // it, but an id would outlive the run, and this CLI keeps no identity.
+      // A name and no mark of its own: the name is sealed and only the room reads
+      // it, but a mark needs a secret kept between runs, and this CLI keeps none.
       from: { name: args.name ?? normalizeDeviceName(hostname()) ?? "CLI" },
     });
 

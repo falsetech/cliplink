@@ -6,8 +6,9 @@ export type RoomCode = string;
 export type ClipMeta = {
   name: string;
   /**
-   * Identifies the sending browser within this room, so its own clips read as
-   * sent after a reload. Absent from senders that keep no identity, like the CLI.
+   * A mark the sending browser can recompute and nobody else can forge, so its
+   * own clips read as sent after a reload. Opaque to every other reader, and
+   * absent from senders that keep no identity, like the CLI.
    */
   device?: string;
 };

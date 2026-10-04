@@ -2,9 +2,9 @@
 
 ## 0.3.0
 
-- **Clips say who sent them.** A clip may now carry `meta`: the sender's name and, from a browser, an id for that browser within the room, sealed under a new `cliplink:meta` subkey. The seal is bound to the clip's own text ciphertext as well as to the room, so the server can neither move one clip's attribution onto another nor offer a metadata ciphertext as a clip's text. `createEncryptedTransport` seals a `from` on the way out and opens it on the way in; a `from` or `meta` supplied from the other side of it is discarded, so the only sender a caller ever sees is one this package opened.
+- **Clips say who sent them.** A clip may now carry `meta`: the sender's name and, from a browser, a mark by which that browser recognises the clip as its own, sealed under a new `cliplink:meta` subkey. The seal is bound to the clip's own text ciphertext as well as to the room, so the server can neither move one clip's attribution onto another nor offer a metadata ciphertext as a clip's text. `createEncryptedTransport` seals a `from` on the way out and opens it on the way in; a `from` or `meta` supplied from the other side of it is discarded, so the only sender a caller ever sees is one this package opened.
 - **A `presence` signal.** `{ type: "presence", name, peer }`, sealed like every other signal, tells the room what a device is called. `peer` repeats the sender's id inside the seal and a signal whose `peer` is not the peer it came from is dropped, since the `from` beside a signal is the server's word.
-- **`send --name <name>`.** The name a clip is shown under; the default is the machine's hostname. The CLI sends a name and no device id — it keeps no identity between runs, and still does not.
+- **`send --name <name>`.** The name a clip is shown under; the default is the machine's hostname. The CLI sends a name and no such mark — it keeps no identity between runs, and still does not.
 - **`recv --json` gains `name`**, present when the clip says who sent it.
 - `normalizeDeviceName`, `parseClipMeta`, `validateClipMeta`, `sealClipMeta`, `openClipMeta`, `MAX_DEVICE_NAME_CHARS` and `MAX_CLIP_META_CHARS` are exported. `RoomKey` gains `metaKey`.
 

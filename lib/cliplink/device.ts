@@ -104,18 +104,23 @@ function deviceSecret() {
 }
 
 /**
- * This browser's id within one room, so its own clips still read as sent after
- * a reload or in a second tab.
+ * The mark this browser puts on a clip it sends, so the clip still reads as
+ * sent after a reload or in a second tab.
  *
- * Hashed with the room code rather than sent as it is: the same browser gets
- * an unrelated id in every room, so nobody holding two rooms' keys can tell
- * they have met the same device twice. It only ever travels sealed.
+ * A hash of a secret that never leaves this browser with the room and the
+ * clip's own text — not an id. Everyone in the room can read a clip's mark,
+ * so an id would be theirs to copy onto a clip of their own, which this
+ * device would then file as something it had sent and never announce. A mark
+ * is only good for the text it was made for, and only this browser can make
+ * one. It differs from clip to clip, so it does not link them either.
  */
-export async function deviceIdForRoom(roomCode: string) {
+export async function ownClipMark(roomCode: string, text: string) {
   try {
     const digest = await crypto.subtle.digest(
       "SHA-256",
-      new TextEncoder().encode(`cliplink:device:${deviceSecret()}:${roomCode}`),
+      new TextEncoder().encode(
+        `cliplink:device:${deviceSecret()}:${roomCode}:${text}`,
+      ),
     );
     return Array.from(new Uint8Array(digest).subarray(0, 16), (byte) =>
       byte.toString(16).padStart(2, "0"),

@@ -8,7 +8,7 @@ import {
 } from "@/lib/cliplink/constants";
 import { isPageAttended } from "@/lib/cliplink/attention";
 import { writeClipboard } from "@/lib/cliplink/clipboard";
-import { deviceIdForRoom, getDeviceName } from "@/lib/cliplink/device";
+import { getDeviceName, ownClipMark } from "@/lib/cliplink/device";
 import { haptic } from "@/lib/cliplink/haptics";
 import { createRandomId } from "@/lib/cliplink/session";
 import type {
@@ -117,8 +117,6 @@ export function useRoomSession({
   const realtimeOpenedRef = useRef(false);
   const arrivalResetRef = useRef<number | null>(null);
   const lockedRef = useRef(false);
-  // This browser's id in the current room, sealed into what it sends.
-  const deviceIdRef = useRef<string | null>(null);
 
   const missed = useMissedClips({ pushToast });
 
@@ -264,16 +262,20 @@ export function useRoomSession({
   }
 
   /**
-   * The sender id says "this tab"; the device id says "this browser". Either
-   * makes a clip ours, which is what keeps a reload, or a second tab, from
+   * The sender id says "this tab"; the mark says "this browser". Either makes
+   * a clip ours, which is what keeps a reload, or a second tab, from
    * relabelling everything this device sent as received.
    */
-  function toSessionClip(clip: Clip): SessionClip {
-    const own =
-      clip.senderId === senderIdRef.current ||
-      (deviceIdRef.current !== null &&
-        clip.from?.device === deviceIdRef.current);
-    return { ...clip, direction: own ? "outgoing" : "incoming" };
+  function toSessionClips(code: RoomCode, clips: Clip[]) {
+    return Promise.all(
+      clips.map(async (clip): Promise<SessionClip> => {
+        const own =
+          clip.senderId === senderIdRef.current ||
+          (clip.from?.device !== undefined &&
+            clip.from.device === (await ownClipMark(code, clip.text)));
+        return { ...clip, direction: own ? "outgoing" : "incoming" };
+      }),
+    );
   }
 
   function applyIncomingClips(added: SessionClip[]) {
@@ -364,15 +366,19 @@ export function useRoomSession({
           }
         },
         onClips: (clips) => {
-          const incoming = clips
-            .filter((clip) => clip.senderId !== senderIdRef.current)
-            .map(toSessionClip);
-
           for (const clip of clips) {
             lastSeenIdRef.current = Math.max(lastSeenIdRef.current, clip.id);
           }
 
-          applyIncomingClips(incoming.reverse());
+          void toSessionClips(
+            nextRoomCode,
+            clips.filter((clip) => clip.senderId !== senderIdRef.current),
+          ).then((incoming) => {
+            // The room may have been left while the marks were checked.
+            if (roomCodeRef.current === nextRoomCode) {
+              applyIncomingClips(incoming.reverse());
+            }
+          });
         },
         onSignal: (from, payload) => handlersRef.current.onSignal(from, payload),
         onDisconnect: (reason) => {
@@ -426,7 +432,10 @@ export function useRoomSession({
         return;
       }
 
-      applyIncomingClips(incoming.map(toSessionClip).reverse());
+      const additions = await toSessionClips(nextRoomCode, incoming);
+      if (roomCodeRef.current === nextRoomCode) {
+        applyIncomingClips(additions.reverse());
+      }
     } catch (error) {
       setStatus("error");
       handlersRef.current.pushToast(
@@ -446,11 +455,9 @@ export function useRoomSession({
     // searchParams effect would otherwise read that back as a fresh link and
     // join the room a second time — two connects, two sockets, two toasts.
     initializedRoomRef.current = nextRoomCode;
-    // Before the snapshot is read, since it decides which rows are ours.
-    deviceIdRef.current = await deviceIdForRoom(nextRoomCode);
     const response = await transport.connect(nextRoomCode);
     let nextHistory = sortClipsNewestFirst(
-      response.clips.map(toSessionClip),
+      await toSessionClips(nextRoomCode, response.clips),
     ).slice(0, MAX_SESSION_HISTORY);
 
     let lastSeenId = response.clips.reduce(
@@ -463,7 +470,7 @@ export function useRoomSession({
       if (bootstrapDelta.clips.length > 0) {
         nextHistory = mergeHistory(
           nextHistory,
-          bootstrapDelta.clips.map(toSessionClip),
+          await toSessionClips(nextRoomCode, bootstrapDelta.clips),
         );
         lastSeenId = bootstrapDelta.clips.reduce(
           (highest, clip) => Math.max(highest, clip.id),
@@ -492,14 +499,13 @@ export function useRoomSession({
       return false;
     }
 
+    const code = roomCodeRef.current;
     try {
-      const response = await transport.sendClip(roomCodeRef.current, {
+      const mark = await ownClipMark(code, text);
+      const response = await transport.sendClip(code, {
         text,
         senderId: senderIdRef.current,
-        from: {
-          name: getDeviceName(),
-          ...(deviceIdRef.current ? { device: deviceIdRef.current } : {}),
-        },
+        from: { name: getDeviceName(), ...(mark ? { device: mark } : {}) },
       });
 
       const sessionClip: SessionClip = {
@@ -541,7 +547,6 @@ export function useRoomSession({
     setRoomCode(null);
     setLocked(false);
     lockedRef.current = false;
-    deviceIdRef.current = null;
     missed.reset();
     setHistory([]);
     setExpiresAt(null);
