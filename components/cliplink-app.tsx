@@ -41,6 +41,7 @@ import {
   transport,
   useRoomSession,
 } from "@/components/cliplink/use-room-session";
+import { DevicesSheet } from "@/components/cliplink/devices-sheet";
 import { usePresence } from "@/components/cliplink/use-presence";
 import { useShortcuts } from "@/components/cliplink/use-shortcuts";
 import { useToasts } from "@/components/cliplink/use-toasts";
@@ -154,6 +155,7 @@ export default function CliplinkApp({
   const [joinCode, setJoinCode] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [showQrSheet, setShowQrSheet] = useState(false);
+  const [showDevices, setShowDevices] = useState(false);
   /** The file the player is open on, by id so it follows the live item. */
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -215,12 +217,15 @@ export default function CliplinkApp({
     timer: number;
   } | null>(null);
 
-  const presence = usePresence({ sendSignal: transport.sendSignal });
+  const presence = usePresence({ peerId, sendSignal: transport.sendSignal });
 
   const room = useRoomSession({
     pushToast,
     senderIdRef,
-    onRealtimeOpen: () => files.announce(),
+    onRealtimeOpen: () => {
+      presence.announce();
+      files.announce();
+    },
     onRealtimeClose: () => presence.reset(),
     onSignal: (from, payload) => {
       presence.handleSignal(from, payload);
@@ -525,6 +530,7 @@ export default function CliplinkApp({
 
   function closeOverlays() {
     setShowQrSheet(false);
+    setShowDevices(false);
     setShowShortcuts(false);
     setShowPalette(false);
     setPlayingId(null);
@@ -889,7 +895,11 @@ export default function CliplinkApp({
   // The player counts: its media keys (space, arrows) must not reach the
   // room's single-letter shortcuts.
   const sheetOpen =
-    showQrSheet || showShortcuts || showPalette || playingId !== null;
+    showQrSheet ||
+    showDevices ||
+    showShortcuts ||
+    showPalette ||
+    playingId !== null;
   const expiresIn = useRoomExpiry(room.expiresAt);
   const status = room.locked
     ? { label: "Locked", tone: "warn" as const }
@@ -915,6 +925,7 @@ export default function CliplinkApp({
       setKeyPrompt({ code: roomCode!, mismatch: false }),
     shareRoom: () => void shareRoom(roomCode!),
     openQr: () => setShowQrSheet(true),
+    openDevices: () => setShowDevices(true),
     leave: requestLeave,
     attach: () => fileInputRef.current?.click(),
     attachFolder: () => folderInputRef.current?.click(),
@@ -1059,6 +1070,8 @@ export default function CliplinkApp({
                   onLeave={requestLeave}
                   expiresIn={expiresIn}
                   deviceCount={presence.deviceCount}
+                  devicesOpen={showDevices}
+                  onOpenDevices={() => setShowDevices(true)}
                 />
 
                 <ClipEditor
@@ -1115,6 +1128,14 @@ export default function CliplinkApp({
           onCopyLink={() => void copyRoomLink(roomCode!)}
           onCopyKey={() => void copyRoomKey()}
           onShare={() => void shareRoom(roomCode!)}
+        />
+      ) : null}
+
+      {joined ? (
+        <DevicesSheet
+          open={showDevices}
+          devices={presence.devices}
+          onClose={() => setShowDevices(false)}
         />
       ) : null}
 

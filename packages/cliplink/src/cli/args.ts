@@ -5,7 +5,9 @@
 
 import {
   MAX_ROOM_TTL_SECONDS,
+  MAX_DEVICE_NAME_CHARS,
   MIN_ROOM_TTL_SECONDS,
+  normalizeDeviceName,
   validateRoomTtl,
 } from "../index.ts";
 
@@ -26,6 +28,8 @@ export type ParsedArgs = {
   open: boolean;
   /** Write the room and key to the config file. The one path that persists a key. */
   save: boolean;
+  /** `send` only: the name this clip is shown under. Null means the hostname. */
+  name: string | null;
   /** `recv` only: print the next clip and exit. */
   one: boolean;
   /** `recv` only: print each clip as a JSON object rather than as its text. */
@@ -63,6 +67,7 @@ export type ParseResult =
 const FLAGS_WITH_VALUES = new Set([
   "--room",
   "--key",
+  "--name",
   "--ttl",
   "--url",
   "--forget",
@@ -150,6 +155,7 @@ export function parseArgs(rawArgv: string[], env: Env = {}): ParseResult {
     key: env.CLIPLINK_ROOM_KEY ?? null,
     open: false,
     save: false,
+    name: null,
     one: false,
     json: false,
     last: null,
@@ -196,6 +202,15 @@ export function parseArgs(rawArgv: string[], env: Env = {}): ParseResult {
           roomFromFlag = true;
         } else if (name === "--key") {
           args.key = value;
+        } else if (name === "--name") {
+          const deviceName = normalizeDeviceName(value);
+          if (!deviceName || deviceName !== value.trim()) {
+            return {
+              ok: false,
+              message: `--name takes one line of up to ${MAX_DEVICE_NAME_CHARS} characters.`,
+            };
+          }
+          args.name = deviceName;
         } else if (name === "--url") {
           args.baseUrl = value;
         } else if (name === "--forget") {
@@ -311,6 +326,9 @@ export function parseArgs(rawArgv: string[], env: Env = {}): ParseResult {
   }
   if (command === "send" && args.one) {
     return { ok: false, message: "--one applies to recv, not send." };
+  }
+  if (command !== "send" && args.name !== null) {
+    return { ok: false, message: `--name applies to send, not ${command}.` };
   }
   if (command !== "recv" && args.json) {
     return { ok: false, message: `--json applies to recv, not ${command}.` };

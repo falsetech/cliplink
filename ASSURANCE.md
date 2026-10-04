@@ -7,8 +7,8 @@ report a problem. When the two disagree, fix whichever is wrong.
 
 ## Security requirements
 
-1. **Confidentiality of private rooms.** Nobody without the room key can read clip text, file names, file sizes or WebRTC session descriptions, and that includes the server operator.
-2. **Integrity.** A tampered clip or signaling message is rejected, not shown. A ciphertext cannot be moved from one room into another.
+1. **Confidentiality of private rooms.** Nobody without the room key can read clip text, device names, file names, file sizes or WebRTC session descriptions, and that includes the server operator.
+2. **Integrity.** A tampered clip or signaling message is rejected, not shown. A ciphertext cannot be moved from one room into another, and the sender named on a clip cannot be moved onto a different clip.
 3. **No file bytes on the server.** Files travel peer to peer and are never relayed, buffered or stored server-side.
 4. **Bounded resources.** One client cannot make the server hold unbounded data or keep a room alive forever.
 5. **No execution of untrusted input.** Clip text and file metadata are rendered as data, never as markup or code.

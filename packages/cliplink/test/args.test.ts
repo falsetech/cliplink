@@ -201,6 +201,30 @@ describe("--json", () => {
   });
 });
 
+describe("--name", () => {
+  it("is unset unless asked for, which leaves the hostname to stand in", () => {
+    assert.equal(parse(["send", "hi"]).name, null);
+  });
+
+  it("names the sender of a clip", () => {
+    assert.equal(parse(["send", "hi", "--name", "build box"]).name, "build box");
+    assert.equal(parse(["send", "hi", "--name=ci"]).name, "ci");
+  });
+
+  it("rejects a name that would not be shown as typed", () => {
+    for (const name of ["", "   ", "two\nlines", "x".repeat(41)]) {
+      assert.match(reject(["send", "hi", "--name", name]), /--name takes one line/);
+    }
+  });
+
+  it("is an error on recv, rather than silently ignored", () => {
+    assert.match(
+      reject(["recv", "-r", "X7KP2M", "--name", "ci"]),
+      /--name applies to send, not recv/,
+    );
+  });
+});
+
 describe("--last and --all", () => {
   it("default to replaying nothing", () => {
     const args = parse(["recv", "-r", "X7KP2M"]);

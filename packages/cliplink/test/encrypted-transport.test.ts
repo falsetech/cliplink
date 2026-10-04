@@ -5,7 +5,9 @@ import {
   decryptClipText,
   encryptClipText,
   generateRoomKey,
+  openClipMeta,
   openSignal,
+  sealClipMeta,
   sealSignal,
   type RoomKey,
 } from "../src/crypto.ts";
@@ -36,7 +38,13 @@ function fakeWire() {
     polled: [] as Clip[],
     pollArgs: [] as Array<{ code: string; afterId: number }>,
     canSend: true,
-    sentClips: [] as Array<{ code: string; text: string; senderId: string }>,
+    sentClips: [] as Array<{
+      code: string;
+      text: string;
+      senderId: string;
+      meta?: string;
+      from?: unknown;
+    }>,
     sentSignals: [] as Array<{ sealed: string; to?: string }>,
     streamArgs: null as { code: string; afterId: number; peerId: string } | null,
     handlers: null as Handlers | null,
@@ -51,7 +59,13 @@ function fakeWire() {
     async sendClip(code, payload) {
       state.sentClips.push({ code, ...payload });
       return {
-        clip: { id: 9, text: payload.text, senderId: payload.senderId, ts: 1_700_000_000 },
+        clip: {
+          id: 9,
+          text: payload.text,
+          senderId: payload.senderId,
+          ts: 1_700_000_000,
+          ...(payload.meta ? { meta: payload.meta } : {}),
+        },
         expiresAt: 4_242,
       };
     },
@@ -266,6 +280,120 @@ describe("createEncryptedTransport", () => {
     });
   });
 
+  describe("clip metadata", () => {
+    const FROM = { name: "Work laptop", device: "device-0123456789" };
+
+    it("seals who sent a clip, bound to that clip's text, and keeps the plaintext off the wire", async () => {
+      const { transport, state } = setup();
+
+      await transport.sendClip(ROOM, { text: "hi", senderId: "cli-sender-1", from: FROM });
+
+      const [sent] = state.sentClips;
+      assert.equal(sent.from, undefined);
+      assert.ok(sent.meta);
+      assert.match(sent.meta, CIPHERTEXT_PATTERN);
+      assert.equal(JSON.stringify(sent).includes("Work laptop"), false);
+      assert.deepEqual(await openClipMeta(key, ROOM, sent.text, sent.meta), FROM);
+    });
+
+    it("sends no metadata when the caller names no sender", async () => {
+      const { transport, state } = setup();
+
+      await transport.sendClip(ROOM, { text: "hi", senderId: "cli-sender-1" });
+
+      assert.equal("meta" in state.sentClips[0], false);
+    });
+
+    it("never forwards metadata the caller sealed itself", async () => {
+      const { transport, state } = setup();
+
+      await transport.sendClip(ROOM, { text: "hi", senderId: "cli-sender-1", meta: "v1.forged" });
+
+      assert.equal("meta" in state.sentClips[0], false);
+    });
+
+    it("hands the sender back its own name, not the sealed form", async () => {
+      const { transport } = setup();
+
+      const response = await transport.sendClip(ROOM, {
+        text: "hi",
+        senderId: "cli-sender-1",
+        from: FROM,
+      });
+
+      assert.deepEqual(response.clip.from, FROM);
+      assert.equal("meta" in response.clip, false);
+    });
+
+    it("opens the sender of a clip it receives", async () => {
+      const { transport, state } = setup();
+      const sealed = await sealedClip(1, "first");
+      state.roomClips = [{ ...sealed, meta: await sealClipMeta(key, ROOM, sealed.text, FROM) }];
+
+      const { clips } = await transport.connect(ROOM);
+
+      assert.deepEqual(clips[0].from, FROM);
+      assert.equal("meta" in clips[0], false);
+      assert.equal(clips[0].text, "first");
+    });
+
+    it("leaves a clip from an older client unattributed and readable", async () => {
+      const { transport, state } = setup();
+      state.roomClips = [await sealedClip(1, "first")];
+
+      const { clips } = await transport.connect(ROOM);
+
+      assert.equal("from" in clips[0], false);
+      assert.equal(clips[0].text, "first");
+    });
+
+    it("drops a sender the server wrote in plaintext", async () => {
+      const { transport, state } = setup();
+      state.roomClips = [{ ...(await sealedClip(1, "first")), from: { name: "Forged" } }];
+
+      const { clips } = await transport.connect(ROOM);
+
+      assert.equal("from" in clips[0], false);
+    });
+
+    it("drops metadata lifted from another clip, and still reads the text", async () => {
+      const { transport, state } = setup();
+      const [first, second] = await Promise.all([sealedClip(1, "first"), sealedClip(2, "second")]);
+      state.roomClips = [
+        { ...second, meta: await sealClipMeta(key, ROOM, first.text, FROM) },
+      ];
+
+      const { clips } = await transport.connect(ROOM);
+
+      assert.equal("from" in clips[0], false);
+      assert.equal(clips[0].text, "second");
+    });
+
+    it("drops metadata that opens to something other than a sender", async () => {
+      const { transport, state } = setup();
+      const sealed = await sealedClip(1, "first");
+      state.roomClips = [
+        { ...sealed, meta: await sealClipMeta(key, ROOM, sealed.text, { name: "" }) },
+      ];
+
+      const { clips } = await transport.connect(ROOM);
+
+      assert.equal("from" in clips[0], false);
+    });
+
+    it("opens no sender without a key", async () => {
+      const { transport, state } = setup({ withKey: false });
+      const sealed = await sealedClip(1, "first");
+      state.roomClips = [{ ...sealed, meta: await sealClipMeta(key, ROOM, sealed.text, FROM) }];
+
+      const { clips } = await transport.connect(ROOM);
+
+      assert.equal(clips[0].text, UNDECRYPTABLE_TEXT);
+      assert.equal("from" in clips[0], false);
+      assert.equal("meta" in clips[0], false);
+    });
+  });
+
   describe("pollClips", () => {
     it("opens what the poll returns, and asks the wire for the same cursor", async () => {
       const { transport, state } = setup();
@@ -333,6 +461,29 @@ describe("createEncryptedTransport", () => {
       ) => {
         state.handlers?.onSealedSignal?.(PEER, await sealSignal(under, room, payload));
       };
+
+      it("delivers a presence signal from the peer it names", async () => {
+        const { transport, state } = setup();
+        const { signals } = stream(transport);
+
+        await deliver(state, { type: "presence", name: "Phone", peer: PEER });
+        await waitFor(() => signals.length === 1, "the signal");
+
+        assert.deepEqual(signals, [
+          { from: PEER, payload: { type: "presence", name: "Phone", peer: PEER } },
+        ]);
+      });
+
+      it("drops a presence signal that names a peer other than its sender", async () => {
+        const { transport, state } = setup();
+        const { signals } = stream(transport);
+
+        await deliver(state, { type: "presence", name: "Impostor", peer: "peer-someone-else" });
+        await deliver(state, { type: "hello-ack" });
+        await waitFor(() => signals.length === 1, "the signal after it");
+
+        assert.deepEqual(signals, [{ from: PEER, payload: { type: "hello-ack" } }]);
+      });
 
       it("opens a sealed signal and delivers it with the peer it came from", async () => {
         const { transport, state } = setup();

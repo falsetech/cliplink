@@ -1,7 +1,9 @@
 import {
   decryptClipText,
   encryptClipText,
+  openClipMeta,
   openSignal,
+  sealClipMeta,
   sealSignal,
   type RoomKey,
 } from "./crypto.ts";
@@ -11,7 +13,7 @@ import type {
   SealedTransport,
   TransportClient,
 } from "./types.ts";
-import { parseSignalPayload } from "./validation.ts";
+import { parseClipMeta, parseSignalPayload } from "./validation.ts";
 
 /**
  * Shown in place of a clip that will not open. Never silently dropped: a row
@@ -30,6 +32,18 @@ export class RoomKeyMismatchError extends Error {
     super("That key does not match this room.");
     this.name = "RoomKeyMismatchError";
   }
+}
+
+/**
+ * A clip or a request without the two sender fields. Both are this module's to
+ * write: `meta` is what it sealed and `from` is what it opened, so a copy that
+ * arrived from the other side — the caller's or the server's — is not trusted.
+ */
+function withoutSender<T extends { meta?: string; from?: unknown }>(value: T) {
+  const rest = { ...value };
+  delete rest.meta;
+  delete rest.from;
+  return rest;
 }
 
 export type EncryptedTransport = TransportClient & {
@@ -59,14 +73,25 @@ export function createEncryptedTransport(
   async function decryptClips(clips: Clip[]): Promise<Clip[]> {
     const key = roomKey;
     const code = roomCode;
-    if (!key || !code) {
-      return clips.map((clip) => ({ ...clip, text: UNDECRYPTABLE_TEXT }));
-    }
 
     return Promise.all(
-      clips.map(async (clip) => {
-        const text = await decryptClipText(key, code, clip.text);
-        return { ...clip, text: text ?? UNDECRYPTABLE_TEXT };
+      clips.map(async (sealed) => {
+        const { meta } = sealed;
+        const clip = withoutSender(sealed);
+        if (!key || !code) {
+          return { ...clip, text: UNDECRYPTABLE_TEXT };
+        }
+
+        const [text, opened] = await Promise.all([
+          decryptClipText(key, code, clip.text),
+          meta ? openClipMeta(key, code, clip.text, meta) : null,
+        ]);
+        const from = opened === null ? null : parseClipMeta(opened);
+        return {
+          ...clip,
+          text: text ?? UNDECRYPTABLE_TEXT,
+          ...(from ? { from } : {}),
+        };
       }),
     );
   }
@@ -97,13 +122,23 @@ export function createEncryptedTransport(
         throw new Error("This room is encrypted and no key is loaded.");
       }
 
+      const { from } = payload;
+      const text = await encryptClipText(key, code, payload.text);
       const response = await wire.sendClip(code, {
-        ...payload,
-        text: await encryptClipText(key, code, payload.text),
+        ...withoutSender(payload),
+        text,
+        ...(from ? { meta: await sealClipMeta(key, code, text, from) } : {}),
       });
       // Echo back what the caller handed us rather than decrypting our own
       // ciphertext, so the sender's own history row cannot read as broken.
-      return { ...response, clip: { ...response.clip, text: payload.text } };
+      return {
+        ...response,
+        clip: {
+          ...withoutSender(response.clip),
+          text: payload.text,
+          ...(from ? { from } : {}),
+        },
+      };
     },
 
     async pollClips(code, afterId) {
@@ -128,6 +163,11 @@ export function createEncryptedTransport(
             // the server relays a signal it cannot read, so rebuilding the
             // payload from known fields is the client's job now.
             const parsed = payload === null ? null : parseSignalPayload(payload);
+            // A name is only believed from the peer it names. Without this a
+            // key holder could rename someone else in everyone's list.
+            if (parsed?.type === "presence" && parsed.peer !== from) {
+              return;
+            }
             if (parsed) {
               handlers.onSignal?.(from, parsed);
             }

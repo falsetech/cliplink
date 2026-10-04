@@ -10,6 +10,7 @@ import {
   generateRoomKey,
   POLL_INTERVAL_MS,
   RoomKeyMismatchError,
+  sealClipMeta,
   type Clip,
   type RoomKey,
 } from "../src/index.ts";
@@ -350,6 +351,29 @@ describe("recv", () => {
         text: "hello",
         senderId: "someone-else",
         ts: 1_700_000_001,
+      });
+    });
+
+    it("names the sender under --json when the clip says who sent it", async () => {
+      const { data } = await start(["--json"]);
+      const clip = await seal(1, "hello");
+
+      FakeSocket.last.ready();
+      FakeSocket.last.deliver({
+        type: "clip",
+        clip: {
+          ...clip,
+          meta: await sealClipMeta(openKey, CODE, clip.text, { name: "Phone" }),
+        },
+      });
+      await waitFor(() => data.length === 1, "the clip");
+
+      assert.deepEqual(JSON.parse(data[0]), {
+        id: 1,
+        text: "hello",
+        senderId: "someone-else",
+        ts: 1_700_000_001,
+        name: "Phone",
       });
     });
 
