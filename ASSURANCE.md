@@ -56,7 +56,7 @@ Attackers considered: another client in the same room, a client guessing codes, 
 
 | Weakness (CWE / OWASP) | Countermeasure |
 | --- | --- |
-| Injection, XSS (CWE-79) | React escaping; no raw HTML; strict ciphertext pattern `^v1\.[A-Za-z0-9_-]+$` on the server |
+| Injection, XSS (CWE-79) | React escaping; no raw HTML; strict ciphertext pattern `^v1\.[A-Za-z0-9_-]+$` on the server; a Content-Security-Policy that allows scripts only by a per-request nonce (`proxy.ts`) |
 | SSRF (CWE-918) | The server's one outbound fetch goes to a fixed URL; no user-controlled URL is ever fetched |
 | Weak randomness (CWE-330) | Keys, IVs and room codes come from the CSPRNG; `Math.random` is used only for non-secret transfer IDs when `randomUUID` is unavailable |
 | Broken crypto (CWE-327) | Only published primitives through Web Crypto; no custom crypto, MD5, SHA-1 or ECB |
@@ -72,7 +72,7 @@ These are accepted and documented rather than countered:
 - A malicious server can replay or reorder signaling messages.
 - WebRTC shows each peer the other's IP address.
 - Open rooms are not end-to-end encrypted.
-- There is no Content-Security-Policy header yet.
+- The Content-Security-Policy allows inline styles: a dependency injects a stylesheet that cannot carry the nonce, and several components set `style` attributes, which a nonce does not cover.
 
 ## Verification
 

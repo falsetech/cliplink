@@ -145,6 +145,8 @@ vercel domains add <your-domain>   # optional
 
 It is a stock Next.js App Router build, so anywhere that runs Next.js 16 with WebSocket support will work.
 
+Behind your own reverse proxy, pass the original `Host` and `X-Forwarded-Proto` through. The Content-Security-Policy names the room socket by the host and scheme the request arrived with; without them it falls back to `'self'`, which current browsers accept and Safari before 15.4 does not.
+
 ## Packages
 
 | Package | Version | Description |
@@ -160,7 +162,6 @@ Planned for the next year, through September 2027:
 
 - **Test coverage** — both packages are tested; the app itself, starting with the room UI's retry and fallback state machine, is not yet
 - **WebRTC reliability** across restrictive NATs
-- **A Content-Security-Policy** for the app
 
 Deliberately not planned, because each would break a design guarantee:
 
