@@ -160,7 +160,6 @@ Planned for the next year, through September 2027:
 
 - **Test coverage** — both packages are tested; the app itself, starting with the room UI's retry and fallback state machine, is not yet
 - **WebRTC reliability** across restrictive NATs
-- **A Content-Security-Policy** for the app
 
 Deliberately not planned, because each would break a design guarantee:
 

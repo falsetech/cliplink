@@ -30,6 +30,7 @@ app/                      App Router: pages + API routes
   rooms/[code]/route.ts   GET — fetch room
   rooms/[code]/clips/     POST — send clip; GET — poll clips after id
   rooms/[code]/socket/    GET — WebSocket upgrade (clips + WebRTC signaling)
+proxy.ts                  Content-Security-Policy, with a per-request script nonce
 components/
   cliplink-app.tsx        The room experience (client component)
   cliplink/               Room UI, sheets and hooks
