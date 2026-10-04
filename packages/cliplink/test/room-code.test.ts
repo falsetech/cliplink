@@ -195,6 +195,16 @@ describe("parseRoomKeyFromHash", () => {
   it("keeps the dashes of a key grouped for reading aloud", () => {
     assert.equal(parseRoomKeyFromHash("#k=0C51-260Z-4RPK"), "0C51-260Z-4RPK");
   });
+
+  it("reads a fragment that was written twice as the one key", () => {
+    assert.equal(parseRoomKeyFromHash("#k=ABC123#k=ABC123"), "ABC123");
+    assert.equal(parseRoomKeyFromHash("k=ABC123#k=ABC123"), "ABC123");
+    assert.equal(parseRoomKeyFromHash("#tab=files&k=ABC123#k=ABC123"), "ABC123");
+  });
+
+  it("does not take a key from after a second #", () => {
+    assert.equal(parseRoomKeyFromHash("#tab=files#k=ABC123"), null);
+  });
 });
 
 describe("roomKeyFragment", () => {

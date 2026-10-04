@@ -47,9 +47,16 @@ export function buildRoomUrl(code: string, origin: string, roomKey?: string) {
   return url.toString();
 }
 
-/** Reads the room key back out of a `#k=…` fragment. */
+/**
+ * Reads the room key back out of a `#k=…` fragment.
+ *
+ * Only as far as a second `#`. A key holds none, so whatever follows one is
+ * not key — and links exist with the fragment written twice, `#k=…#k=…`,
+ * which would otherwise read as one key that opens nothing.
+ */
 export function parseRoomKeyFromHash(hash: string) {
-  const params = new URLSearchParams(hash.replace(/^#/, ""));
+  const [fragment] = hash.replace(/^#/, "").split("#");
+  const params = new URLSearchParams(fragment);
   return params.get(ROOM_KEY_FRAGMENT_PARAM);
 }
 
