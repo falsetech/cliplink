@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.0
 
 - **A device that has a file can pass it on.** With `keepReceived`, a finished download stays in the `resume` store instead of being deleted, and `seed(entries)` offers what the store holds — after a reload too — under a fresh offer id and the original digest. Nothing is hashed again, and the bytes are read back only when a peer asks. Seeded items are `seeded: true`.
 - **Offers of the same content are one item.** Matched by `digest`, they collapse into one incoming item whose `sources` lists every peer offering it; `peerId` is the one a download uses. A source leaving only revokes the item when it was the last. Offers without a digest keep a row each, as before.

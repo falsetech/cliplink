@@ -49,6 +49,8 @@ const Toaster = ({ ...props }: ToasterProps) => {
             "cn-toast gap-2.5! px-4! py-3! text-sm! shadow-toast! backdrop-blur-(--toast-blur) backdrop-saturate-180 ring-1 ring-foreground/5",
           title: "font-medium!",
           description: "text-muted-foreground!",
+          actionButton:
+            "rounded-full! bg-primary! px-3! font-medium! text-primary-foreground!",
           closeButton:
             "bg-popover! border-border! text-muted-foreground! hover:text-foreground!",
         },

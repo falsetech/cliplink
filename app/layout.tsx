@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
 import { ServiceWorker } from "@/components/cliplink/service-worker";
 import { Analytics } from "@vercel/analytics/next";
 
@@ -39,15 +40,18 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Set per request by proxy.ts, alongside the policy that names it.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
+
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="antialiased">
-        <AppThemeProvider>{children}</AppThemeProvider>
+        <AppThemeProvider nonce={nonce}>{children}</AppThemeProvider>
         <ServiceWorker />
         <Analytics />
       </body>

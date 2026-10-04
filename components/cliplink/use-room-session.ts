@@ -6,6 +6,7 @@ import {
   MAX_SESSION_HISTORY,
   POLL_INTERVAL_MS,
 } from "@/lib/cliplink/constants";
+import { isPageAttended } from "@/lib/cliplink/attention";
 import { writeClipboard } from "@/lib/cliplink/clipboard";
 import { haptic } from "@/lib/cliplink/haptics";
 import { createRandomId } from "@/lib/cliplink/session";
@@ -16,10 +17,14 @@ import type {
   SessionClip,
   SignalPayload,
 } from "@/lib/cliplink/types";
-import { createEncryptedTransport } from "@/lib/cliplink/encrypted-transport";
+import {
+  createEncryptedTransport,
+  UNDECRYPTABLE_TEXT,
+} from "@/lib/cliplink/encrypted-transport";
 import type { RoomKey } from "@/lib/cliplink/crypto";
 import { createWebSocketTransport } from "@/lib/cliplink/ws";
 
+import { useMissedClips } from "./use-missed-clips";
 import type { PushToast } from "./use-toasts";
 
 /**
@@ -109,6 +114,9 @@ export function useRoomSession({
   const realtimeRetryCountRef = useRef(0);
   const realtimeOpenedRef = useRef(false);
   const arrivalResetRef = useRef<number | null>(null);
+  const lockedRef = useRef(false);
+
+  const missed = useMissedClips({ pushToast });
 
   // A reconnect scheduled minutes ago must call today's handlers, not the ones
   // captured when the timer was set.
@@ -267,7 +275,20 @@ export function useRoomSession({
     }
     markArrival(latest.id);
     haptic("arrive");
-    void autoCopyIncoming(latest.text);
+    if (isPageAttended()) {
+      void autoCopyIncoming(latest.text);
+    } else if (roomCodeRef.current) {
+      // The browser would refuse the write from here. A clip this device
+      // cannot read leaves nothing worth copying, but the arrival is still
+      // worth marking.
+      const readable =
+        !lockedRef.current && latest.text !== UNDECRYPTABLE_TEXT;
+      missed.hold(
+        roomCodeRef.current,
+        readable ? latest.text : null,
+        clips.length,
+      );
+    }
     advanceExpiry(latest.ts);
   }
 
@@ -400,6 +421,9 @@ export function useRoomSession({
   /** A null key joins the room locked: everything works except reading it. */
   async function hydrate(nextRoomCode: RoomCode, key: RoomKey | null) {
     transport.setRoomKey(nextRoomCode, key);
+    // With the key, not after the awaits below: a stream already running
+    // decrypts with the new key at once, and an arrival must agree with it.
+    lockedRef.current = key === null;
     // Claimed up front, because hydrating writes ?room= to the URL and the
     // searchParams effect would otherwise read that back as a fresh link and
     // join the room a second time — two connects, two sockets, two toasts.
@@ -498,6 +522,8 @@ export function useRoomSession({
     transport.clearRoomKey();
     setRoomCode(null);
     setLocked(false);
+    lockedRef.current = false;
+    missed.reset();
     setHistory([]);
     setExpiresAt(null);
     setStatus("offline");

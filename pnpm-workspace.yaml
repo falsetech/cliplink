@@ -11,3 +11,15 @@ allowBuilds:
 # two do not fight. Raise it, never lower it, and prefer excluding a single
 # package over turning it off.
 minimumReleaseAge: 4320
+
+# Floors for transitive dependencies with a published advisory, where the
+# package that pulls them in has not yet moved its own range. All three arrive
+# through dev tooling — eslint, eslint-config-next, shadcn — and none is in a
+# production install. Each selector names only the vulnerable range and stays
+# inside its major, so an entry stops applying once the tree moves past it
+# and can then be deleted.
+overrides:
+  "brace-expansion@<1.1.21": "^1.1.21"
+  "brace-expansion@>=4.0.0 <5.0.12": "^5.0.12"
+  "fast-uri@>=3.0.0 <3.1.8": "^3.1.8"
+  "ip-address@>=10.0.0 <10.7.1": "^10.7.1"

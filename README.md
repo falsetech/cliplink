@@ -10,6 +10,7 @@
   <a href="https://www.npmjs.com/package/@thebkht/cliplink"><img alt="npm version: @thebkht/cliplink" src="https://img.shields.io/npm/v/@thebkht/cliplink.svg?style=for-the-badge&amp;labelColor=000000&amp;label=cliplink" height="28"></a>
   <a href="https://www.npmjs.com/package/@thebkht/rtc-file-transfer"><img alt="npm version: @thebkht/rtc-file-transfer" src="https://img.shields.io/npm/v/@thebkht/rtc-file-transfer.svg?style=for-the-badge&amp;labelColor=000000&amp;label=rtc-file-transfer" height="28"></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/thebkht/cliplink"><img alt="OpenSSF Scorecard" src="https://img.shields.io/ossf-scorecard/github.com/thebkht/cliplink?style=for-the-badge&amp;labelColor=000000&amp;label=scorecard" height="28"></a>
+  <a href="https://www.bestpractices.dev/projects/15083"><img alt="OpenSSF Best Practices" src="https://img.shields.io/cii/level/15083?style=for-the-badge&amp;labelColor=000000&amp;label=best%20practices" height="28"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/LICENSE-MIT-0a0a0a.svg?style=for-the-badge&amp;labelColor=000000" height="28"></a>
 </p>
 
@@ -36,6 +37,7 @@ Nothing persists. Rooms expire on a timer, history is session-local, and files n
 - **Encrypted both ways** — private rooms generate an AES-GCM-256 key in the browser that never reaches the server, carried in the URL fragment or pasted in; open rooms derive their key from the code, so the code alone opens them. Private rooms joined without a key open locked and unlock in place
 - **Realtime text sync** — WebSocket transport, with HTTP polling as an automatic fallback
 - **Auto-copy on receive** — incoming clips land on your clipboard, with a toast and a subtle flash
+- **Nothing missed in a background tab** — a browser will not let a hidden tab write the clipboard, so a clip that arrives there is counted in the tab title and on the installed app's icon, and copied when you come back — or, where the browser wants a click first, offered with a Copy button. System notifications are opt-in, and say which room, never what the clip holds. They come from the open tab rather than a push server, so they last as long as the browser keeps the tab alive
 - **Session history** — last 20 clips with direction, timestamp, one-click copy, expand-in-place, and an Open action on link clips
 - **Keyboard-first** — every room action has a binding; `?` shows the cheat sheet and `⌘K`/`Ctrl+K` opens the command palette
 - **Know the state** — device count, a live expiry countdown, and a badge that says when you have dropped to the polling fallback
@@ -71,6 +73,7 @@ These work anywhere. The rest need focus to be outside the compose box:
 | `A` | Attach files |
 | `F` | Attach a folder |
 | `T` | Toggle the theme |
+| `N` | Turn notifications on or off |
 | `X` | Leave the room |
 | `1`–`9` | Copy that history row |
 | `Esc` | Close a sheet, cancel a pending Leave, or leave the editor |
@@ -142,6 +145,8 @@ vercel domains add <your-domain>   # optional
 
 It is a stock Next.js App Router build, so anywhere that runs Next.js 16 with WebSocket support will work.
 
+Behind your own reverse proxy, pass the original `Host` and `X-Forwarded-Proto` through. The Content-Security-Policy names the room socket by the host and scheme the request arrived with; without them it falls back to `'self'`, which current browsers accept and Safari before 15.4 does not.
+
 ## Packages
 
 | Package | Version | Description |
@@ -153,16 +158,24 @@ Packages release independently. To publish one, bump its version and changelog, 
 
 ## Roadmap
 
+Planned for the next year, through September 2027:
+
 - **Test coverage** — both packages are tested; the app itself, starting with the room UI's retry and fallback state machine, is not yet
 - **WebRTC reliability** across restrictive NATs
+
+Deliberately not planned, because each would break a design guarantee:
+
+- **Accounts or sign-in** — rooms stay zero-auth and ephemeral
+- **Server-side file storage or relaying** — files stay peer-to-peer
+- **Incompatible wire protocol changes** — protocol v1 stays readable by every deployed client
 
 Have an idea? [Open an issue](https://github.com/thebkht/cliplink/issues/new/choose).
 
 ## Contributing
 
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Please read the [Code of Conduct](CODE_OF_CONDUCT.md).
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Please read the [Code of Conduct](CODE_OF_CONDUCT.md). [GOVERNANCE.md](GOVERNANCE.md) covers who decides what.
 
-For security issues, do **not** open a public issue. See [SECURITY.md](SECURITY.md).
+For security issues, do **not** open a public issue. See [SECURITY.md](SECURITY.md). [ASSURANCE.md](ASSURANCE.md) sets out why the design meets its security requirements.
 
 ## License
 

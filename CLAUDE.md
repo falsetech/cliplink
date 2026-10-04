@@ -30,6 +30,7 @@ app/                      App Router: pages + API routes
   rooms/[code]/route.ts   GET — fetch room
   rooms/[code]/clips/     POST — send clip; GET — poll clips after id
   rooms/[code]/socket/    GET — WebSocket upgrade (clips + WebRTC signaling)
+proxy.ts                  Content-Security-Policy, with a per-request script nonce
 components/
   cliplink-app.tsx        The room experience (client component)
   cliplink/               Room UI, sheets and hooks
@@ -75,6 +76,7 @@ importing from `@/lib/cliplink/...` either way.
 - **TTL is refreshed on write, not on read.** `appendClip` and `touchRoom` extend a room's life; polling must not. This was a deliberate fix — do not reintroduce read-side refresh.
 - **Rate limiting fails open** by design. Preserve that on Redis errors.
 - **No env var may be required at build time.** CI builds with no credentials at all.
+- **The CSP depends on a per-request nonce.** `proxy.ts` generates it and the root layout reads it through `headers()`, so every page must stay dynamically rendered — a statically rendered page has no nonce and its scripts are blocked. The matcher covers pages only: keep `/rooms` and `/share-target` out of it, and allow any new origin or resource type in the policy there.
 
 ### Stack
 

@@ -9,7 +9,6 @@ import {
   type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent,
 } from "react";
-import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 
 import { ClipEditor } from "@/components/cliplink/clip-editor";
@@ -46,6 +45,12 @@ import { usePresence } from "@/components/cliplink/use-presence";
 import { useShortcuts } from "@/components/cliplink/use-shortcuts";
 import { useToasts } from "@/components/cliplink/use-toasts";
 
+import {
+  disableNotifications,
+  enableNotifications,
+  notificationsEnabled,
+  subscribeToNotifications,
+} from "@/lib/cliplink/attention";
 import { writeClipboard } from "@/lib/cliplink/clipboard";
 import { MAX_CLIP_CHARS, MAX_FILES_PER_SHARE } from "@/lib/cliplink/constants";
 import {
@@ -146,8 +151,6 @@ export default function CliplinkApp({
   repoLink,
   share,
 }: CliplinkAppProps) {
-  const router = useRouter();
-
   const [joinCode, setJoinCode] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [showQrSheet, setShowQrSheet] = useState(false);
@@ -190,6 +193,11 @@ export default function CliplinkApp({
 
   const { resolvedTheme, setTheme } = useTheme();
   const { push: pushToast } = useToasts();
+  const notificationsOn = useSyncExternalStore(
+    subscribeToNotifications,
+    notificationsEnabled,
+    () => false,
+  );
 
   const senderIdRef = useRef("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -307,8 +315,9 @@ export default function CliplinkApp({
     const tabId = shareTabIdRef.current;
     switch (message.type) {
       case "probe":
-        // Only a room page takes shares; the share page itself is not one.
-        if (initialRoomCode && inRoom && room.roomCode) {
+        // Only a tab that is in a room takes shares, whichever page it loaded
+        // as; the share page still choosing one is not.
+        if (inRoom && room.roomCode) {
           channel?.postMessage({ type: "here", tabId, code: room.roomCode });
         }
         return;
@@ -323,7 +332,7 @@ export default function CliplinkApp({
         }
         return;
       case "deliver":
-        if (message.tabId === tabId && initialRoomCode && inRoom) {
+        if (message.tabId === tabId && inRoom) {
           applyShare(message.share);
           channel?.postMessage({ type: "delivered", tabId });
         }
@@ -430,9 +439,8 @@ export default function CliplinkApp({
     }
   }
 
-  // A share carried here from /share by creating or joining a room. Only room
-  // pages take it: the /share page's own brief room view is about to be
-  // replaced by one.
+  // A share held on /share until a room was created or joined. The room opens
+  // in this same tab, so it is claimed as soon as the room is readable.
   const claimHeldShare = useEffectEvent(() => {
     const pending = takeHeldShare();
     if (pending) {
@@ -441,10 +449,10 @@ export default function CliplinkApp({
   });
 
   useEffect(() => {
-    if (initialRoomCode && inRoom) {
+    if (inRoom) {
       claimHeldShare();
     }
-  }, [initialRoomCode, inRoom]);
+  }, [inRoom]);
 
   function offerQueuedShareFiles() {
     const queued = queuedShareFilesRef.current;
@@ -478,11 +486,41 @@ export default function CliplinkApp({
     // It stays a fragment and never becomes a path segment or a query
     // parameter: those are sent to the server, and this must not be.
     const fragment = code ? roomKeyFragment(encodedKey) : "";
-    router.replace(code ? `/room/${code}${fragment}` : "/", { scroll: false });
+    const path = code ? `/room/${code}` : "/";
+    // Written through the History API, which the router follows, and never
+    // navigated to. The landing page and the room page each render their own
+    // copy of this component, so a navigation between them unmounts the one
+    // holding the live room: the landing page flashes back, the socket drops,
+    // and the room is joined a second time from the URL. The router also
+    // remembers the page it loaded with its fragment still attached and
+    // appends the one it is handed to that, which turns `#k=…` into
+    // `#k=…#k=…` — a key that no longer parses, and so a room that opens
+    // locked on the next reload.
+    window.history.replaceState(null, "", `${path}${fragment}`);
   }
 
   function toggleTheme() {
     setTheme(resolvedTheme === "light" ? "dark" : "light");
+  }
+
+  async function toggleNotifications() {
+    if (notificationsOn) {
+      disableNotifications();
+      pushToast("Notifications off.", "info");
+      return;
+    }
+
+    const result = await enableNotifications();
+    if (result === "on") {
+      pushToast("You'll be notified of clips that arrive in the background.", "success");
+    } else if (result === "denied") {
+      pushToast(
+        "Notifications are blocked. Allow them in the browser's site settings.",
+        "info",
+      );
+    } else {
+      pushToast("This browser does not support notifications.", "info");
+    }
   }
 
   function closeOverlays() {
@@ -887,6 +925,8 @@ export default function CliplinkApp({
       void copyHistoryItem(latestIncoming?.text ?? ""),
     focusEditor: () => editor.focus(),
     toggleTheme,
+    notificationsOn,
+    toggleNotifications: () => void toggleNotifications(),
     openShortcuts: () => setShowShortcuts(true),
     openPalette: () => setShowPalette(true),
   });

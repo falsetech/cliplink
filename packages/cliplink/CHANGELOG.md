@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+- **A room link with its key fragment written twice now opens the room.** The web app could leave `#k=…#k=…` in the address bar of a room opened by its link, and that address is what gets copied and passed on. `parseRoomKeyFromHash` handed the whole of it to `URLSearchParams`, which read the key as `KEY#k=KEY` — not a key, so the room opened locked in the app and `--room <url>` and `--key <url>` failed in the CLI. A key holds no `#`, so the fragment is now read only as far as a second one. The app no longer writes such links; this is for the ones already out.
+
+No wire changes.
+
 ## 0.2.1
 
 - **A saved room is now matched by its code and its server, not by the code alone.** A room code is six characters and unique only to the server that issued it, so the same code names different rooms on a dev server and on a deployment. `findSavedRoom` consulted only the code, so joining a code against one origin could be handed the key `--save` had written for another — which fails to decrypt, and is the wrong room's key besides. The origin was already recorded in `rooms.json`; it is now read. Saving matches the same way, so the same code can be held for two servers at once rather than one evicting the other. Trailing slashes, host case and a default port do not make two origins different; a path does. `rooms --forget` still takes a code alone, and so now forgets it on every server it was saved against, rather than the first one found.
