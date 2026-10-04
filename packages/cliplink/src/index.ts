@@ -6,7 +6,9 @@ export {
   generateRoomKey,
   importRoomKey,
   normalizeRoomKey,
+  openClipMeta,
   openSignal,
+  sealClipMeta,
   sealSignal,
   type RoomKey,
 } from "./crypto.ts";
@@ -37,6 +39,8 @@ export {
   CIPHERTEXT_PATTERN,
   MAX_CLIP_CHARS,
   MAX_CLIP_CIPHERTEXT_CHARS,
+  MAX_CLIP_META_CHARS,
+  MAX_DEVICE_NAME_CHARS,
   MAX_FILE_BYTES,
   MAX_FILE_NAME_CHARS,
   MAX_ROOM_TTL_SECONDS,
@@ -49,9 +53,12 @@ export {
   ROOM_TTL_SECONDS,
 } from "./protocol.ts";
 export {
+  normalizeDeviceName,
   parseClientMessage,
+  parseClipMeta,
   parseSignalPayload,
   validateClipCiphertext,
+  validateClipMeta,
   validateClipText,
   validateKeyCheck,
   validatePeerId,
@@ -63,6 +70,7 @@ export { createWebSocketTransport } from "./ws.ts";
 export type {
   ApiError,
   Clip,
+  ClipMeta,
   CreateClipRequest,
   CreateClipResponse,
   CreateRoomRequest,

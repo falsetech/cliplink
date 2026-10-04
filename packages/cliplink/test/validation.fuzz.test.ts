@@ -5,6 +5,7 @@ import fc from "fast-check";
 
 import {
   CIPHERTEXT_PATTERN,
+  MAX_DEVICE_NAME_CHARS,
   MAX_ROOM_TTL_SECONDS,
   MAX_SIGNAL_BYTES,
   MIN_ROOM_TTL_SECONDS,
@@ -194,6 +195,32 @@ describe("parseSignalPayload, against arbitrary input", () => {
       ),
     );
     acceptsSomething(accepted, "the payloads it accepts");
+  });
+
+  it("keeps only a bounded name and a valid peer from a presence signal", () => {
+    let accepted = 0;
+    fc.assert(
+      fc.property(
+        fc.dictionary(fc.string(), json, { maxKeys: 4 }),
+        fc.oneof(json, fc.string()),
+        fc.oneof(json, fc.constant("peer-abcdef")),
+        (extra, name, peer) => {
+          const payload = parseSignalPayload({ ...extra, type: "presence", name, peer });
+          if (payload === null) {
+            return;
+          }
+          accepted += 1;
+          assert.equal(payload.type, "presence");
+          assert.deepEqual(Object.keys(payload).sort(), ["name", "peer", "type"]);
+          if (payload.type === "presence") {
+            assert.ok(payload.name.length > 0);
+            assert.ok([...payload.name].length <= MAX_DEVICE_NAME_CHARS);
+            assert.ok(validatePeerId(payload.peer));
+          }
+        },
+      ),
+    );
+    acceptsSomething(accepted, "the presence signals it accepts");
   });
 
   it("keeps nothing but the type from a payload it recognises", () => {

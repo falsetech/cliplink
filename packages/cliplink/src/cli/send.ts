@@ -1,4 +1,10 @@
-import { MAX_CLIP_CHARS, validateClipText } from "../index.ts";
+import { hostname } from "node:os";
+
+import {
+  MAX_CLIP_CHARS,
+  normalizeDeviceName,
+  validateClipText,
+} from "../index.ts";
 
 import type { ParsedArgs } from "./args.ts";
 import { createRandomSenderId } from "./identity.ts";
@@ -50,6 +56,9 @@ export async function send(
     await session.transport.sendClip(session.code, {
       text: validated.text,
       senderId: createRandomSenderId(),
+      // A name and no device id: the name is sealed and only the room reads
+      // it, but an id would outlive the run, and this CLI keeps no identity.
+      from: { name: args.name ?? normalizeDeviceName(hostname()) ?? "CLI" },
     });
 
     if (session.created) {

@@ -22,6 +22,8 @@ type RoomHeaderProps = {
   expiresIn: number | null;
   /** Devices in the room, including this one. */
   deviceCount: number;
+  devicesOpen: boolean;
+  onOpenDevices: () => void;
 };
 
 export function RoomHeader({
@@ -34,6 +36,8 @@ export function RoomHeader({
   onLeave,
   expiresIn,
   deviceCount,
+  devicesOpen,
+  onOpenDevices,
 }: RoomHeaderProps) {
   return (
     <div className="flex flex-col items-stretch justify-between gap-4 md:flex-row md:items-center">
@@ -51,7 +55,19 @@ export function RoomHeader({
         {/* Status, not a label: "5h 57m" stays lowercase so it reads as
             units rather than initials. */}
         <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-          {deviceCount > 1 ? <span>{deviceCount} devices</span> : null}
+          {deviceCount > 1 ? (
+            <Button
+              className="-mx-2 text-sm font-normal text-muted-foreground"
+              variant="ghost"
+              size="xs"
+              aria-haspopup="dialog"
+              aria-expanded={devicesOpen}
+              aria-keyshortcuts="D"
+              onClick={onOpenDevices}
+            >
+              {deviceCount} devices
+            </Button>
+          ) : null}
           {deviceCount > 1 && expiresIn !== null ? (
             <span aria-hidden="true">·</span>
           ) : null}

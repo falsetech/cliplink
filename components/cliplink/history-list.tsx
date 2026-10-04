@@ -116,7 +116,9 @@ function HistoryRow({
     <div className={cn(rowClass, arriving && "arrival-cue")}>
       <DirectionLabel
         incoming={incoming}
-        label={incoming ? "Received" : "Sent"}
+        // The arrow already says which way it went, so a received clip can
+        // spend its label on who sent it. Older clients send no name.
+        label={incoming ? (clip.from?.name ?? "Received") : "Sent"}
         ts={clip.ts}
       />
 

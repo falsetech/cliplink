@@ -12,6 +12,7 @@ export {
   MAX_ROOM_TTL_SECONDS,
   MAX_SIGNAL_BYTES,
   MIN_ROOM_TTL_SECONDS,
+  MAX_DEVICE_NAME_CHARS,
   POLL_INTERVAL_MS,
   ROOM_CODE_LENGTH,
   ROOM_KEY_CHARS,
@@ -20,7 +21,11 @@ export {
 } from "@thebkht/cliplink";
 
 export const MAX_ROOM_CLIPS = 50;
-export const MAX_SESSION_HISTORY = 20;
+/**
+ * The same as what the room stores: a reload restores the room's clips, and a
+ * shorter list here would hide some of them for no reason the user could see.
+ */
+export const MAX_SESSION_HISTORY = MAX_ROOM_CLIPS;
 /**
  * Rate limits, as a burst and a regeneration rate rather than a quota per
  * window. A window resets on the clock, so a caller can spend the whole

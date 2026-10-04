@@ -5,6 +5,8 @@ import { createRandomPeerId, createRandomSenderId } from "../src/cli/identity.ts
 import {
   MAX_CLIP_CHARS,
   MAX_CLIP_CIPHERTEXT_CHARS,
+  MAX_CLIP_META_CHARS,
+  MAX_DEVICE_NAME_CHARS,
   MAX_FILE_BYTES,
   MAX_FILE_NAME_CHARS,
   MAX_ROOM_TTL_SECONDS,
@@ -14,9 +16,12 @@ import {
   ROOM_TTL_SECONDS,
 } from "../src/protocol.ts";
 import {
+  normalizeDeviceName,
   parseClientMessage,
+  parseClipMeta,
   parseSignalPayload,
   validateClipCiphertext,
+  validateClipMeta,
   validateClipText,
   validateKeyCheck,
   validatePeerId,
@@ -273,6 +278,30 @@ describe("parseSignalPayload", () => {
     });
   });
 
+  it("accepts a presence signal and rebuilds it from the fields it knows", () => {
+    assert.deepEqual(
+      parseSignalPayload({
+        type: "presence",
+        name: "  Work\nlaptop ",
+        peer: "peer-abcdef",
+        smuggled: "x",
+      }),
+      { type: "presence", name: "Work laptop", peer: "peer-abcdef" },
+    );
+  });
+
+  it("rejects a presence signal with no usable name or no valid peer", () => {
+    for (const value of [
+      { type: "presence", peer: "peer-abcdef" },
+      { type: "presence", name: "   ", peer: "peer-abcdef" },
+      { type: "presence", name: 42, peer: "peer-abcdef" },
+      { type: "presence", name: "Laptop" },
+      { type: "presence", name: "Laptop", peer: "short" },
+    ]) {
+      assert.equal(parseSignalPayload(value), null, JSON.stringify(value));
+    }
+  });
+
   it("hands file signals to the file-transfer parser", () => {
     assert.deepEqual(parseSignalPayload({ type: "hello" }), { type: "hello" });
     assert.deepEqual(parseSignalPayload(OFFER), OFFER);
@@ -389,5 +418,67 @@ describe("parseClientMessage", () => {
     assert.equal(rawWith(room).length, MAX_SIGNAL_BYTES);
     assert.notEqual(parseClientMessage(rawWith(room)), null);
     assert.equal(parseClientMessage(rawWith(room + 1)), null);
+  });
+});
+
+describe("validateClipMeta", () => {
+  it("accepts a clip with no metadata, as older clients send", () => {
+    assert.deepEqual(validateClipMeta(undefined), { ok: true, meta: undefined });
+    assert.deepEqual(validateClipMeta(null), { ok: true, meta: undefined });
+  });
+
+  it("accepts ciphertext up to the cap, and nothing longer", () => {
+    const atCap = `v1.${"a".repeat(MAX_CLIP_META_CHARS - 3)}`;
+    assert.deepEqual(validateClipMeta(atCap), { ok: true, meta: atCap });
+    assert.equal(validateClipMeta(`${atCap}a`).ok, false);
+  });
+
+  it("rejects what is not ciphertext, plaintext metadata included", () => {
+    for (const value of [...NOT_STRINGS, "", "Laptop", '{"name":"Laptop"}', "v2.abc"]) {
+      assert.equal(validateClipMeta(value).ok, false, JSON.stringify(value));
+    }
+  });
+});
+
+describe("normalizeDeviceName", () => {
+  it("collapses a name to one trimmed line", () => {
+    assert.equal(normalizeDeviceName("  Work \t laptop\n"), "Work laptop");
+  });
+
+  it("strips control and invisible formatting characters", () => {
+    assert.equal(normalizeDeviceName("Lap\u0000top\u202E"), "Lap top");
+  });
+
+  it("cuts at the cap by character, not by UTF-16 unit", () => {
+    const name = normalizeDeviceName("😀".repeat(MAX_DEVICE_NAME_CHARS + 5));
+    assert.equal(name, "😀".repeat(MAX_DEVICE_NAME_CHARS));
+  });
+
+  it("returns null when nothing is left to show", () => {
+    for (const value of [...NOT_STRINGS, undefined, null, "", "  \n ", "\u200B"]) {
+      assert.equal(normalizeDeviceName(value), null, JSON.stringify(value));
+    }
+  });
+});
+
+describe("parseClipMeta", () => {
+  it("keeps a name and a well-formed device id, and nothing else", () => {
+    assert.deepEqual(
+      parseClipMeta({ name: " Phone ", device: "device-0123456789", evil: "x" }),
+      { name: "Phone", device: "device-0123456789" },
+    );
+  });
+
+  it("keeps the name of a sender that carries no device id", () => {
+    assert.deepEqual(parseClipMeta({ name: "ci-runner" }), { name: "ci-runner" });
+    assert.deepEqual(parseClipMeta({ name: "ci-runner", device: "no" }), {
+      name: "ci-runner",
+    });
+  });
+
+  it("rejects metadata with no usable name", () => {
+    for (const value of [null, "Phone", [], {}, { name: "" }, { device: "device-0123456789" }]) {
+      assert.equal(parseClipMeta(value), null, JSON.stringify(value));
+    }
   });
 });

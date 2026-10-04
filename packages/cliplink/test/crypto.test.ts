@@ -9,7 +9,9 @@ import {
   generateRoomKey,
   importRoomKey,
   normalizeRoomKey,
+  openClipMeta,
   openSignal,
+  sealClipMeta,
   sealSignal,
 } from "../src/crypto.ts";
 import { ROOM_KEY_CHARS, ROOM_KEY_CHECK_CHARS } from "../src/protocol.ts";
@@ -209,5 +211,65 @@ describe("deriveOpenRoomKey", () => {
       deriveOpenRoomKey("AAAAAA"),
     ]);
     assert.notEqual(first.encoded, second.encoded);
+  });
+});
+
+/**
+ * Sealed by the build that introduced clip metadata, under the legacy key and
+ * beside the legacy clip. Pinned for the same reason the vectors above are: a
+ * later build that cannot open it has stopped attributing clips already in
+ * rooms.
+ */
+const META =
+  "v1.6aaVLjWYoFoPjD2xnttQiqnpFpKYR1cMs8ZJ5TXQ4N6daWgA9zbTUrKI88uXEzI5nYy7-Zh3ZzrpkwHfyliFs5FwpLsHhIf3EJBnLoUR";
+
+describe("clip metadata", () => {
+  const TEXT = LEGACY.clip;
+  const FROM = { name: "Old laptop", device: "device-0123456789" };
+
+  it("opens metadata sealed by the build that introduced it", async () => {
+    const key = await importRoomKey(LEGACY.encoded);
+    assert.ok(key);
+    assert.deepEqual(await openClipMeta(key, ROOM, TEXT, META), FROM);
+  });
+
+  it("round-trips beside the text it was sealed with", async () => {
+    const key = await generateRoomKey();
+    const text = await encryptClipText(key, ROOM, "hello");
+    const meta = await sealClipMeta(key, ROOM, text, FROM);
+    assert.deepEqual(await openClipMeta(key, ROOM, text, meta), FROM);
+  });
+
+  it("will not open beside another clip's text, so attribution cannot be moved", async () => {
+    const key = await generateRoomKey();
+    const [text, other] = await Promise.all([
+      encryptClipText(key, ROOM, "hello"),
+      encryptClipText(key, ROOM, "hello"),
+    ]);
+    const meta = await sealClipMeta(key, ROOM, text, FROM);
+    assert.equal(await openClipMeta(key, ROOM, other, meta), null);
+  });
+
+  it("will not open in another room or under another key", async () => {
+    const [key, wrong] = await Promise.all([generateRoomKey(), generateRoomKey()]);
+    const text = await encryptClipText(key, ROOM, "hello");
+    const meta = await sealClipMeta(key, ROOM, text, FROM);
+    assert.equal(await openClipMeta(key, "Q2W3E4", text, meta), null);
+    assert.equal(await openClipMeta(wrong, ROOM, text, meta), null);
+  });
+
+  it("is not interchangeable with clip text or a signal, in either direction", async () => {
+    const key = await generateRoomKey();
+    const text = await encryptClipText(key, ROOM, "hello");
+    const meta = await sealClipMeta(key, ROOM, text, FROM);
+
+    // Offered as a clip's text, it would be copied to a clipboard.
+    assert.equal(await decryptClipText(key, ROOM, meta), null);
+    assert.equal(await openSignal(key, ROOM, meta), null);
+    assert.equal(await openClipMeta(key, ROOM, text, text), null);
+    assert.equal(
+      await openClipMeta(key, ROOM, text, await sealSignal(key, ROOM, FROM)),
+      null,
+    );
   });
 });

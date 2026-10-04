@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+- **Clips say who sent them.** A clip may now carry `meta`: the sender's name and, from a browser, an id for that browser within the room, sealed under a new `cliplink:meta` subkey. The seal is bound to the clip's own text ciphertext as well as to the room, so the server can neither move one clip's attribution onto another nor offer a metadata ciphertext as a clip's text. `createEncryptedTransport` seals a `from` on the way out and opens it on the way in; a `from` or `meta` supplied from the other side of it is discarded, so the only sender a caller ever sees is one this package opened.
+- **A `presence` signal.** `{ type: "presence", name, peer }`, sealed like every other signal, tells the room what a device is called. `peer` repeats the sender's id inside the seal and a signal whose `peer` is not the peer it came from is dropped, since the `from` beside a signal is the server's word.
+- **`send --name <name>`.** The name a clip is shown under; the default is the machine's hostname. The CLI sends a name and no device id — it keeps no identity between runs, and still does not.
+- **`recv --json` gains `name`**, present when the clip says who sent it.
+- `normalizeDeviceName`, `parseClipMeta`, `validateClipMeta`, `sealClipMeta`, `openClipMeta`, `MAX_DEVICE_NAME_CHARS` and `MAX_CLIP_META_CHARS` are exported. `RoomKey` gains `metaKey`.
+
+Wire changes, all additive: an optional sealed `meta` on a clip and on the clip `POST`, and one new sealed signal type. A client from before this release ignores both — it drops a signal type it does not know and never reads `meta` — and its own clips arrive unattributed and otherwise unchanged.
+
 ## 0.2.2
 
 - **A room link with its key fragment written twice now opens the room.** The web app could leave `#k=…#k=…` in the address bar of a room opened by its link, and that address is what gets copied and passed on. `parseRoomKeyFromHash` handed the whole of it to `URLSearchParams`, which read the key as `KEY#k=KEY` — not a key, so the room opened locked in the app and `--room <url>` and `--key <url>` failed in the CLI. A key holds no `#`, so the fragment is now read only as far as a second one. The app no longer writes such links; this is for the ones already out.
