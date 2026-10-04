@@ -84,6 +84,20 @@ export function createEncryptedTransport(
    */
   const gone = new Set<number>();
   let reconciling: Promise<number[]> | null = null;
+  /**
+   * Bumped whenever the room changes. A look that was in flight for the room
+   * before must not be mistaken for one about the room now: its count and its
+   * missing clips are another room's.
+   */
+  let epoch = 0;
+
+  function startOver(gen: number | null) {
+    epoch += 1;
+    reconciling = null;
+    seen.clear();
+    gone.clear();
+    knownGen = gen;
+  }
 
   function markGone(ids: number[]) {
     for (const id of ids) {
@@ -108,18 +122,27 @@ export function createEncryptedTransport(
 
   /** Resolves with the clips that turned out to be gone. */
   function reconcile(code: RoomCode, gen: number) {
-    reconciling ??= (async () => {
+    const started = epoch;
+    const look = (reconciling ??= (async () => {
       // Only what was known before asking: a clip that arrives while the
       // snapshot is in flight is newer than it, not missing from it.
       const before = [...seen];
       const response = await wire.connect(code);
+      if (started !== epoch) {
+        return [];
+      }
       const live = new Set(response.clips.map((clip) => clip.id));
       knownGen = Math.max(knownGen ?? 0, gen, response.room.eraseGen ?? 0);
       return markGone(before.filter((id) => !live.has(id)));
-    })().finally(() => {
-      reconciling = null;
-    });
-    return reconciling;
+    })());
+    void look
+      .catch(() => {})
+      .finally(() => {
+        if (reconciling === look) {
+          reconciling = null;
+        }
+      });
+    return look;
   }
 
   async function decryptClips(sealedClips: Clip[]): Promise<Clip[]> {
@@ -143,6 +166,10 @@ export function createEncryptedTransport(
           ...clip,
           text: text ?? UNDECRYPTABLE_TEXT,
           ...(from ? { from } : {}),
+          // Either copy makes it one: the server can strip the flag beside
+          // the clip but not the one sealed with it, and a sender with no
+          // name to seal has only the flag.
+          ...(clip.burn === true || from?.burn ? { burn: true as const } : {}),
         };
       }),
     );
@@ -157,11 +184,15 @@ export function createEncryptedTransport(
 
   return {
     setRoomKey(nextRoomCode, key) {
+      if (nextRoomCode !== roomCode) {
+        startOver(null);
+      }
       roomCode = nextRoomCode;
       roomKey = key;
     },
 
     clearRoomKey() {
+      startOver(null);
       roomCode = null;
       roomKey = null;
     },
@@ -173,9 +204,7 @@ export function createEncryptedTransport(
         throw new RoomKeyMismatchError();
       }
       // A fresh snapshot is the whole truth about the room: start over from it.
-      seen.clear();
-      gone.clear();
-      knownGen = response.room.eraseGen ?? null;
+      startOver(response.room.eraseGen ?? null);
       return { ...response, clips: await decryptClips(response.clips) };
     },
 
@@ -185,7 +214,10 @@ export function createEncryptedTransport(
         throw new Error("This room is encrypted and no key is loaded.");
       }
 
-      const { from } = payload;
+      const from =
+        payload.from && payload.burn
+          ? { ...payload.from, burn: true as const }
+          : payload.from;
       const text = await encryptClipText(key, code, payload.text);
       const response = await wire.sendClip(code, {
         ...withoutSender(payload),

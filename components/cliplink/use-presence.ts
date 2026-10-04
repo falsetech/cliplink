@@ -3,7 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { getDeviceName, subscribeToDeviceName } from "@/lib/cliplink/device";
-import type { PeerId, SignalPayload } from "@/lib/cliplink/types";
+import type {
+  PeerId,
+  RoomCapability,
+  SignalPayload,
+} from "@/lib/cliplink/types";
+
+/** What this build announces it can do. */
+const CAPABILITIES: RoomCapability[] = ["burn"];
 
 type PresenceOptions = {
   /** This page load's own id, which a name is announced under. */
@@ -15,7 +22,13 @@ export type PresentDevice = {
   id: PeerId;
   /** Null for a peer that has not said, as a client older than names never will. */
   name: string | null;
+  /** Empty for a peer that has announced none, which an older client never does. */
+  caps: RoomCapability[];
 };
+
+type Peer = Omit<PresentDevice, "id">;
+
+const UNANNOUNCED: Peer = { name: null, caps: [] };
 
 /**
  * Which other devices are in the room, derived from the signaling traffic
@@ -28,11 +41,19 @@ export type PresentDevice = {
  * other signal, so the server relays names it cannot read.
  */
 export function usePresence({ peerId, sendSignal }: PresenceOptions) {
-  const [peers, setPeers] = useState<Map<PeerId, string | null>>(new Map());
+  const [peers, setPeers] = useState<Map<PeerId, Peer>>(new Map());
 
   const announce = useCallback(
     (to?: PeerId) => {
-      sendSignal({ type: "presence", name: getDeviceName(), peer: peerId }, to);
+      sendSignal(
+        {
+          type: "presence",
+          name: getDeviceName(),
+          peer: peerId,
+          caps: CAPABILITIES,
+        },
+        to,
+      );
     },
     [peerId, sendSignal],
   );
@@ -61,16 +82,17 @@ export function usePresence({ peerId, sendSignal }: PresenceOptions) {
 
       if (payload.type === "presence") {
         setPeers((current) =>
-          current.get(from) === payload.name
-            ? current
-            : new Map(current).set(from, payload.name),
+          new Map(current).set(from, {
+            name: payload.name,
+            caps: payload.caps ?? [],
+          }),
         );
         return;
       }
 
       // Any signal at all proves the peer is there.
       setPeers((current) =>
-        current.has(from) ? current : new Map(current).set(from, null),
+        current.has(from) ? current : new Map(current).set(from, UNANNOUNCED),
       );
     },
     [announce, sendSignal],
@@ -79,7 +101,7 @@ export function usePresence({ peerId, sendSignal }: PresenceOptions) {
   const reset = useCallback(() => setPeers(new Map()), []);
 
   const devices = useMemo<PresentDevice[]>(
-    () => [...peers].map(([id, name]) => ({ id, name })),
+    () => [...peers].map(([id, peer]) => ({ id, ...peer })),
     [peers],
   );
 

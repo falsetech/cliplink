@@ -112,6 +112,8 @@ describe("createHttpClient", () => {
 
     assert.equal(calls[0].url, `${BASE}/rooms/X7KP2M/clips`);
     assert.equal(calls[0].init?.method, "DELETE");
+    // So a delete begun as a tab closes still reaches the server.
+    assert.equal(calls[0].init?.keepalive, true);
     assert.equal(
       (calls[0].init?.headers as Record<string, string>).Authorization,
       "Bearer TOKEN",

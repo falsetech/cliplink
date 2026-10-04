@@ -44,9 +44,12 @@ function fakeWire() {
       senderId: string;
       meta?: string;
       from?: unknown;
+      burn?: true;
     }>,
     sentSignals: [] as Array<{ sealed: string; to?: string }>,
     pollGen: undefined as number | undefined,
+    /** Behave as a server from before one-time clips: store it as ordinary. */
+    dropBurn: false,
     connects: 0,
     erases: [] as Array<{ code: string; token: string; request: unknown }>,
     eraseResponse: { ids: [] as number[], gen: 0 },
@@ -74,6 +77,7 @@ function fakeWire() {
           senderId: payload.senderId,
           ts: 1_700_000_000,
           ...(payload.meta ? { meta: payload.meta } : {}),
+          ...(payload.burn && !state.dropBurn ? { burn: true as const } : {}),
         },
         expiresAt: 4_242,
       };
@@ -477,6 +481,34 @@ describe("createEncryptedTransport", () => {
       assert.deepEqual([...response.ids].sort(), [1, 2]);
     });
 
+    it("discards a look that was under way when the room changed", async () => {
+      const { transport, state, wire } = await joined();
+      const connect = wire.connect;
+      let release = () => {};
+      wire.connect = () =>
+        new Promise((resolve) => {
+          release = () => resolve(connect(ROOM));
+        });
+      await serverNow(state, [3], 9);
+      state.pollGen = 9;
+      const stale = transport.pollClips(ROOM, 3);
+      await settle();
+
+      // Another room, joined while the first room's look is still out.
+      transport.setRoomKey(OTHER_ROOM, key);
+      release();
+      const response = await stale;
+      wire.connect = connect;
+
+      assert.equal("removed" in response, false);
+      // The other room's count is untouched by the first room's answer.
+      state.pollGen = 1;
+      await serverNow(state, [], 1);
+      state.connects = 0;
+      await transport.pollClips(OTHER_ROOM, 0);
+      assert.equal(state.connects, 0, "a first count is taken as given, not chased");
+    });
+
     it("starts over from a fresh connect", async () => {
       const { transport, state } = await joined();
       state.handlers = null;
@@ -489,6 +521,78 @@ describe("createEncryptedTransport", () => {
 
       assert.equal(state.connects, 0);
       assert.equal("removed" in response, false);
+    });
+  });
+
+  describe("one-time clips", () => {
+    const FROM = { name: "Work laptop" };
+
+    it("says so beside the clip and again inside the seal", async () => {
+      const { transport, state } = setup();
+
+      await transport.sendClip(ROOM, { text: "hunter2", senderId: "cli-sender-1", from: FROM, burn: true });
+
+      const [sent] = state.sentClips;
+      assert.equal(sent.burn, true);
+      assert.ok(sent.meta);
+      assert.deepEqual(await openClipMeta(key, ROOM, sent.text, sent.meta), {
+        ...FROM,
+        burn: true,
+      });
+    });
+
+    it("leaves an ordinary clip's metadata saying nothing of it", async () => {
+      const { transport, state } = setup();
+
+      await transport.sendClip(ROOM, { text: "hi", senderId: "cli-sender-1", from: FROM });
+
+      const [sent] = state.sentClips;
+      assert.equal("burn" in sent, false);
+      assert.deepEqual(await openClipMeta(key, ROOM, sent.text, sent.meta!), FROM);
+    });
+
+    it("reports back whether the server kept the flag, so a sender can tell it did not", async () => {
+      const { transport, state } = setup();
+
+      const kept = await transport.sendClip(ROOM, { text: "a", senderId: "cli-sender-1", burn: true });
+      state.dropBurn = true;
+      const dropped = await transport.sendClip(ROOM, { text: "b", senderId: "cli-sender-1", burn: true });
+
+      assert.equal(kept.clip.burn, true);
+      assert.equal("burn" in dropped.clip, false);
+    });
+
+    it("reads a clip as one-time from the flag beside it", async () => {
+      const { transport, state } = setup();
+      state.roomClips = [{ ...(await sealedClip(1, "hunter2")), burn: true }];
+
+      const { clips } = await transport.connect(ROOM);
+
+      assert.equal(clips[0].burn, true);
+    });
+
+    it("still reads it as one-time when the server has stripped the flag", async () => {
+      const { transport, state } = setup();
+      const sealed = await sealedClip(1, "hunter2");
+      state.roomClips = [
+        {
+          ...sealed,
+          meta: await sealClipMeta(key, ROOM, sealed.text, { ...FROM, burn: true }),
+        },
+      ];
+
+      const { clips } = await transport.connect(ROOM);
+
+      assert.equal(clips[0].burn, true);
+    });
+
+    it("does not call an ordinary clip one-time", async () => {
+      const { transport, state } = setup();
+      state.roomClips = [await sealedClip(1, "hi")];
+
+      const { clips } = await transport.connect(ROOM);
+
+      assert.equal("burn" in clips[0], false);
     });
   });
 

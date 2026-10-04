@@ -85,7 +85,11 @@ import {
   roomKeyFragment,
 } from "@/lib/cliplink/room-code";
 import { createRandomId, getSessionSenderId } from "@/lib/cliplink/session";
-import type { RoomCode, RoomStatus } from "@/lib/cliplink/types";
+import type {
+  RoomCode,
+  RoomStatus,
+  SessionClip,
+} from "@/lib/cliplink/types";
 import { validateRoomCode } from "@/lib/cliplink/validation";
 import { cn } from "@/lib/utils";
 
@@ -162,6 +166,9 @@ export default function CliplinkApp({
   const [showPalette, setShowPalette] = useState(false);
   const [confirmingLeave, setConfirmingLeave] = useState(false);
   const [confirmingClear, setConfirmingClear] = useState(false);
+  // Whether the next clip goes as a one-time clip. Off again after each send:
+  // a password is the exception, and the next thing typed is usually not one.
+  const [burn, setBurn] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   // The room being joined by code alone, waiting on a key the link never
@@ -693,11 +700,6 @@ export default function CliplinkApp({
   }
 
   /**
-   * Leaving discards the room and its history with no way back, so it asks
-   * once. The confirmation lapses on its own rather than sticking around as a
-   * second thing to dismiss.
-   */
-  /**
    * Two taps, like leaving, and for a better reason: this deletes the room's
    * clips on every device, and there is nothing to undo it with.
    */
@@ -727,6 +729,11 @@ export default function CliplinkApp({
     }
   }
 
+  /**
+   * Leaving discards the room and its history with no way back, so it asks
+   * once. The confirmation lapses on its own rather than sticking around as a
+   * second thing to dismiss.
+   */
   function requestLeave() {
     if (!confirmingLeave) {
       setConfirmingLeave(true);
@@ -767,8 +774,18 @@ export default function CliplinkApp({
 
     setIsBusy(true);
     try {
-      if (await room.send(text)) {
+      const oneTime = burn && room.erasable;
+      if (await room.send(text, { burn: oneTime })) {
         editor.reset();
+        setBurn(false);
+        if (oneTime && presence.devices.some((device) => !device.caps.includes("burn"))) {
+          // That device will show the clip like any other and never delete
+          // it. Said rather than left to be discovered.
+          pushToast(
+            "A device here is on an older version: it will show this clip and keep it.",
+            "info",
+          );
+        }
       }
     } finally {
       setIsBusy(false);
@@ -862,6 +879,15 @@ export default function CliplinkApp({
     } catch {
       pushToast("Could not share the room link.", "error");
     }
+  }
+
+  /** Copying a one-time clip someone else sent is reading it, which spends it. */
+  function copyClip(clip: SessionClip) {
+    if (clip.burn && clip.direction === "incoming") {
+      void room.consume(clip);
+      return;
+    }
+    void copyHistoryItem(clip.text);
   }
 
   async function copyHistoryItem(text: string) {
@@ -958,6 +984,9 @@ export default function CliplinkApp({
     hasUndo: Boolean(editor.clearedText),
     hasIncoming: Boolean(latestIncoming),
     canClearHistory: room.erasable && room.history.length > 0,
+    canBurn: room.erasable,
+    burn,
+    toggleBurn: () => setBurn((current) => !current),
     clearHistory: requestClearHistory,
     send: () => void sendClip(),
     copyRoomLink: () => void copyRoomLink(roomCode!),
@@ -976,8 +1005,11 @@ export default function CliplinkApp({
     pasteFromDevice: () => void editor.pasteFromDevice(),
     clearEditor: editor.clear,
     undoClear: editor.undoClear,
-    copyLatestIncoming: () =>
-      void copyHistoryItem(latestIncoming?.text ?? ""),
+    copyLatestIncoming: () => {
+      if (latestIncoming) {
+        copyClip(latestIncoming);
+      }
+    },
     focusEditor: () => editor.focus(),
     toggleTheme,
     notificationsOn,
@@ -993,7 +1025,7 @@ export default function CliplinkApp({
     onDigit: (index) => {
       const clip = room.history[index];
       if (clip) {
-        void copyHistoryItem(clip.text);
+        copyClip(clip);
       }
     },
     // Escape unwinds the most recent thing the user started, innermost first.
@@ -1131,6 +1163,9 @@ export default function CliplinkApp({
                   isBusy={isBusy}
                   canSend={canSend}
                   arrival={room.arrivalId !== null}
+                  burn={burn && room.erasable}
+                  canBurn={room.erasable}
+                  onToggleBurn={() => setBurn((current) => !current)}
                   fileInputRef={fileInputRef}
                   folderInputRef={folderInputRef}
                   editorRef={editorRef}
@@ -1159,7 +1194,7 @@ export default function CliplinkApp({
                   history={room.history}
                   arrivalId={room.arrivalId}
                   enteringIds={room.enteringIds}
-                  onCopy={(text) => void copyHistoryItem(text)}
+                  onCopy={copyClip}
                   onDelete={
                     room.erasable
                       ? (id) => void deleteHistoryItem(id)

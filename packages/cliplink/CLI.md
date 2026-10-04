@@ -35,6 +35,7 @@ cliplink link               Print the share link and QR for a room.
 | `--save` | Remember this room and key in the config file. |
 | `--ttl <seconds>` | Lifetime of a room being created (3600–86400). |
 | `--name <name>` | `send`: the name the clip is shown under. Default is the hostname. |
+| `--burn` | `send`: a one-time clip, deleted once another device reads it. |
 | `-1, --one` | `recv`: print the next clip, then exit. |
 | `--json` | `recv`: print each clip as a JSON object. |
 | `--last <n>` | `recv`: replay the last n clips before listening. |
@@ -67,8 +68,12 @@ The QR is printed only when stderr is a terminal, so it never lands in a file.
 `cliplink link` and `cliplink rooms` follow the same rule: the link, and the
 listing, are what you asked for, so they go to stdout and can be piped. Under
 `--json`, `recv` writes one JSON object per line — `id`, `text`, `senderId`,
-`ts`, and `name` when the clip says who sent it — still on stdout, still
-nothing else.
+`ts`, `name` when the clip says who sent it, and `burn` on a one-time clip —
+still on stdout, still nothing else.
+
+A one-time clip is deleted from the room once `recv` has printed it: printing
+it is reading it. `cliplink send --burn "$(pass show wifi)"` on one machine and
+`cliplink recv -r X7KP2M --one | pbcopy` on the other leaves nothing behind.
 
 ## Keys
 

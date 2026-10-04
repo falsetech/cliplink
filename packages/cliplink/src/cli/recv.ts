@@ -1,4 +1,4 @@
-import { POLL_INTERVAL_MS, type Clip } from "../index.ts";
+import { POLL_INTERVAL_MS, UNDECRYPTABLE_TEXT, type Clip } from "../index.ts";
 
 import type { ParsedArgs } from "./args.ts";
 import { createRandomPeerId } from "./identity.ts";
@@ -34,6 +34,8 @@ export async function recv(
     let stop: Stop = () => {};
     let printed = 0;
     let deadline: NodeJS.Timeout | null = null;
+    /** Deletions of one-time clips, which have to land before this exits. */
+    const burning: Promise<void>[] = [];
 
     const emit = (clips: Clip[]) => {
       const fresh = clips
@@ -47,6 +49,18 @@ export async function recv(
       for (const clip of fresh) {
         report.data(args.json ? line(clip) : clip.text);
         printed += 1;
+        if (clip.burn && clip.text !== UNDECRYPTABLE_TEXT) {
+          // Printing it is reading it, and reading a one-time clip spends it.
+          // One that would not open was not read, so it is left for a device
+          // that can: anyone with the room code can post a clip marked
+          // one-time, and must not thereby get this to delete things.
+          burning.push(
+            session.transport.eraseClips(session.code, { ids: [clip.id] }).then(
+              () => {},
+              () => report.warn("Could not delete a one-time clip after reading it."),
+            ),
+          );
+        }
         if (args.one) {
           finish(0);
           return;
@@ -63,8 +77,10 @@ export async function recv(
         clearTimeout(deadline);
       }
       stop();
-      session.transport.disconnect();
-      resolve(code);
+      void Promise.all(burning).then(() => {
+        session.transport.disconnect();
+        resolve(code);
+      });
     };
 
     signal?.addEventListener("abort", () => finish(0), { once: true });
@@ -136,6 +152,8 @@ function line(clip: Clip) {
     ts: clip.ts,
     // Absent for a sender that gave no name, as older clients do not.
     name: clip.from?.name,
+    // Present, and true, only on a one-time clip.
+    burn: clip.burn,
   });
 }
 

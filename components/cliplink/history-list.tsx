@@ -32,7 +32,8 @@ type HistoryListProps = {
   history: SessionClip[];
   arrivalId: number | null;
   enteringIds: Set<number>;
-  onCopy: (text: string) => void;
+  /** Given the clip, not its text: copying a one-time clip also spends it. */
+  onCopy: (clip: SessionClip) => void;
   /** Absent when this room's clips cannot be deleted. */
   onDelete?: (id: number) => void;
   onClear?: () => void;
@@ -106,7 +107,7 @@ export function HistoryList({
                       current === clip.id ? null : clip.id,
                     )
                   }
-                  onCopy={() => onCopy(clip.text)}
+                  onCopy={() => onCopy(clip)}
                   onDelete={onDelete ? () => onDelete(clip.id) : undefined}
                 />
               </div>
@@ -134,8 +135,11 @@ function HistoryRow({
   onDelete?: () => void;
 }) {
   const incoming = clip.direction === "incoming";
-  const detected = detectClipKind(clip.text);
-  const expandable = isExpandable(clip.text);
+  // A one-time clip is never drawn, on either side: the list is on screen
+  // long after the moment the clip was for. Copying is how it is read.
+  const masked = clip.burn === true;
+  const detected = masked ? { kind: "text" as const } : detectClipKind(clip.text);
+  const expandable = !masked && isExpandable(clip.text);
   const open = expandable && expanded;
 
   return (
@@ -178,6 +182,12 @@ function HistoryRow({
               {open ? clip.text : truncatePreview(clip.text)}
             </span>
           </button>
+        ) : masked ? (
+          <span className="min-w-0 truncate py-0.5 pl-5.5 text-sm text-muted-foreground italic">
+            {incoming
+              ? "One-time clip — copy to read it, and it is deleted"
+              : "One-time clip — waiting to be read"}
+          </span>
         ) : (
           // No affordance where there is nothing to reveal. The chevron
           // gutter is still reserved so every row's text starts on one line.
@@ -230,7 +240,11 @@ function HistoryRow({
           className="text-link"
           variant="ghost"
           size="sm"
-          aria-label="Copy this clip"
+          aria-label={
+            masked && incoming
+              ? "Copy this one-time clip and delete it for everyone"
+              : "Copy this clip"
+          }
           onClick={onCopy}
         >
           Copy

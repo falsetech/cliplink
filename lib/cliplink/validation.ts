@@ -4,6 +4,7 @@ export {
   parseClientMessage,
   parseEraseRequest,
   parseSignalPayload,
+  validateClipBurn,
   validateClipCiphertext,
   validateClipMeta,
   validateClipText,

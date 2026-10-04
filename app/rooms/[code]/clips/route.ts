@@ -20,6 +20,7 @@ import type {
 } from "@/lib/cliplink/types";
 import {
   parseEraseRequest,
+  validateClipBurn,
   validateClipCiphertext,
   validateClipMeta,
   validateEraseToken,
@@ -173,6 +174,32 @@ export async function POST(
     return errorResponse(400, "invalid_clip_meta", validatedMeta.message);
   }
 
+  const validatedBurn = validateClipBurn(payload.burn);
+  if (!validatedBurn.ok) {
+    return errorResponse(400, "invalid_clip_burn", validatedBurn.message);
+  }
+
+  if (validatedBurn.burn) {
+    // A one-time clip that nothing can delete is an ordinary clip wearing a
+    // promise. Refused here rather than stored and left to linger.
+    let target;
+    try {
+      target = await storage.getRoom(code);
+    } catch (error) {
+      return storageErrorResponse(error);
+    }
+    if (!target) {
+      return errorResponse(404, "room_not_found", "Room not found.");
+    }
+    if (target.eraseCheck === null) {
+      return errorResponse(
+        409,
+        "burn_unavailable",
+        "This room cannot delete clips, so it cannot take a one-time clip.",
+      );
+    }
+  }
+
   const clip = {
     id: createClipId(),
     text: validatedText.text,
@@ -180,6 +207,7 @@ export async function POST(
     ts: Date.now(),
     // Sealed like the text. Stored and relayed, never opened here.
     ...(validatedMeta.meta ? { meta: validatedMeta.meta } : {}),
+    ...(validatedBurn.burn ? { burn: true as const } : {}),
   };
 
   let room;

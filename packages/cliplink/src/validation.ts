@@ -21,6 +21,7 @@ import { isValidRoomCode } from "./room-code.ts";
 import type {
   ClipMeta,
   EraseClipsRequest,
+  RoomCapability,
   SignalPayload,
   WsClientMessage,
 } from "./types.ts";
@@ -102,7 +103,29 @@ export function parseClipMeta(input: unknown): ClipMeta | null {
     return null;
   }
 
-  return validatePeerId(input.device) ? { name, device: input.device } : { name };
+  return {
+    name,
+    ...(validatePeerId(input.device) ? { device: input.device } : {}),
+    ...(input.burn === true ? { burn: true as const } : {}),
+  };
+}
+
+/** `true` or absent. Anything else is a client that means something we do not. */
+export function validateClipBurn(input: unknown) {
+  if (input === undefined || input === null) {
+    return { ok: true as const, burn: false };
+  }
+  return input === true
+    ? { ok: true as const, burn: true }
+    : { ok: false as const, message: "burn must be true or absent." };
+}
+
+const ROOM_CAPABILITIES: readonly RoomCapability[] = ["burn"];
+
+function parseCapabilities(input: unknown): RoomCapability[] {
+  return Array.isArray(input)
+    ? ROOM_CAPABILITIES.filter((capability) => input.includes(capability))
+    : [];
 }
 
 /** Plaintext rules, for the client that can still see the plaintext. */
@@ -265,9 +288,16 @@ export function parseSignalPayload(input: unknown): SignalPayload | null {
   }
   if (isRecord(input) && input.type === "presence") {
     const name = normalizeDeviceName(input.name);
-    return name && validatePeerId(input.peer)
-      ? { type: "presence", name, peer: input.peer }
-      : null;
+    if (!name || !validatePeerId(input.peer)) {
+      return null;
+    }
+    const caps = parseCapabilities(input.caps);
+    return {
+      type: "presence",
+      name,
+      peer: input.peer,
+      ...(caps.length > 0 ? { caps } : {}),
+    };
   }
   return parseFileSignal(input, {
     maxFileBytes: MAX_FILE_BYTES,

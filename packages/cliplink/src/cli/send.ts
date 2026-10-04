@@ -53,13 +53,26 @@ export async function send(
   const session = await openSession(args);
   try {
     await session.transport.connect(session.code);
-    await session.transport.sendClip(session.code, {
+    const { clip } = await session.transport.sendClip(session.code, {
       text: validated.text,
+      ...(args.burn ? { burn: true as const } : {}),
       senderId: createRandomSenderId(),
       // A name and no mark of its own: the name is sealed and only the room reads
       // it, but a mark needs a secret kept between runs, and this CLI keeps none.
       from: { name: args.name ?? normalizeDeviceName(hostname()) ?? "CLI" },
     });
+
+    if (args.burn && clip.burn !== true) {
+      // A server from before one-time clips stored it as an ordinary one.
+      // Better gone than kept under a promise nothing there will honour.
+      await session.transport
+        .eraseClips(session.code, { ids: [clip.id] })
+        .catch(() => {});
+      report.warn(
+        "This server does not support one-time clips. Nothing was kept.",
+      );
+      return 1;
+    }
 
     if (session.created) {
       report.note(`Room ${session.code} — open on your other device:`);
