@@ -85,7 +85,6 @@ import {
   roomKeyFragment,
 } from "@/lib/cliplink/room-code";
 import { createRandomId, getSessionSenderId } from "@/lib/cliplink/session";
-import { UNDECRYPTABLE_TEXT } from "@/lib/cliplink/encrypted-transport";
 import type {
   RoomCode,
   RoomStatus,
@@ -701,11 +700,6 @@ export default function CliplinkApp({
   }
 
   /**
-   * Leaving discards the room and its history with no way back, so it asks
-   * once. The confirmation lapses on its own rather than sticking around as a
-   * second thing to dismiss.
-   */
-  /**
    * Two taps, like leaving, and for a better reason: this deletes the room's
    * clips on every device, and there is nothing to undo it with.
    */
@@ -735,6 +729,11 @@ export default function CliplinkApp({
     }
   }
 
+  /**
+   * Leaving discards the room and its history with no way back, so it asks
+   * once. The confirmation lapses on its own rather than sticking around as a
+   * second thing to dismiss.
+   */
   function requestLeave() {
     if (!confirmingLeave) {
       setConfirmingLeave(true);
@@ -885,10 +884,6 @@ export default function CliplinkApp({
   /** Copying a one-time clip someone else sent is reading it, which spends it. */
   function copyClip(clip: SessionClip) {
     if (clip.burn && clip.direction === "incoming") {
-      if (room.locked || clip.text === UNDECRYPTABLE_TEXT) {
-        pushToast("Enter the room key to read this clip.", "info");
-        return;
-      }
       void room.consume(clip);
       return;
     }

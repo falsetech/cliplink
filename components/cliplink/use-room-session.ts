@@ -335,24 +335,27 @@ export function useRoomSession({
     advanceExpiry(latest.ts);
   }
 
-  /** Asks the server to delete what was read but could not be deleted then. */
-  function retryPendingBurns() {
+  /**
+   * Asks the server to delete every one-time clip this device has read and
+   * not yet managed to delete. Resolves true once none are left waiting; a
+   * failure leaves them for the next reconnect or poll to try again.
+   */
+  async function retryPendingBurns() {
     const code = roomCodeRef.current;
     const ids = [...pendingBurnsRef.current];
     if (!code || ids.length === 0) {
-      return;
+      return true;
     }
 
-    transport.eraseClips(code, { ids }).then(
-      () => {
-        for (const id of ids) {
-          pendingBurnsRef.current.delete(id);
-        }
-      },
-      () => {
-        // Still pending. The next reconnect or poll tries again.
-      },
-    );
+    try {
+      await transport.eraseClips(code, { ids });
+    } catch {
+      return false;
+    }
+    for (const id of ids) {
+      pendingBurnsRef.current.delete(id);
+    }
+    return true;
   }
 
   /**
@@ -369,6 +372,13 @@ export function useRoomSession({
         tone,
         arrival ? { unprompted: true } : undefined,
       );
+
+    // Checked here rather than by each caller: a clip this device cannot
+    // read must never be spent, whichever path asked for it.
+    if (lockedRef.current || clip.text === UNDECRYPTABLE_TEXT) {
+      said("Enter the room key to read this clip.", "info");
+      return false;
+    }
 
     try {
       await writeClipboard(clip.text);
@@ -388,15 +398,23 @@ export function useRoomSession({
       return true;
     }
 
+    // Read, so gone from this list whatever the network does next. What the
+    // toast says about every other device waits for the server's answer.
     setHistory((current) => current.filter((entry) => entry.id !== clip.id));
     pendingBurnsRef.current.add(clip.id);
-    retryPendingBurns();
-    said(
-      arrival
-        ? "One-time clip copied, and deleted for everyone."
-        : "Copied, and deleted for everyone.",
-      "success",
-    );
+    if (await retryPendingBurns()) {
+      said(
+        arrival
+          ? "One-time clip copied, and deleted for everyone."
+          : "Copied, and deleted for everyone.",
+        "success",
+      );
+    } else {
+      said(
+        "Copied, but not deleted yet. It will be once the connection is back.",
+        "info",
+      );
+    }
     return true;
   }
 
@@ -450,7 +468,7 @@ export function useRoomSession({
           realtimeRetryCountRef.current = 0;
           setStatus("live");
           setRealtimeReady(true);
-          retryPendingBurns();
+          void retryPendingBurns();
           handlersRef.current.onRealtimeOpen();
           if (hadFallback) {
             handlersRef.current.pushToast(
@@ -517,7 +535,7 @@ export function useRoomSession({
         (clip) => clip.senderId !== senderIdRef.current,
       );
       applyRemoved(response.removed ?? []);
-      retryPendingBurns();
+      void retryPendingBurns();
 
       if (response.clips.length > 0) {
         lastSeenIdRef.current = response.clips.reduce(

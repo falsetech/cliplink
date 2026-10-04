@@ -28,7 +28,7 @@ app/                      App Router: pages + API routes
   manifest.json           PWA manifest
   rooms/route.ts          POST — create room
   rooms/[code]/route.ts   GET — fetch room
-  rooms/[code]/clips/     POST — send clip; GET — poll clips after id
+  rooms/[code]/clips/     POST — send clip; GET — poll clips after id; DELETE — erase clips
   rooms/[code]/socket/    GET — WebSocket upgrade (clips + WebRTC signaling)
 proxy.ts                  Content-Security-Policy, with a per-request script nonce
 components/
@@ -63,6 +63,8 @@ importing from `@/lib/cliplink/...` either way.
 | `ws.ts` | Re-export: the WebSocket transport, bound to this tab's origin |
 | `http.ts` | Re-export: the room REST API, bound to this tab's origin |
 | `rate-limit.ts` | Atomic per-IP limiting via `@upstash/ratelimit`; fails open |
+| `erase.ts` | Server-only: checks a presented erase token against the hash a room was created with |
+| `device.ts` | This browser's display name, and the mark by which it recognises its own clips |
 | `validation.ts` | Re-export: input validation — hand-written, **not** Zod |
 | `room-code.ts`, `session.ts`, `clipboard.ts`, `format.ts`, `errors.ts` | Focused helpers |
 
@@ -74,6 +76,7 @@ importing from `@/lib/cliplink/...` either way.
 - **File transfer is a published package.** WebRTC offer/accept, chunking, backpressure, and stall detection live in `packages/rtc-file-transfer`, consumed via `workspace:*`. Keep it free of cliplink specifics (env vars, toast copy, rooms) and runtime dependencies; the wire protocol is v1 and must stay compatible with deployed clients. Its `exports` point at `src/` in the workspace and are rewritten to `dist/` by `publishConfig` at publish time.
 - **Files never reach the server.** The socket route relays signaling envelopes only. Any change that buffers or proxies file bytes server-side is a design violation.
 - **TTL is refreshed on write, not on read.** `appendClip` and `touchRoom` extend a room's life; polling must not. This was a deliberate fix — do not reintroduce read-side refresh.
+- **Deleting is the client's decision and the key holder's right.** The server checks an erase token against a hash set when the room was created and never afterwards; it cannot tell a clip delivered from a clip read, so a one-time clip is deleted by the device that reads it. Polls and socket backlogs only add, which is why the server counts deletions (`eraseGen`) and the encrypted transport reconciles. Deletes do not refresh the TTL.
 - **Rate limiting fails open** by design. Preserve that on Redis errors.
 - **No env var may be required at build time.** CI builds with no credentials at all.
 - **The CSP depends on a per-request nonce.** `proxy.ts` generates it and the root layout reads it through `headers()`, so every page must stay dynamically rendered — a statically rendered page has no nonce and its scripts are blocked. The matcher covers pages only: keep `/rooms` and `/share-target` out of it, and allow any new origin or resource type in the policy there.
