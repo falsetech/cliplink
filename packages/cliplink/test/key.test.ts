@@ -18,6 +18,12 @@ describe("extractKey", () => {
     assert.equal(extractKey(url), key.encoded);
   });
 
+  it("takes the key out of a link whose fragment was written twice", async () => {
+    const key = await generateRoomKey();
+    const url = `https://cliplink.example/room/${ROOM}#k=${key.encoded}#k=${key.encoded}`;
+    assert.equal(extractKey(url), key.encoded);
+  });
+
   it("strips the grouping dashes printed for reading aloud", async () => {
     const key = await generateRoomKey();
     assert.equal(extractKey(formatRoomKey(key.encoded)), key.encoded);
