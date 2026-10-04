@@ -24,6 +24,7 @@ import {
   validateEraseCheck,
   validateEraseToken,
   parseSignalPayload,
+  validateClipBurn,
   validateClipCiphertext,
   validateClipMeta,
   validateClipText,
@@ -294,6 +295,25 @@ describe("parseSignalPayload", () => {
     );
   });
 
+  it("keeps the capabilities it knows from a presence signal, and no others", () => {
+    assert.deepEqual(
+      parseSignalPayload({
+        type: "presence",
+        name: "Phone",
+        peer: "peer-abcdef",
+        caps: ["burn", "telepathy", 7, "burn"],
+      }),
+      { type: "presence", name: "Phone", peer: "peer-abcdef", caps: ["burn"] },
+    );
+    for (const caps of [undefined, [], "burn", ["telepathy"], { burn: true }]) {
+      assert.deepEqual(
+        parseSignalPayload({ type: "presence", name: "Phone", peer: "peer-abcdef", caps }),
+        { type: "presence", name: "Phone", peer: "peer-abcdef" },
+        JSON.stringify(caps),
+      );
+    }
+  });
+
   it("rejects a presence signal with no usable name or no valid peer", () => {
     for (const value of [
       { type: "presence", peer: "peer-abcdef" },
@@ -480,6 +500,16 @@ describe("parseClipMeta", () => {
     });
   });
 
+  it("keeps the sender's own word that a clip is one-time, and only a true one", () => {
+    assert.deepEqual(parseClipMeta({ name: "Phone", burn: true }), {
+      name: "Phone",
+      burn: true,
+    });
+    for (const burn of [false, "true", 1, null]) {
+      assert.deepEqual(parseClipMeta({ name: "Phone", burn }), { name: "Phone" });
+    }
+  });
+
   it("rejects metadata with no usable name", () => {
     for (const value of [null, "Phone", [], {}, { name: "" }, { device: "device-0123456789" }]) {
       assert.equal(parseClipMeta(value), null, JSON.stringify(value));
@@ -548,6 +578,20 @@ describe("parseEraseRequest", () => {
       { upTo: Number.POSITIVE_INFINITY },
     ]) {
       assert.equal(parseEraseRequest(value), null, JSON.stringify(value));
+    }
+  });
+});
+
+describe("validateClipBurn", () => {
+  it("reads true as a one-time clip and absent as an ordinary one", () => {
+    assert.deepEqual(validateClipBurn(true), { ok: true, burn: true });
+    assert.deepEqual(validateClipBurn(undefined), { ok: true, burn: false });
+    assert.deepEqual(validateClipBurn(null), { ok: true, burn: false });
+  });
+
+  it("rejects anything else, rather than guess what a client meant", () => {
+    for (const value of [false, "true", 1, 0, {}, []]) {
+      assert.equal(validateClipBurn(value).ok, false, JSON.stringify(value));
     }
   });
 });

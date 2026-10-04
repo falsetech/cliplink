@@ -14,6 +14,7 @@ export type {
   PeerId,
   PollClipsResponse,
   Room,
+  RoomCapability,
   RoomCode,
   RoomStatus,
   RtcCandidate,

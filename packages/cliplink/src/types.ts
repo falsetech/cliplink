@@ -11,6 +11,11 @@ export type ClipMeta = {
    * absent from senders that keep no identity, like the CLI.
    */
   device?: string;
+  /**
+   * The sender's own word that this is a one-time clip. The flag beside the
+   * clip is the server's to strip; this copy is sealed, so it is not.
+   */
+  burn?: true;
 };
 
 export type Clip = {
@@ -18,6 +23,12 @@ export type Clip = {
   text: string;
   senderId: string;
   ts: number;
+  /**
+   * A one-time clip: whoever reads it first deletes it for everyone. In the
+   * clear because the server has to be able to refuse one in a room that
+   * cannot delete; receivers also honour the sealed copy in `meta`.
+   */
+  burn?: true;
   /** `from`, sealed. What the server stores and relays; it cannot open it. */
   meta?: string;
   /** Opened from `meta` by the encrypted transport. Never on the wire. */
@@ -97,6 +108,8 @@ export type GetRoomResponse = {
 export type CreateClipRequest = {
   text: string;
   senderId: string;
+  /** Send as a one-time clip. Only a room that can delete will take one. */
+  burn?: true;
   /** `from`, sealed by the encrypted transport. */
   meta?: string;
   /** Plaintext side only: the encrypted transport seals it into `meta`. */
@@ -176,7 +189,15 @@ export type SignalPayload =
    * A peer's display name. `peer` repeats the sender's id inside the seal,
    * because the `from` beside a signal is the server's word and this is not.
    */
-  | { type: "presence"; name: string; peer: PeerId };
+  | { type: "presence"; name: string; peer: PeerId; caps?: RoomCapability[] };
+
+/**
+ * What a client can do that an older one cannot, announced with its presence
+ * so a sender can tell when the room holds a device that will not play along.
+ * `burn`: deletes a one-time clip once it has been read, rather than keeping
+ * it like any other.
+ */
+export type RoomCapability = "burn";
 
 /**
  * What the server relays. Sealed envelopes carry an encrypted `SignalPayload`

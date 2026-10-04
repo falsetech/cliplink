@@ -30,6 +30,8 @@ export type ParsedArgs = {
   save: boolean;
   /** `send` only: the name this clip is shown under. Null means the hostname. */
   name: string | null;
+  /** `send` only: a one-time clip, deleted once another device reads it. */
+  burn: boolean;
   /** `recv` only: print the next clip and exit. */
   one: boolean;
   /** `recv` only: print each clip as a JSON object rather than as its text. */
@@ -156,6 +158,7 @@ export function parseArgs(rawArgv: string[], env: Env = {}): ParseResult {
     open: false,
     save: false,
     name: null,
+    burn: false,
     one: false,
     json: false,
     last: null,
@@ -259,6 +262,9 @@ export function parseArgs(rawArgv: string[], env: Env = {}): ParseResult {
         case "--save":
           args.save = true;
           break;
+        case "--burn":
+          args.burn = true;
+          break;
         case "--one":
           args.one = true;
           break;
@@ -329,6 +335,9 @@ export function parseArgs(rawArgv: string[], env: Env = {}): ParseResult {
   }
   if (command !== "send" && args.name !== null) {
     return { ok: false, message: `--name applies to send, not ${command}.` };
+  }
+  if (command !== "send" && args.burn) {
+    return { ok: false, message: `--burn applies to send, not ${command}.` };
   }
   if (command !== "recv" && args.json) {
     return { ok: false, message: `--json applies to recv, not ${command}.` };

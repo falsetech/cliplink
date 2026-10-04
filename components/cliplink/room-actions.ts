@@ -37,6 +37,11 @@ export type RoomActionContext = {
   hasIncoming: boolean;
   /** There is history, and this room lets it be deleted. */
   canClearHistory: boolean;
+  /** One-time clips are on offer in this room. */
+  canBurn: boolean;
+  /** The next clip is set to go as one. */
+  burn: boolean;
+  toggleBurn: () => void;
   clearHistory: () => void;
   send: () => void;
   copyRoomLink: () => void;
@@ -127,6 +132,14 @@ export function createRoomActions(ctx: RoomActionContext): RoomAction[] {
       keywords: ["restore", "back"],
       enabled: ctx.joined && ctx.hasUndo,
       perform: ctx.undoClear,
+    },
+    {
+      id: "one-time",
+      label: ctx.burn ? "Send as an ordinary clip" : "Send as a one-time clip",
+      group: "Clip",
+      keywords: ["burn", "password", "otp", "code", "secret", "self-destruct"],
+      enabled: ctx.joined && ctx.canBurn,
+      perform: ctx.toggleBurn,
     },
     {
       id: "clear-history",

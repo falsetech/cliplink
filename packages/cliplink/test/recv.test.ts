@@ -47,8 +47,23 @@ class FakeServer {
   onPoll: (after: number) => Promise<Response> = async (after) =>
     json({ clips: this.stored.filter((clip) => clip.id > after) });
 
-  fetch = async (input: string | URL | Request) => {
+  /** Every delete asked for: the token it carried and what it named. */
+  erases: Array<{ token: string | undefined; body: unknown }> = [];
+  eraseStatus = 200;
+
+  fetch = async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input));
+
+    if (url.pathname === `/rooms/${CODE}/clips` && init?.method === "DELETE") {
+      const body = JSON.parse(String(init.body)) as { ids: number[] };
+      this.erases.push({
+        token: (init.headers as Record<string, string>).Authorization,
+        body,
+      });
+      return this.eraseStatus === 200
+        ? json({ ids: body.ids, gen: this.erases.length })
+        : json({ error: "nope", code: "storage_unavailable" }, this.eraseStatus);
+    }
 
     if (url.pathname === `/rooms/${CODE}`) {
       if (this.roomStatus !== 200) {
@@ -375,6 +390,47 @@ describe("recv", () => {
         ts: 1_700_000_001,
         name: "Phone",
       });
+    });
+
+    it("deletes a one-time clip once it has printed it, and marks it under --json", async () => {
+      const { data, result } = await start(["--json", "--one"]);
+
+      FakeSocket.last.ready();
+      FakeSocket.last.deliver({
+        type: "clip",
+        clip: { ...(await seal(4, "hunter2")), burn: true },
+      });
+
+      assert.equal(await result, 0);
+      assert.equal(JSON.parse(data[0]).burn, true);
+      assert.deepEqual(server.erases, [
+        { token: `Bearer ${openKey.eraseToken}`, body: { ids: [4] } },
+      ]);
+    });
+
+    it("leaves an ordinary clip where it is", async () => {
+      const { data } = await start();
+
+      FakeSocket.last.ready();
+      FakeSocket.last.deliver({ type: "clip", clip: await seal(1, "hello") });
+      await waitFor(() => data.length === 1, "the clip");
+
+      assert.deepEqual(server.erases, []);
+    });
+
+    it("still prints a one-time clip it could not delete, and says so", async () => {
+      server.eraseStatus = 503;
+      const { data, warns, result } = await start(["--one"]);
+
+      FakeSocket.last.ready();
+      FakeSocket.last.deliver({
+        type: "clip",
+        clip: { ...(await seal(4, "hunter2")), burn: true },
+      });
+
+      assert.equal(await result, 0);
+      assert.deepEqual(data, ["hunter2"]);
+      assert.match(warns.join("\n"), /Could not delete a one-time clip/);
     });
 
     it("emits one line per clip, so --json output is newline-delimited", async () => {

@@ -143,6 +143,10 @@ export function createEncryptedTransport(
           ...clip,
           text: text ?? UNDECRYPTABLE_TEXT,
           ...(from ? { from } : {}),
+          // Either copy makes it one: the server can strip the flag beside
+          // the clip but not the one sealed with it, and a sender with no
+          // name to seal has only the flag.
+          ...(clip.burn === true || from?.burn ? { burn: true as const } : {}),
         };
       }),
     );
@@ -185,7 +189,10 @@ export function createEncryptedTransport(
         throw new Error("This room is encrypted and no key is loaded.");
       }
 
-      const { from } = payload;
+      const from =
+        payload.from && payload.burn
+          ? { ...payload.from, burn: true as const }
+          : payload.from;
       const text = await encryptClipText(key, code, payload.text);
       const response = await wire.sendClip(code, {
         ...withoutSender(payload),
