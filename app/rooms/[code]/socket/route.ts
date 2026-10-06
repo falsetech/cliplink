@@ -1,9 +1,12 @@
-import { experimental_upgradeWebSocket } from "@vercel/functions";
+import { experimental_upgradeWebSocket, getDeadline } from "@vercel/functions";
 
 import {
   MAX_SIGNAL_BYTES,
   SIGNAL_RATE_MAX_MESSAGES,
   SIGNAL_RATE_WINDOW_MS,
+  SOCKET_ASSUMED_MAX_DURATION_MS,
+  SOCKET_HANDOFF_CLOSE_CODE,
+  SOCKET_HANDOFF_LEAD_MS,
 } from "@/lib/cliplink/constants";
 import { publishSignal, subscribeRoom } from "@/lib/cliplink/pubsub";
 import { storage } from "@/lib/cliplink/storage";
@@ -37,6 +40,9 @@ export async function GET(
   // Peers without a valid id still receive clips; they just can't signal.
   const peerParam = url.searchParams.get("peer");
   const peerId = validatePeerId(peerParam) ? peerParam : null;
+
+  // Read here, in the request: the invocation's context is what knows it.
+  const deadline = socketDeadline();
 
   return experimental_upgradeWebSocket(
     (ws) => {
@@ -137,6 +143,17 @@ export async function GET(
         });
       });
 
+      // A socket lives no longer than the function holding it, and when that
+      // is stopped the client sees the connection drop with no close at all.
+      // Warned in time, it opens another first and nothing is seen to drop.
+      const handoff =
+        deadline === null
+          ? null
+          : setTimeout(
+              () => send({ type: "reconnect" }),
+              Math.max(0, deadline - Date.now() - SOCKET_HANDOFF_LEAD_MS),
+            );
+
       void (async () => {
         try {
           const backlog = await storage.getClipsAfter(code, initialAfterId);
@@ -174,10 +191,14 @@ export async function GET(
         }
       })();
 
-      ws.on("close", () => {
+      ws.on("close", (closeCode: number) => {
         closed = true;
+        if (handoff) {
+          clearTimeout(handoff);
+        }
         unsubscribe();
-        if (peerId) {
+        // A socket given up for its replacement: the peer is still here.
+        if (peerId && closeCode !== SOCKET_HANDOFF_CLOSE_CODE) {
           // Lets other peers drop this peer's file offers even if the tab
           // crashed. The one signal the server originates, and so the one it
           // cannot seal — it has no key.
@@ -187,4 +208,13 @@ export async function GET(
     },
     { maxPayload: MAX_SIGNAL_BYTES },
   );
+}
+
+/** When this invocation will be stopped, or null if it will not be. */
+function socketDeadline(): number | null {
+  const deadline = getDeadline();
+  if (deadline) {
+    return deadline.getTime();
+  }
+  return process.env.VERCEL ? Date.now() + SOCKET_ASSUMED_MAX_DURATION_MS : null;
 }

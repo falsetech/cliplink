@@ -222,6 +222,10 @@ export type WsServerMessage =
   | { type: "removed"; ids: number[]; gen: number }
   | { type: "signal"; from: PeerId; sealed: string }
   | { type: "peer-left"; from: PeerId }
+  // This socket is about to be closed by the server. A client opens another and
+  // lets this one go once that is ready; one that ignores it reconnects as
+  // after any dropped socket.
+  | { type: "reconnect" }
   | { type: "error"; reason: string };
 
 /**

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { createHttpClient, resolveBaseUrl } from "../src/http.ts";
+import { SOCKET_HANDOFF_CLOSE_CODE } from "../src/protocol.ts";
 import { createWebSocketTransport } from "../src/ws.ts";
 import type { WsServerMessage } from "../src/types.ts";
 
@@ -164,16 +165,19 @@ describe("createHttpClient", () => {
 class FakeSocket {
   static readonly OPEN = 1;
   static last: FakeSocket | null = null;
+  static all: FakeSocket[] = [];
 
   readonly url: string;
   readyState = 0;
   readonly sent: string[] = [];
   closed = false;
+  closeCode: number | undefined;
   private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
 
   constructor(url: string) {
     this.url = url;
     FakeSocket.last = this;
+    FakeSocket.all.push(this);
   }
 
   addEventListener(type: string, handler: (event: unknown) => void) {
@@ -190,8 +194,9 @@ class FakeSocket {
     this.sent.push(data);
   }
 
-  close() {
+  close(code?: number) {
     this.closed = true;
+    this.closeCode = code;
   }
 
   open() {
@@ -275,12 +280,10 @@ describe("createWebSocketTransport", () => {
 
     socket.deliver({ type: "ready", eraseGen: 3 });
     socket.deliver({ type: "removed", ids: [7, 8], gen: 4 });
-    socket.deliver({ type: "ready" });
 
     assert.deepEqual(seen, [
       ["open", 3],
       ["removed", [7, 8], 4],
-      ["open", undefined],
     ]);
   });
 
@@ -363,5 +366,131 @@ describe("createWebSocketTransport", () => {
     } finally {
       globalThis.WebSocket = original;
     }
+  });
+});
+
+describe("socket handoff", () => {
+  const clip = (id: number) => ({
+    type: "clip" as const,
+    clip: { id, text: "v1.abc", senderId: "abcdef", ts: id },
+  });
+
+  /** A stream that is open, has seen clip 13, and has been asked to move. */
+  function handingOff() {
+    FakeSocket.all = [];
+    const stream = connect(BASE);
+    const old = stream.socket;
+    old.open();
+    old.deliver({ type: "ready" });
+    old.deliver(clip(13));
+    old.deliver({ type: "reconnect" });
+    return { ...stream, old, next: FakeSocket.all[1] };
+  }
+
+  it("opens a replacement from the last clip it reported", () => {
+    const { next } = handingOff();
+    assert.equal(
+      next.url,
+      "wss://cliplink.example/rooms/X7KP2M/socket?after=13&peer=peer-abcdef",
+    );
+  });
+
+  it("opens only one replacement however often it is asked", () => {
+    const { old } = handingOff();
+    old.deliver({ type: "reconnect" });
+    assert.equal(FakeSocket.all.length, 2);
+  });
+
+  it("lets the old socket go once the replacement is ready, with nothing reported", () => {
+    const { old, next, events, transport } = handingOff();
+    next.open();
+    next.deliver({ type: "ready" });
+
+    assert.ok(old.closed);
+    assert.equal(old.closeCode, SOCKET_HANDOFF_CLOSE_CODE);
+    assert.deepEqual(events, ["open"]);
+
+    transport.sendSealedSignal("v1.abc");
+    assert.equal(old.sent.length, 0);
+    assert.equal(next.sent.length, 1);
+  });
+
+  it("reports a clip both sockets carry once", () => {
+    const { old, next, clips } = handingOff();
+    old.deliver(clip(14));
+    next.deliver(clip(14));
+    next.deliver({ type: "ready" });
+    next.deliver(clip(15));
+    assert.deepEqual(clips, [13, 14, 15]);
+  });
+
+  it("takes signals from the old socket until the replacement is ready", () => {
+    const { old, next, signals } = handingOff();
+    old.deliver({ type: "signal", from: "peer-other", sealed: "v1.one" });
+    next.deliver({ type: "signal", from: "peer-other", sealed: "v1.one" });
+    next.deliver({ type: "ready" });
+    next.deliver({ type: "signal", from: "peer-other", sealed: "v1.two" });
+    assert.deepEqual(signals, ["peer-other:v1.one", "peer-other:v1.two"]);
+  });
+
+  it("takes deletions from the old socket until the replacement is ready", () => {
+    FakeSocket.all = [];
+    const removed: string[] = [];
+    const transport = createWebSocketTransport({
+      baseUrl: BASE,
+      WebSocket: FakeSocket as unknown as typeof globalThis.WebSocket,
+    });
+    transport.streamClips("X7KP2M", 12, "peer-abcdef", {
+      onClips: () => {},
+      onRemoved: (ids, gen) => removed.push(`${ids.join(",")}@${gen}`),
+      onDisconnect: () => {},
+    });
+    const [old] = FakeSocket.all;
+    old.deliver({ type: "ready", eraseGen: 1 });
+    old.deliver({ type: "reconnect" });
+    const next = FakeSocket.all[1];
+
+    old.deliver({ type: "removed", ids: [13], gen: 2 });
+    next.deliver({ type: "removed", ids: [13], gen: 2 });
+    next.deliver({ type: "ready", eraseGen: 2 });
+    next.deliver({ type: "removed", ids: [14], gen: 3 });
+    assert.deepEqual(removed, ["13@2", "14@3"]);
+  });
+
+  it("hands over to an unready replacement if the old socket goes first", () => {
+    const { old, next, events, signals } = handingOff();
+    old.emit("close", {});
+    next.deliver({ type: "signal", from: "peer-other", sealed: "v1.xyz" });
+    next.deliver({ type: "ready" });
+
+    assert.deepEqual(events, ["open"]);
+    assert.deepEqual(signals, ["peer-other:v1.xyz"]);
+  });
+
+  it("keeps the old socket when the replacement fails", () => {
+    const { old, next, events } = handingOff();
+    next.emit("error", {});
+
+    assert.ok(next.closed);
+    assert.equal(old.closed, false);
+    assert.deepEqual(events, ["open"]);
+
+    old.emit("close", {});
+    assert.deepEqual(events, ["open", "disconnect:error"]);
+  });
+
+  it("reports a disconnect when the replacement fails after taking over", () => {
+    const { old, next, events } = handingOff();
+    old.emit("close", {});
+    next.emit("close", {});
+    assert.deepEqual(events, ["open", "disconnect:error"]);
+  });
+
+  it("closes both sockets on cleanup", () => {
+    const { cleanup, old, next, events } = handingOff();
+    cleanup?.();
+    assert.ok(old.closed);
+    assert.ok(next.closed);
+    assert.deepEqual(events, ["open", "disconnect:closed"]);
   });
 });

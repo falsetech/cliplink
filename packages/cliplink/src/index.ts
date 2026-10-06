@@ -54,6 +54,7 @@ export {
   ROOM_KEY_CHARS,
   ROOM_KEY_CHECK_CHARS,
   ROOM_TTL_SECONDS,
+  SOCKET_HANDOFF_CLOSE_CODE,
 } from "./protocol.ts";
 export {
   normalizeDeviceName,
