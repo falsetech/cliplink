@@ -7,6 +7,7 @@ import {
   MAX_CLIP_CIPHERTEXT_CHARS,
   MAX_CLIP_META_CHARS,
   MAX_DEVICE_NAME_CHARS,
+  MAX_ERASE_IDS,
   MAX_FILE_BYTES,
   MAX_FILE_NAME_CHARS,
   MAX_ROOM_TTL_SECONDS,
@@ -19,7 +20,11 @@ import {
   normalizeDeviceName,
   parseClientMessage,
   parseClipMeta,
+  parseEraseRequest,
+  validateEraseCheck,
+  validateEraseToken,
   parseSignalPayload,
+  validateClipBurn,
   validateClipCiphertext,
   validateClipMeta,
   validateClipText,
@@ -290,6 +295,25 @@ describe("parseSignalPayload", () => {
     );
   });
 
+  it("keeps the capabilities it knows from a presence signal, and no others", () => {
+    assert.deepEqual(
+      parseSignalPayload({
+        type: "presence",
+        name: "Phone",
+        peer: "peer-abcdef",
+        caps: ["burn", "telepathy", 7, "burn"],
+      }),
+      { type: "presence", name: "Phone", peer: "peer-abcdef", caps: ["burn"] },
+    );
+    for (const caps of [undefined, [], "burn", ["telepathy"], { burn: true }]) {
+      assert.deepEqual(
+        parseSignalPayload({ type: "presence", name: "Phone", peer: "peer-abcdef", caps }),
+        { type: "presence", name: "Phone", peer: "peer-abcdef" },
+        JSON.stringify(caps),
+      );
+    }
+  });
+
   it("rejects a presence signal with no usable name or no valid peer", () => {
     for (const value of [
       { type: "presence", peer: "peer-abcdef" },
@@ -476,9 +500,98 @@ describe("parseClipMeta", () => {
     });
   });
 
+  it("keeps the sender's own word that a clip is one-time, and only a true one", () => {
+    assert.deepEqual(parseClipMeta({ name: "Phone", burn: true }), {
+      name: "Phone",
+      burn: true,
+    });
+    for (const burn of [false, "true", 1, null]) {
+      assert.deepEqual(parseClipMeta({ name: "Phone", burn }), { name: "Phone" });
+    }
+  });
+
   it("rejects metadata with no usable name", () => {
     for (const value of [null, "Phone", [], {}, { name: "" }, { device: "device-0123456789" }]) {
       assert.equal(parseClipMeta(value), null, JSON.stringify(value));
+    }
+  });
+});
+
+describe("validateEraseCheck", () => {
+  const CHECK = "Ca6ZOdTofvJOYgKCvsgPRUjF1gi8VSMS_zwj2pgY5SA";
+
+  it("accepts a room created with none, as older clients create them", () => {
+    assert.deepEqual(validateEraseCheck(undefined), { ok: true, eraseCheck: undefined });
+    assert.deepEqual(validateEraseCheck(null), { ok: true, eraseCheck: undefined });
+  });
+
+  it("accepts a base64url SHA-256 digest and nothing of another shape", () => {
+    assert.deepEqual(validateEraseCheck(CHECK), { ok: true, eraseCheck: CHECK });
+    for (const value of [...NOT_STRINGS, "", CHECK.slice(1), `${CHECK}a`, CHECK.replace("_", "/")]) {
+      assert.equal(validateEraseCheck(value).ok, false, JSON.stringify(value));
+    }
+  });
+});
+
+describe("validateEraseToken", () => {
+  const TOKEN = "9S40T3JBEMJG4C2XR5MXMM5RQ6H904A1ZRH302S6A6J54HV4EFD0";
+
+  it("accepts a token of the right length and alphabet only", () => {
+    assert.equal(validateEraseToken(TOKEN), true);
+    for (const value of [...NOT_STRINGS, null, undefined, "", TOKEN.slice(1), TOKEN.toLowerCase(), `${TOKEN}0`]) {
+      assert.equal(validateEraseToken(value), false, JSON.stringify(value));
+    }
+  });
+});
+
+describe("parseEraseRequest", () => {
+  it("accepts a list of clip ids, without repeats", () => {
+    assert.deepEqual(parseEraseRequest({ ids: [3, 1, 3] }), { ids: [3, 1] });
+  });
+
+  it("accepts a bound to delete up to", () => {
+    assert.deepEqual(parseEraseRequest({ upTo: 1_791_081_574_654_977 }), {
+      upTo: 1_791_081_574_654_977,
+    });
+  });
+
+  it("keeps only the selector", () => {
+    assert.deepEqual(parseEraseRequest({ ids: [1], everything: true }), { ids: [1] });
+  });
+
+  it("rejects a request that names nothing, both, too much, or what is not a clip id", () => {
+    const tooMany = Array.from({ length: MAX_ERASE_IDS + 1 }, (_, index) => index + 1);
+    for (const value of [
+      null,
+      [],
+      {},
+      { ids: [] },
+      { ids: tooMany },
+      { ids: [1], upTo: 2 },
+      { ids: ["1"] },
+      { ids: [0] },
+      { ids: [-1] },
+      { ids: [1.5] },
+      { ids: [2 ** 53] },
+      { upTo: 0 },
+      { upTo: "all" },
+      { upTo: Number.POSITIVE_INFINITY },
+    ]) {
+      assert.equal(parseEraseRequest(value), null, JSON.stringify(value));
+    }
+  });
+});
+
+describe("validateClipBurn", () => {
+  it("reads true as a one-time clip and absent as an ordinary one", () => {
+    assert.deepEqual(validateClipBurn(true), { ok: true, burn: true });
+    assert.deepEqual(validateClipBurn(undefined), { ok: true, burn: false });
+    assert.deepEqual(validateClipBurn(null), { ok: true, burn: false });
+  });
+
+  it("rejects anything else, rather than guess what a client meant", () => {
+    for (const value of [false, "true", 1, 0, {}, []]) {
+      assert.equal(validateClipBurn(value).ok, false, JSON.stringify(value));
     }
   });
 });

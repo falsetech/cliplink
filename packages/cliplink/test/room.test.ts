@@ -90,6 +90,16 @@ describe("openSession", () => {
       assert.doesNotMatch(JSON.stringify(server.creates[0]), new RegExp(session.key.encoded));
     });
 
+    it("tells the server the erase check too, and never the token it is the hash of", async () => {
+      const session = await openSession(argsFor(["send", "hi"]));
+
+      assert.equal(server.creates[0].eraseCheck, session.key.eraseCheck);
+      assert.doesNotMatch(
+        JSON.stringify(server.creates[0]),
+        new RegExp(session.key.eraseToken),
+      );
+    });
+
     it("puts the key in the link's fragment", async () => {
       const session = await openSession(argsFor(["send", "hi"]));
 

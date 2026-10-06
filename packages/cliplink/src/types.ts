@@ -11,6 +11,11 @@ export type ClipMeta = {
    * absent from senders that keep no identity, like the CLI.
    */
   device?: string;
+  /**
+   * The sender's own word that this is a one-time clip. The flag beside the
+   * clip is the server's to strip; this copy is sealed, so it is not.
+   */
+  burn?: true;
 };
 
 export type Clip = {
@@ -18,6 +23,12 @@ export type Clip = {
   text: string;
   senderId: string;
   ts: number;
+  /**
+   * A one-time clip: whoever reads it first deletes it for everyone. In the
+   * clear because the server has to be able to refuse one in a room that
+   * cannot delete; receivers also honour the sealed copy in `meta`.
+   */
+  burn?: true;
   /** `from`, sealed. What the server stores and relays; it cannot open it. */
   meta?: string;
   /** Opened from `meta` by the encrypted transport. Never on the wire. */
@@ -56,6 +67,12 @@ export type CreateRoomRequest = {
   ttlSeconds?: number;
   /** Fingerprint of the key the creator generated. Never the key itself. */
   keyCheck?: string;
+  /**
+   * Hash of the creator's erase token. A room created without one can never
+   * have clips deleted: there is no later moment at which it can be set,
+   * because by then anyone with the room code could set it.
+   */
+  eraseCheck?: string;
 };
 
 export type CreateRoomResponse = {
@@ -80,6 +97,10 @@ export type GetRoomResponse = {
      * cannot answer degrades to hiding the countdown rather than failing.
      */
     expiresAt?: number;
+    /** Whether the room was created with an erase check, and so can delete. */
+    erasable?: boolean;
+    /** See `PollClipsResponse.eraseGen`. */
+    eraseGen?: number;
   };
   clips: Clip[];
 };
@@ -87,6 +108,8 @@ export type GetRoomResponse = {
 export type CreateClipRequest = {
   text: string;
   senderId: string;
+  /** Send as a one-time clip. Only a room that can delete will take one. */
+  burn?: true;
   /** `from`, sealed by the encrypted transport. */
   meta?: string;
   /** Plaintext side only: the encrypted transport seals it into `meta`. */
@@ -101,6 +124,28 @@ export type CreateClipResponse = {
 
 export type PollClipsResponse = {
   clips: Clip[];
+  /**
+   * How many times clips have been deleted from this room. A poll can only
+   * ever return additions, so this is how a client learns something was taken
+   * away: a count higher than the one it last saw. Absent from a server that
+   * predates deletion, which is not the same as zero.
+   */
+  eraseGen?: number;
+  /**
+   * Plaintext side only: clips the encrypted transport found to be gone, having
+   * noticed `eraseGen` move and compared against the room.
+   */
+  removed?: number[];
+};
+
+/** Which clips to delete: these, or everything up to and including an id. */
+export type EraseClipsRequest = { ids: number[] } | { upTo: number };
+
+export type EraseClipsResponse = {
+  /** The clips this request actually removed. Empty if they were already gone. */
+  ids: number[];
+  /** The room's `eraseGen` afterwards. */
+  gen: number;
 };
 
 export type StreamDisconnectReason = "error" | "closed";
@@ -144,7 +189,15 @@ export type SignalPayload =
    * A peer's display name. `peer` repeats the sender's id inside the seal,
    * because the `from` beside a signal is the server's word and this is not.
    */
-  | { type: "presence"; name: string; peer: PeerId };
+  | { type: "presence"; name: string; peer: PeerId; caps?: RoomCapability[] };
+
+/**
+ * What a client can do that an older one cannot, announced with its presence
+ * so a sender can tell when the room holds a device that will not play along.
+ * `burn`: deletes a one-time clip once it has been read, rather than keeping
+ * it like any other.
+ */
+export type RoomCapability = "burn";
 
 /**
  * What the server relays. Sealed envelopes carry an encrypted `SignalPayload`
@@ -164,8 +217,9 @@ export type WsClientMessage = {
 };
 
 export type WsServerMessage =
-  | { type: "ready" }
+  | { type: "ready"; eraseGen?: number }
   | { type: "clip"; clip: Clip }
+  | { type: "removed"; ids: number[]; gen: number }
   | { type: "signal"; from: PeerId; sealed: string }
   | { type: "peer-left"; from: PeerId }
   // This socket is about to be closed by the server. A client opens another and
@@ -187,13 +241,21 @@ export type SealedTransport = {
     payload: CreateClipRequest,
   ) => Promise<CreateClipResponse>;
   pollClips: (roomCode: RoomCode, afterId: number) => Promise<PollClipsResponse>;
+  /** `token` is the room key's erase token, which is what authorises it. */
+  eraseClips: (
+    roomCode: RoomCode,
+    token: string,
+    request: EraseClipsRequest,
+  ) => Promise<EraseClipsResponse>;
   streamClips: (
     roomCode: RoomCode,
     afterId: number,
     peerId: PeerId,
     handlers: {
-      onOpen?: () => void;
+      /** `eraseGen` is the room's count as the socket's backlog was read. */
+      onOpen?: (eraseGen?: number) => void;
       onClips: (clips: Clip[]) => void;
+      onRemoved?: (ids: number[], gen: number) => void;
       onSealedSignal?: (from: PeerId, sealed: string) => void;
       /** Server-originated, and so the one signal that arrives unsealed. */
       onPeerLeft?: (from: PeerId) => void;
@@ -213,6 +275,11 @@ export type TransportClient = {
     payload: CreateClipRequest,
   ) => Promise<CreateClipResponse>;
   pollClips: (roomCode: RoomCode, afterId: number) => Promise<PollClipsResponse>;
+  /** Deletes clips for the whole room. Resolves with the ids that are gone. */
+  eraseClips: (
+    roomCode: RoomCode,
+    request: EraseClipsRequest,
+  ) => Promise<EraseClipsResponse>;
   streamClips: (
     roomCode: RoomCode,
     afterId: number,
@@ -220,6 +287,8 @@ export type TransportClient = {
     handlers: {
       onOpen?: () => void;
       onClips: (clips: Clip[]) => void;
+      /** Clips deleted from the room, by any device, this one included. */
+      onRemoved?: (ids: number[]) => void;
       onSignal?: (from: PeerId, payload: SignalPayload) => void;
       onDisconnect: (reason: StreamDisconnectReason) => void;
     },

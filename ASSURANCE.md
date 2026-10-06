@@ -12,6 +12,7 @@ report a problem. When the two disagree, fix whichever is wrong.
 3. **No file bytes on the server.** Files travel peer to peer and are never relayed, buffered or stored server-side.
 4. **Bounded resources.** One client cannot make the server hold unbounded data or keep a room alive forever.
 5. **No execution of untrusted input.** Clip text and file metadata are rendered as data, never as markup or code.
+6. **Deletion is for key holders.** Nobody without the room key can delete a clip from a private room; the room code alone is not enough. A one-time clip is deleted by the device that reads it, and the server is trusted to carry that deletion out, not to decide it — a server that withholds it keeps ciphertext it still cannot read.
 
 Open rooms deliberately give up requirement 1 with respect to the operator, since their key is derived from the room code. SECURITY.md says so to users.
 

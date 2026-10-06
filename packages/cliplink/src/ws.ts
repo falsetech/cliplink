@@ -34,6 +34,7 @@ export function createWebSocketTransport(
     connect: http.connectRoom,
     sendClip: http.sendClipRequest,
     pollClips: http.pollClipsRequest,
+    eraseClips: http.eraseClipsRequest,
 
     streamClips(roomCode: RoomCode, afterId, peerId, handlers) {
       // Resolved here rather than at construction: a browser transport is built
@@ -146,19 +147,36 @@ export function createWebSocketTransport(
             if (line === replacement) {
               promote(line);
             }
+            // Only the stream's first socket reports its deletion count. A
+            // replacement was subscribed before the socket it replaces went,
+            // so no deletion fell between the two for a count to reveal.
             if (!opened) {
               opened = true;
-              handlers.onOpen?.();
+              handlers.onOpen?.(
+                typeof message.eraseGen === "number" ? message.eraseGen : undefined,
+              );
             }
             return;
           }
-          // Until it is ready, a replacement's signals are also reaching the
-          // socket it replaces, which is the one they are taken from.
+          // Until it is ready, a replacement's signals and deletions are also
+          // reaching the socket it replaces, which is the one they are taken
+          // from.
           if (line !== current) {
             return;
           }
           if (message.type === "reconnect") {
             replacement ??= dial(lastClipId);
+            return;
+          }
+          if (message.type === "removed") {
+            const { ids, gen } = message;
+            if (
+              Array.isArray(ids) &&
+              ids.every((id) => typeof id === "number") &&
+              typeof gen === "number"
+            ) {
+              handlers.onRemoved?.(ids, gen);
+            }
             return;
           }
           if (message.type === "signal") {

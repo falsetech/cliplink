@@ -2,10 +2,13 @@ import { parseFileSignal } from "@thebkht/rtc-file-transfer";
 
 import {
   CIPHERTEXT_PATTERN,
+  ERASE_CHECK_CHARS,
+  ERASE_TOKEN_CHARS,
   MAX_CLIP_CHARS,
   MAX_CLIP_META_CHARS,
   MAX_CLIP_CIPHERTEXT_CHARS,
   MAX_DEVICE_NAME_CHARS,
+  MAX_ERASE_IDS,
   MAX_FILE_BYTES,
   MAX_FILE_NAME_CHARS,
   MAX_ROOM_TTL_SECONDS,
@@ -15,7 +18,13 @@ import {
   ROOM_TTL_SECONDS,
 } from "./protocol.ts";
 import { isValidRoomCode } from "./room-code.ts";
-import type { ClipMeta, SignalPayload, WsClientMessage } from "./types.ts";
+import type {
+  ClipMeta,
+  EraseClipsRequest,
+  RoomCapability,
+  SignalPayload,
+  WsClientMessage,
+} from "./types.ts";
 
 const MAX_ID_CHARS = 64;
 const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -94,7 +103,29 @@ export function parseClipMeta(input: unknown): ClipMeta | null {
     return null;
   }
 
-  return validatePeerId(input.device) ? { name, device: input.device } : { name };
+  return {
+    name,
+    ...(validatePeerId(input.device) ? { device: input.device } : {}),
+    ...(input.burn === true ? { burn: true as const } : {}),
+  };
+}
+
+/** `true` or absent. Anything else is a client that means something we do not. */
+export function validateClipBurn(input: unknown) {
+  if (input === undefined || input === null) {
+    return { ok: true as const, burn: false };
+  }
+  return input === true
+    ? { ok: true as const, burn: true }
+    : { ok: false as const, message: "burn must be true or absent." };
+}
+
+const ROOM_CAPABILITIES: readonly RoomCapability[] = ["burn"];
+
+function parseCapabilities(input: unknown): RoomCapability[] {
+  return Array.isArray(input)
+    ? ROOM_CAPABILITIES.filter((capability) => input.includes(capability))
+    : [];
 }
 
 /** Plaintext rules, for the client that can still see the plaintext. */
@@ -141,6 +172,61 @@ export function validateKeyCheck(input: unknown) {
   }
 
   return { ok: true as const, keyCheck: input };
+}
+
+const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * The hash of the creator's erase token. As with the key fingerprint, the
+ * server can check the shape and nothing more.
+ */
+export function validateEraseCheck(input: unknown) {
+  if (input === undefined || input === null) {
+    return { ok: true as const, eraseCheck: undefined };
+  }
+
+  if (
+    typeof input !== "string" ||
+    input.length !== ERASE_CHECK_CHARS ||
+    !BASE64URL_PATTERN.test(input)
+  ) {
+    return { ok: false as const, message: "Invalid erase check." };
+  }
+
+  return { ok: true as const, eraseCheck: input };
+}
+
+export function validateEraseToken(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length === ERASE_TOKEN_CHARS &&
+    BASE32_PATTERN.test(value)
+  );
+}
+
+function isClipId(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+/** Rebuilt from the one selector it carries; anything else is rejected. */
+export function parseEraseRequest(input: unknown): EraseClipsRequest | null {
+  if (!isRecord(input)) {
+    return null;
+  }
+
+  if (Array.isArray(input.ids)) {
+    const { ids } = input;
+    return input.upTo === undefined &&
+      ids.length > 0 &&
+      ids.length <= MAX_ERASE_IDS &&
+      ids.every(isClipId)
+      ? { ids: [...new Set(ids)] }
+      : null;
+  }
+
+  return input.ids === undefined && isClipId(input.upTo)
+    ? { upTo: input.upTo }
+    : null;
 }
 
 export function validateSenderId(senderId: string) {
@@ -202,9 +288,16 @@ export function parseSignalPayload(input: unknown): SignalPayload | null {
   }
   if (isRecord(input) && input.type === "presence") {
     const name = normalizeDeviceName(input.name);
-    return name && validatePeerId(input.peer)
-      ? { type: "presence", name, peer: input.peer }
-      : null;
+    if (!name || !validatePeerId(input.peer)) {
+      return null;
+    }
+    const caps = parseCapabilities(input.caps);
+    return {
+      type: "presence",
+      name,
+      peer: input.peer,
+      ...(caps.length > 0 ? { caps } : {}),
+    };
   }
   return parseFileSignal(input, {
     maxFileBytes: MAX_FILE_BYTES,
