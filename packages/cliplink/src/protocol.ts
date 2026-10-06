@@ -45,3 +45,10 @@ export const MAX_FILE_NAME_CHARS = 255;
 
 /** A sealed payload: the version prefix plus base64url. */
 export const CIPHERTEXT_PATTERN = /^v1\.[A-Za-z0-9_-]+$/;
+
+/**
+ * The close code a client gives the socket it has just replaced, in the range
+ * the WebSocket spec leaves to applications. It tells the server the peer has
+ * not left — its other socket is already open — so no `peer-left` goes out.
+ */
+export const SOCKET_HANDOFF_CLOSE_CODE = 4001;
