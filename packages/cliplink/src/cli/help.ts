@@ -19,6 +19,9 @@ OPTIONS
       --ttl <seconds>     Lifetime of a room being created (3600–86400).
       --name <name>       send: the name the clip is shown under.
                           Default is this machine's hostname.
+      --burn              send: a one-time clip. The first device to read
+                          it deletes it for everyone. recv counts as
+                          reading: what it prints, it deletes.
   -1, --one               recv: print the next clip, then exit.
       --json              recv: print each clip as a JSON object.
       --last <n>          recv: replay the last n clips before listening.

@@ -85,7 +85,11 @@ import {
   roomKeyFragment,
 } from "@/lib/cliplink/room-code";
 import { createRandomId, getSessionSenderId } from "@/lib/cliplink/session";
-import type { RoomCode, RoomStatus } from "@/lib/cliplink/types";
+import type {
+  RoomCode,
+  RoomStatus,
+  SessionClip,
+} from "@/lib/cliplink/types";
 import { validateRoomCode } from "@/lib/cliplink/validation";
 import { cn } from "@/lib/utils";
 
@@ -161,6 +165,10 @@ export default function CliplinkApp({
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
   const [confirmingLeave, setConfirmingLeave] = useState(false);
+  const [confirmingClear, setConfirmingClear] = useState(false);
+  // Whether the next clip goes as a one-time clip. Off again after each send:
+  // a password is the exception, and the next thing typed is usually not one.
+  const [burn, setBurn] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   // The room being joined by code alone, waiting on a key the link never
@@ -207,6 +215,7 @@ export default function CliplinkApp({
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const scrollSentinelRef = useRef<HTMLDivElement>(null);
   const confirmResetRef = useRef<number | null>(null);
+  const clearConfirmResetRef = useRef<number | null>(null);
   const shareChannelRef = useRef<BroadcastChannel | null>(null);
   // Shared files wait here until the room can actually offer them.
   const queuedShareFilesRef = useRef<File[]>([]);
@@ -290,7 +299,11 @@ export default function CliplinkApp({
 
   useEffect(() => {
     const confirmReset = confirmResetRef;
-    return () => clearTimer(confirmReset);
+    const clearConfirmReset = clearConfirmResetRef;
+    return () => {
+      clearTimer(confirmReset);
+      clearTimer(clearConfirmReset);
+    };
   }, []);
 
   useEffect(() => {
@@ -571,7 +584,13 @@ export default function CliplinkApp({
     try {
       if (privateRoom) {
         const key = await generateRoomKey();
-        const response = await createRoomRequest(key.check);
+        // The erase check has to go with the request that makes the room:
+        // there is no later moment at which it can safely be set.
+        const response = await createRoomRequest(
+          key.check,
+          undefined,
+          key.eraseCheck,
+        );
         await hydrateRoom(response.code, key, true);
         pushToast("Private room created — share the link or the key.", "success");
         return;
@@ -681,6 +700,36 @@ export default function CliplinkApp({
   }
 
   /**
+   * Two taps, like leaving, and for a better reason: this deletes the room's
+   * clips on every device, and there is nothing to undo it with.
+   */
+  function requestClearHistory() {
+    if (!confirmingClear) {
+      setConfirmingClear(true);
+      clearTimer(clearConfirmResetRef);
+      clearConfirmResetRef.current = window.setTimeout(() => {
+        setConfirmingClear(false);
+        clearConfirmResetRef.current = null;
+      }, CONFIRM_WINDOW_MS);
+      return;
+    }
+
+    clearTimer(clearConfirmResetRef);
+    setConfirmingClear(false);
+    void room.clear().then((cleared) => {
+      if (cleared) {
+        pushToast("History cleared.", "success");
+      }
+    });
+  }
+
+  async function deleteHistoryItem(id: number) {
+    if (await room.remove(id)) {
+      pushToast("Clip deleted.", "success");
+    }
+  }
+
+  /**
    * Leaving discards the room and its history with no way back, so it asks
    * once. The confirmation lapses on its own rather than sticking around as a
    * second thing to dismiss.
@@ -725,8 +774,18 @@ export default function CliplinkApp({
 
     setIsBusy(true);
     try {
-      if (await room.send(text)) {
+      const oneTime = burn && room.erasable;
+      if (await room.send(text, { burn: oneTime })) {
         editor.reset();
+        setBurn(false);
+        if (oneTime && presence.devices.some((device) => !device.caps.includes("burn"))) {
+          // That device will show the clip like any other and never delete
+          // it. Said rather than left to be discovered.
+          pushToast(
+            "A device here is on an older version: it will show this clip and keep it.",
+            "info",
+          );
+        }
       }
     } finally {
       setIsBusy(false);
@@ -822,6 +881,15 @@ export default function CliplinkApp({
     }
   }
 
+  /** Copying a one-time clip someone else sent is reading it, which spends it. */
+  function copyClip(clip: SessionClip) {
+    if (clip.burn && clip.direction === "incoming") {
+      void room.consume(clip);
+      return;
+    }
+    void copyHistoryItem(clip.text);
+  }
+
   async function copyHistoryItem(text: string) {
     try {
       await writeClipboard(text);
@@ -915,6 +983,11 @@ export default function CliplinkApp({
     canSend,
     hasUndo: Boolean(editor.clearedText),
     hasIncoming: Boolean(latestIncoming),
+    canClearHistory: room.erasable && room.history.length > 0,
+    canBurn: room.erasable,
+    burn,
+    toggleBurn: () => setBurn((current) => !current),
+    clearHistory: requestClearHistory,
     send: () => void sendClip(),
     copyRoomLink: () => void copyRoomLink(roomCode!),
     copyRoomKey: () => void copyRoomKey(),
@@ -932,8 +1005,11 @@ export default function CliplinkApp({
     pasteFromDevice: () => void editor.pasteFromDevice(),
     clearEditor: editor.clear,
     undoClear: editor.undoClear,
-    copyLatestIncoming: () =>
-      void copyHistoryItem(latestIncoming?.text ?? ""),
+    copyLatestIncoming: () => {
+      if (latestIncoming) {
+        copyClip(latestIncoming);
+      }
+    },
     focusEditor: () => editor.focus(),
     toggleTheme,
     notificationsOn,
@@ -949,7 +1025,7 @@ export default function CliplinkApp({
     onDigit: (index) => {
       const clip = room.history[index];
       if (clip) {
-        void copyHistoryItem(clip.text);
+        copyClip(clip);
       }
     },
     // Escape unwinds the most recent thing the user started, innermost first.
@@ -958,6 +1034,11 @@ export default function CliplinkApp({
       if (confirmingLeave) {
         clearTimer(confirmResetRef);
         setConfirmingLeave(false);
+        return;
+      }
+      if (confirmingClear) {
+        clearTimer(clearConfirmResetRef);
+        setConfirmingClear(false);
         return;
       }
       editor.blur();
@@ -1082,6 +1163,9 @@ export default function CliplinkApp({
                   isBusy={isBusy}
                   canSend={canSend}
                   arrival={room.arrivalId !== null}
+                  burn={burn && room.erasable}
+                  canBurn={room.erasable}
+                  onToggleBurn={() => setBurn((current) => !current)}
                   fileInputRef={fileInputRef}
                   folderInputRef={folderInputRef}
                   editorRef={editorRef}
@@ -1110,7 +1194,14 @@ export default function CliplinkApp({
                   history={room.history}
                   arrivalId={room.arrivalId}
                   enteringIds={room.enteringIds}
-                  onCopy={(text) => void copyHistoryItem(text)}
+                  onCopy={copyClip}
+                  onDelete={
+                    room.erasable
+                      ? (id) => void deleteHistoryItem(id)
+                      : undefined
+                  }
+                  onClear={room.erasable ? requestClearHistory : undefined}
+                  confirmingClear={confirmingClear}
                 />
               </section>
             )}

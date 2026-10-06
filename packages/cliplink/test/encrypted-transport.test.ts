@@ -44,8 +44,15 @@ function fakeWire() {
       senderId: string;
       meta?: string;
       from?: unknown;
+      burn?: true;
     }>,
     sentSignals: [] as Array<{ sealed: string; to?: string }>,
+    pollGen: undefined as number | undefined,
+    /** Behave as a server from before one-time clips: store it as ordinary. */
+    dropBurn: false,
+    connects: 0,
+    erases: [] as Array<{ code: string; token: string; request: unknown }>,
+    eraseResponse: { ids: [] as number[], gen: 0 },
     streamArgs: null as { code: string; afterId: number; peerId: string } | null,
     handlers: null as Handlers | null,
     streamReturn: (() => {}) as (() => void) | null,
@@ -54,7 +61,12 @@ function fakeWire() {
 
   const wire: SealedTransport = {
     async connect() {
+      state.connects += 1;
       return { room: state.room, clips: state.roomClips };
+    },
+    async eraseClips(code, token, request) {
+      state.erases.push({ code, token, request });
+      return state.eraseResponse;
     },
     async sendClip(code, payload) {
       state.sentClips.push({ code, ...payload });
@@ -65,13 +77,17 @@ function fakeWire() {
           senderId: payload.senderId,
           ts: 1_700_000_000,
           ...(payload.meta ? { meta: payload.meta } : {}),
+          ...(payload.burn && !state.dropBurn ? { burn: true as const } : {}),
         },
         expiresAt: 4_242,
       };
     },
     async pollClips(code, afterId) {
       state.pollArgs.push({ code, afterId });
-      return { clips: state.polled };
+      return {
+        clips: state.polled,
+        ...(state.pollGen === undefined ? {} : { eraseGen: state.pollGen }),
+      };
     },
     streamClips(code, afterId, peerId, handlers) {
       state.streamArgs = { code, afterId, peerId };
@@ -277,6 +293,306 @@ describe("createEncryptedTransport", () => {
       assert.equal(response.clip.id, 9);
       assert.equal(response.clip.senderId, "cli-sender-1");
       assert.equal(response.expiresAt, 4_242);
+    });
+  });
+
+  describe("deleting clips", () => {
+    /** Joined to a room holding clips 1–3, at the given deletion count. */
+    async function joined(eraseGen: number | undefined = 0) {
+      const made = setup();
+      made.state.room = { ...made.state.room, erasable: true, eraseGen };
+      made.state.roomClips = await Promise.all([
+        sealedClip(1, "one"),
+        sealedClip(2, "two"),
+        sealedClip(3, "three"),
+      ]);
+      await made.transport.connect(ROOM);
+      made.state.connects = 0;
+      return made;
+    }
+
+    /** What the room holds from now on, as the server would report it. */
+    const serverNow = async (
+      state: ReturnType<typeof setup>["state"],
+      ids: number[],
+      eraseGen: number,
+    ) => {
+      state.room = { ...state.room, eraseGen };
+      state.roomClips = await Promise.all(ids.map((id) => sealedClip(id, `clip ${id}`)));
+    };
+
+    it("presents the room key's erase token, and never the key", async () => {
+      const { transport, state } = await joined();
+      state.eraseResponse = { ids: [2], gen: 1 };
+
+      const response = await transport.eraseClips(ROOM, { ids: [2] });
+
+      assert.deepEqual(state.erases, [
+        { code: ROOM, token: key.eraseToken, request: { ids: [2] } },
+      ]);
+      assert.notEqual(key.eraseToken, key.encoded);
+      assert.deepEqual(response, { ids: [2], gen: 1 });
+    });
+
+    it("refuses to delete without a key, and asks the server nothing", async () => {
+      const { transport, state } = setup({ withKey: false });
+
+      await assert.rejects(transport.eraseClips(ROOM, { ids: [1] }), /no key is loaded/);
+      assert.equal(state.erases.length, 0);
+    });
+
+    it("reports a removal the socket announces", async () => {
+      const { transport, state } = await joined();
+      const removed: number[][] = [];
+      transport.streamClips(ROOM, 3, "peer-me-12345", {
+        onClips: () => {},
+        onRemoved: (ids) => removed.push(ids),
+        onDisconnect: () => {},
+      });
+
+      state.handlers?.onRemoved?.([2], 1);
+
+      assert.deepEqual(removed, [[2]]);
+      assert.equal(state.connects, 0, "an in-order removal needs no second look");
+    });
+
+    it("does not deliver a clip whose removal arrived while it was being opened", async () => {
+      const { transport, state } = await joined();
+      const { clips } = stream(transport);
+
+      state.handlers?.onClips([await sealedClip(4, "burned at once")]);
+      state.handlers?.onRemoved?.([4], 1);
+      state.handlers?.onClips([await sealedClip(5, "after")]);
+      await waitFor(() => clips.length === 2, "both batches");
+
+      assert.deepEqual(
+        clips.map((batch) => batch.map((entry) => entry.id)),
+        [[], [5]],
+      );
+    });
+
+    it("finds what a poll could not say was deleted, by the count moving", async () => {
+      const { transport, state } = await joined();
+      await serverNow(state, [1, 3], 1);
+      state.polled = [];
+      state.pollGen = 1;
+
+      const response = await transport.pollClips(ROOM, 3);
+
+      assert.deepEqual(response.removed, [2]);
+      assert.equal(state.connects, 1);
+    });
+
+    it("looks once per deletion, not once per poll", async () => {
+      const { transport, state } = await joined();
+      await serverNow(state, [1, 3], 1);
+      state.pollGen = 1;
+
+      await transport.pollClips(ROOM, 3);
+      const again = await transport.pollClips(ROOM, 3);
+
+      assert.equal(state.connects, 1);
+      assert.equal("removed" in again, false);
+    });
+
+    it("takes a poll with no count as no information, not as a count of zero", async () => {
+      const { transport, state } = await joined(2);
+      state.pollGen = undefined;
+
+      const response = await transport.pollClips(ROOM, 3);
+
+      assert.equal(state.connects, 0);
+      assert.equal("removed" in response, false);
+    });
+
+    it("does not count a clip the same poll delivered as missing", async () => {
+      const { transport, state } = await joined();
+      const four = await sealedClip(4, "new");
+      state.polled = [four];
+      state.pollGen = 1;
+      state.room = { ...state.room, eraseGen: 1 };
+      state.roomClips = [await sealedClip(1, "one"), await sealedClip(3, "three"), four];
+
+      const response = await transport.pollClips(ROOM, 3);
+
+      assert.deepEqual(response.removed, [2]);
+      assert.deepEqual(response.clips.map((entry) => entry.id), [4]);
+    });
+
+    it("keeps polling when the look itself fails, and tries again next time", async () => {
+      const { transport, state, wire } = await joined();
+      state.pollGen = 1;
+      const connect = wire.connect;
+      wire.connect = async () => {
+        throw new Error("offline");
+      };
+
+      const first = await transport.pollClips(ROOM, 3);
+      assert.equal("removed" in first, false);
+
+      wire.connect = connect;
+      await serverNow(state, [1, 3], 1);
+      const second = await transport.pollClips(ROOM, 3);
+      assert.deepEqual(second.removed, [2]);
+    });
+
+    it("catches up on reconnect, when the socket's backlog cannot mention a deletion", async () => {
+      const { transport, state } = await joined();
+      const removed: number[][] = [];
+      const events: string[] = [];
+      transport.streamClips(ROOM, 3, "peer-me-12345", {
+        onOpen: () => events.push("open"),
+        onClips: () => {},
+        onRemoved: (ids) => removed.push(ids),
+        onDisconnect: () => {},
+      });
+      await serverNow(state, [3], 2);
+
+      state.handlers?.onOpen?.(2);
+      await waitFor(() => removed.length === 1, "the catch-up");
+
+      assert.deepEqual(events, ["open"]);
+      assert.deepEqual(removed, [[1, 2]]);
+    });
+
+    it("looks again when a removal arrives having skipped one", async () => {
+      const { transport, state } = await joined();
+      const removed: number[][] = [];
+      transport.streamClips(ROOM, 3, "peer-me-12345", {
+        onClips: () => {},
+        onRemoved: (ids) => removed.push(ids),
+        onDisconnect: () => {},
+      });
+      await serverNow(state, [3], 2);
+
+      state.handlers?.onRemoved?.([2], 2);
+      await waitFor(() => removed.length === 2, "the missed removal");
+
+      assert.deepEqual(removed, [[2], [1]]);
+    });
+
+    it("reports what else had gone when its own delete reveals a gap", async () => {
+      const { transport, state } = await joined();
+      await serverNow(state, [3], 2);
+      state.eraseResponse = { ids: [2], gen: 2 };
+
+      const response = await transport.eraseClips(ROOM, { ids: [2] });
+
+      assert.deepEqual([...response.ids].sort(), [1, 2]);
+    });
+
+    it("discards a look that was under way when the room changed", async () => {
+      const { transport, state, wire } = await joined();
+      const connect = wire.connect;
+      let release = () => {};
+      wire.connect = () =>
+        new Promise((resolve) => {
+          release = () => resolve(connect(ROOM));
+        });
+      await serverNow(state, [3], 9);
+      state.pollGen = 9;
+      const stale = transport.pollClips(ROOM, 3);
+      await settle();
+
+      // Another room, joined while the first room's look is still out.
+      transport.setRoomKey(OTHER_ROOM, key);
+      release();
+      const response = await stale;
+      wire.connect = connect;
+
+      assert.equal("removed" in response, false);
+      // The other room's count is untouched by the first room's answer.
+      state.pollGen = 1;
+      await serverNow(state, [], 1);
+      state.connects = 0;
+      await transport.pollClips(OTHER_ROOM, 0);
+      assert.equal(state.connects, 0, "a first count is taken as given, not chased");
+    });
+
+    it("starts over from a fresh connect", async () => {
+      const { transport, state } = await joined();
+      state.handlers = null;
+      await serverNow(state, [7], 5);
+      await transport.connect(ROOM);
+      state.connects = 0;
+      state.pollGen = 5;
+
+      const response = await transport.pollClips(ROOM, 7);
+
+      assert.equal(state.connects, 0);
+      assert.equal("removed" in response, false);
+    });
+  });
+
+  describe("one-time clips", () => {
+    const FROM = { name: "Work laptop" };
+
+    it("says so beside the clip and again inside the seal", async () => {
+      const { transport, state } = setup();
+
+      await transport.sendClip(ROOM, { text: "hunter2", senderId: "cli-sender-1", from: FROM, burn: true });
+
+      const [sent] = state.sentClips;
+      assert.equal(sent.burn, true);
+      assert.ok(sent.meta);
+      assert.deepEqual(await openClipMeta(key, ROOM, sent.text, sent.meta), {
+        ...FROM,
+        burn: true,
+      });
+    });
+
+    it("leaves an ordinary clip's metadata saying nothing of it", async () => {
+      const { transport, state } = setup();
+
+      await transport.sendClip(ROOM, { text: "hi", senderId: "cli-sender-1", from: FROM });
+
+      const [sent] = state.sentClips;
+      assert.equal("burn" in sent, false);
+      assert.deepEqual(await openClipMeta(key, ROOM, sent.text, sent.meta!), FROM);
+    });
+
+    it("reports back whether the server kept the flag, so a sender can tell it did not", async () => {
+      const { transport, state } = setup();
+
+      const kept = await transport.sendClip(ROOM, { text: "a", senderId: "cli-sender-1", burn: true });
+      state.dropBurn = true;
+      const dropped = await transport.sendClip(ROOM, { text: "b", senderId: "cli-sender-1", burn: true });
+
+      assert.equal(kept.clip.burn, true);
+      assert.equal("burn" in dropped.clip, false);
+    });
+
+    it("reads a clip as one-time from the flag beside it", async () => {
+      const { transport, state } = setup();
+      state.roomClips = [{ ...(await sealedClip(1, "hunter2")), burn: true }];
+
+      const { clips } = await transport.connect(ROOM);
+
+      assert.equal(clips[0].burn, true);
+    });
+
+    it("still reads it as one-time when the server has stripped the flag", async () => {
+      const { transport, state } = setup();
+      const sealed = await sealedClip(1, "hunter2");
+      state.roomClips = [
+        {
+          ...sealed,
+          meta: await sealClipMeta(key, ROOM, sealed.text, { ...FROM, burn: true }),
+        },
+      ];
+
+      const { clips } = await transport.connect(ROOM);
+
+      assert.equal(clips[0].burn, true);
+    });
+
+    it("does not call an ordinary clip one-time", async () => {
+      const { transport, state } = setup();
+      state.roomClips = [await sealedClip(1, "hi")];
+
+      const { clips } = await transport.connect(ROOM);
+
+      assert.equal("burn" in clips[0], false);
     });
   });
 

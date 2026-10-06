@@ -62,6 +62,11 @@ type ClipEditorProps = {
   canSend: boolean;
   /** True while the arrival cue is lit for a clip that just landed. */
   arrival: boolean;
+  /** The next clip goes as a one-time clip. */
+  burn: boolean;
+  /** False where one-time clips are not on offer: the room cannot delete. */
+  canBurn: boolean;
+  onToggleBurn: () => void;
   fileInputRef: RefObject<HTMLInputElement | null>;
   folderInputRef: RefObject<HTMLInputElement | null>;
   editorRef: RefObject<HTMLTextAreaElement | null>;
@@ -81,6 +86,9 @@ export function ClipEditor({
   isBusy,
   canSend,
   arrival,
+  burn,
+  canBurn,
+  onToggleBurn,
   fileInputRef,
   folderInputRef,
   editorRef,
@@ -179,6 +187,20 @@ export function ClipEditor({
           </div>
 
           <div className="flex items-center gap-1">
+            {canBurn ? (
+              // A toggle, and it says so: pressed is the tinted state, and
+              // the footer spells out what pressing it means.
+              <Button
+                className={burn ? undefined : toolClass}
+                variant={burn ? "tinted" : "ghost"}
+                size="sm"
+                aria-pressed={burn}
+                title="Deleted for everyone as soon as another device reads it. For passwords and codes."
+                onClick={onToggleBurn}
+              >
+                One-Time
+              </Button>
+            ) : null}
             {editor.clearedText ? (
               <Button variant="ghost" size="sm" className="text-link" onClick={editor.undoClear}>
                 Undo Clear
@@ -241,6 +263,13 @@ export function ClipEditor({
             <>
               <span aria-hidden="true">·</span>
               <span className="text-warning">Enter the room key to send</span>
+            </>
+          ) : burn ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className="text-link">
+                One-time: deleted once another device reads it
+              </span>
             </>
           ) : !realtimeReady ? (
             <>

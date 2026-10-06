@@ -28,7 +28,7 @@ Moving a URL, a snippet, or a file from your laptop to your phone is still solve
 
 CLIPLINK is the browser-native answer. Open a page, get a 6-character room code, share it with your other device — anything you send appears there instantly and is copied to the clipboard automatically.
 
-Nothing persists. Rooms expire on a timer, history is session-local, and files never touch a server at all.
+Nothing persists. Rooms expire on a timer, history lasts only as long as the room, and files never touch a server at all.
 
 ## Features
 
@@ -38,12 +38,14 @@ Nothing persists. Rooms expire on a timer, history is session-local, and files n
 - **Realtime text sync** — WebSocket transport, with HTTP polling as an automatic fallback
 - **Auto-copy on receive** — incoming clips land on your clipboard, with a toast and a subtle flash
 - **Nothing missed in a background tab** — a browser will not let a hidden tab write the clipboard, so a clip that arrives there is counted in the tab title and on the installed app's icon, and copied when you come back — or, where the browser wants a click first, offered with a Copy button. System notifications are opt-in, and say which room, never what the clip holds. They come from the open tab rather than a push server, so they last as long as the browser keeps the tab alive
-- **Session history** — last 20 clips with direction, timestamp, one-click copy, expand-in-place, and an Open action on link clips
+- **History that survives a reload** — the room's last 50 clips with direction, the sending device's name, timestamp, one-click copy, expand-in-place, and an Open action on link clips. Device names are sealed with the room key, so the server never sees them; rename yours from the devices sheet
+- **Delete a clip, or clear the lot** — for every device at once, and only by someone holding the room key: the room code alone deletes nothing
+- **One-time clips** — for passwords and codes. Never drawn in the history list, copied on arrival, and deleted for everyone by the first device that reads them
 - **Keyboard-first** — every room action has a binding; `?` shows the cheat sheet and `⌘K`/`Ctrl+K` opens the command palette
-- **Know the state** — device count, a live expiry countdown, and a badge that says when you have dropped to the polling fallback
+- **Know the state** — who else is in the room, a live expiry countdown, and a badge that says when you have dropped to the polling fallback
 - **Peer-to-peer file transfer** — up to 500 MB per file over WebRTC data channels, via attach, drag-and-drop, or paste. Drop or attach a whole folder (up to 50 files) and it arrives as one group, with Download all saving it into a folder of your choice where the browser allows it, or as a single zip (up to 1 GB, held in memory until it's saved). Bytes flow browser-to-browser; the server only relays signaling. Every block is SHA-256 verified and the whole file is checked against a digest that travelled over signaling rather than the data channel. A download can be paused and picked back up, survives a dropped connection, and now survives a reload as well — a refreshed tab resumes from what is already on disk. Large files (64 MB+) stream straight to disk in every current browser, and progress shows speed and time left. The transfer engine is published on its own as [`@thebkht/rtc-file-transfer`](https://www.npmjs.com/package/@thebkht/rtc-file-transfer)
 - **Share sheet target** — install CLIPLINK as an app and it appears in the OS share sheet. Shared text lands in the editor of a room open in another tab, or in one you create or join; shared files are offered to the room. The service worker keeps them on the device, so they never reach the server. Works on Android Chrome and installed desktop Chromium; iOS has no share targets for web apps
-- **A CLI** — `git log -1 | cliplink send` creates a room, sends it, and prints a QR code for the phone. `cliplink recv --one | pbcopy` waits for the next clip and copies it. Same rooms, same encryption; `npm i -g @thebkht/cliplink`, documented in [CLI.md](packages/cliplink/CLI.md)
+- **A CLI** — `git log -1 | cliplink send` creates a room, sends it, and prints a QR code for the phone. `cliplink recv --one | pbcopy` waits for the next clip and copies it, and `cliplink send --burn` sends a one-time clip. Same rooms, same encryption; `npm i -g @thebkht/cliplink`, documented in [CLI.md](packages/cliplink/CLI.md)
 - **Ephemeral by design** — per-room TTL configurable from 1h to 24h (6h default), max 50 clips retained per room
 - **Rate limited** — token buckets shared across instances through Redis: a burst of 60 clips refilling at 1/second, and 10 room creations refilling at 1 per 10 seconds
 
@@ -70,13 +72,14 @@ These work anywhere. The rest need focus to be outside the compose box:
 | `E` or `/` | Focus the editor |
 | `L` | Copy the room link |
 | `Q` | Show the QR code |
+| `D` | Show the devices in the room, and rename this one |
 | `A` | Attach files |
 | `F` | Attach a folder |
 | `T` | Toggle the theme |
 | `N` | Turn notifications on or off |
 | `X` | Leave the room |
 | `1`–`9` | Copy that history row |
-| `Esc` | Close a sheet, cancel a pending Leave, or leave the editor |
+| `Esc` | Close a sheet, cancel a pending Leave or Clear All, or leave the editor |
 
 Typing any other character with nothing focused starts a clip.
 
@@ -104,7 +107,7 @@ Two things here are worth reading even if you never run CLIPLINK:
 npm install @thebkht/rtc-file-transfer
 ```
 
-The API surface is four routes: `POST /rooms` (create), `GET /rooms/:code` (fetch), `POST|GET /rooms/:code/clips` (send / poll after id), and `GET /rooms/:code/socket` (WebSocket upgrade for clips and signaling).
+The API surface is four routes: `POST /rooms` (create), `GET /rooms/:code` (fetch), `POST|GET|DELETE /rooms/:code/clips` (send / poll after id / delete, the last authorised by a token derived from the room key), and `GET /rooms/:code/socket` (WebSocket upgrade for clips and signaling).
 
 ## Getting started
 

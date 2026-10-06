@@ -103,6 +103,9 @@ export function useRoomSession({
   const [history, setHistory] = useState<SessionClip[]>([]);
   const [arrivalId, setArrivalId] = useState<number | null>(null);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
+  // Whether clips here can be deleted: the room was created with an erase
+  // check, and this device holds the key the token comes from.
+  const [erasable, setErasable] = useState(false);
   const [enteringIds, setEnteringIds] = useState<Set<number>>(new Set());
 
   const lastSeenIdRef = useRef(0);
@@ -117,6 +120,13 @@ export function useRoomSession({
   const realtimeOpenedRef = useRef(false);
   const arrivalResetRef = useRef<number | null>(null);
   const lockedRef = useRef(false);
+  const erasableRef = useRef(false);
+  // One-time clips this device has read but not yet managed to delete.
+  const pendingBurnsRef = useRef<Set<number>>(new Set());
+  // One-time clips this device has read. A clip can be delivered twice when a
+  // poll and the socket overlap, and the second copy must not bring the row
+  // back or be read again.
+  const spentRef = useRef<Set<number>>(new Set());
 
   const missed = useMissedClips({ pushToast });
 
@@ -278,7 +288,8 @@ export function useRoomSession({
     );
   }
 
-  function applyIncomingClips(added: SessionClip[]) {
+  function applyIncomingClips(delivered: SessionClip[]) {
+    const added = delivered.filter((clip) => !spentRef.current.has(clip.id));
     if (added.length === 0) {
       return;
     }
@@ -304,20 +315,127 @@ export function useRoomSession({
     markArrival(latest.id);
     haptic("arrive");
     if (isPageAttended()) {
-      void autoCopyIncoming(latest.text);
+      if (latest.burn) {
+        // Read here and now, so it is spent here and now.
+        void consume(latest, { arrival: true });
+      } else {
+        void autoCopyIncoming(latest.text);
+      }
     } else if (roomCodeRef.current) {
       // The browser would refuse the write from here. A clip this device
       // cannot read leaves nothing worth copying, but the arrival is still
-      // worth marking.
+      // worth marking. Nor is a one-time clip held to be copied on return:
+      // an idle tab in the background must not be what spends it. It waits
+      // in the list, masked, for someone to ask for it.
       const readable =
-        !lockedRef.current && latest.text !== UNDECRYPTABLE_TEXT;
+        !lockedRef.current &&
+        latest.text !== UNDECRYPTABLE_TEXT &&
+        !latest.burn;
       missed.hold(
         roomCodeRef.current,
-        readable ? latest.text : null,
+        { id: latest.id, text: readable ? latest.text : null },
         clips.length,
       );
     }
     advanceExpiry(latest.ts);
+  }
+
+  /**
+   * Asks the server to delete every one-time clip this device has read and
+   * not yet managed to delete. Resolves true once none are left waiting; a
+   * failure leaves them for the next reconnect or poll to try again.
+   */
+  async function retryPendingBurns() {
+    const code = roomCodeRef.current;
+    const ids = [...pendingBurnsRef.current];
+    if (!code || ids.length === 0) {
+      return true;
+    }
+
+    try {
+      await transport.eraseClips(code, { ids });
+    } catch {
+      return false;
+    }
+    for (const id of ids) {
+      pendingBurnsRef.current.delete(id);
+    }
+    return true;
+  }
+
+  /**
+   * Reads a one-time clip: copies it, then deletes it for everyone. The row
+   * goes as soon as the copy lands — the clip has been read, whatever the
+   * network does next — and the delete is retried until it sticks.
+   *
+   * Resolves true when the text reached the clipboard.
+   */
+  async function consume(clip: SessionClip, { arrival = false } = {}) {
+    const said = (message: string, tone: "success" | "info" | "error") =>
+      handlersRef.current.pushToast(
+        message,
+        tone,
+        arrival ? { unprompted: true } : undefined,
+      );
+
+    // Checked here rather than by each caller: a clip this device cannot
+    // read must never be spent, whichever path asked for it.
+    if (lockedRef.current || clip.text === UNDECRYPTABLE_TEXT) {
+      said("Enter the room key to read this clip.", "info");
+      return false;
+    }
+
+    try {
+      await writeClipboard(clip.text);
+    } catch {
+      // Unread, so unspent: it stays in the list to be asked for again.
+      said(
+        arrival
+          ? "A one-time clip arrived. Copy it from the list to read it."
+          : "Could not copy clip.",
+        arrival ? "info" : "error",
+      );
+      return false;
+    }
+
+    if (!erasableRef.current) {
+      said("Clip copied!", "success");
+      return true;
+    }
+
+    // Read, so gone from this list whatever the network does next. What the
+    // toast says about every other device waits for the server's answer.
+    setHistory((current) => current.filter((entry) => entry.id !== clip.id));
+    spentRef.current.add(clip.id);
+    pendingBurnsRef.current.add(clip.id);
+    if (await retryPendingBurns()) {
+      said(
+        arrival
+          ? "One-time clip copied, and deleted for everyone."
+          : "Copied, and deleted for everyone.",
+        "success",
+      );
+    } else {
+      said(
+        "Copied, but not deleted yet. It will be once the connection is back.",
+        "info",
+      );
+    }
+    return true;
+  }
+
+  /** Clips deleted from the room, whichever device asked. */
+  function applyRemoved(ids: number[]) {
+    if (ids.length === 0) {
+      return;
+    }
+
+    const removed = new Set(ids);
+    setHistory((current) => {
+      const next = current.filter((clip) => !removed.has(clip.id));
+      return next.length === current.length ? current : next;
+    });
+    missed.drop(ids);
   }
 
   /**
@@ -356,6 +474,7 @@ export function useRoomSession({
           realtimeRetryCountRef.current = 0;
           setStatus("live");
           setRealtimeReady(true);
+          void retryPendingBurns();
           handlersRef.current.onRealtimeOpen();
           if (hadFallback) {
             handlersRef.current.pushToast(
@@ -380,6 +499,7 @@ export function useRoomSession({
             }
           });
         },
+        onRemoved: applyRemoved,
         onSignal: (from, payload) => handlersRef.current.onSignal(from, payload),
         onDisconnect: (reason) => {
           streamCleanupRef.current = null;
@@ -420,6 +540,8 @@ export function useRoomSession({
       const incoming = response.clips.filter(
         (clip) => clip.senderId !== senderIdRef.current,
       );
+      applyRemoved(response.removed ?? []);
+      void retryPendingBurns();
 
       if (response.clips.length > 0) {
         lastSeenIdRef.current = response.clips.reduce(
@@ -477,6 +599,12 @@ export function useRoomSession({
           lastSeenId,
         );
       }
+      // A deletion that landed between the snapshot and this poll is reported
+      // here and nowhere else: the transport has now accounted for it.
+      const removed = new Set(bootstrapDelta.removed ?? []);
+      if (removed.size > 0) {
+        nextHistory = nextHistory.filter((clip) => !removed.has(clip.id));
+      }
     } catch {
       // Ignore bootstrap delta errors and fall back to the initial snapshot.
     }
@@ -486,6 +614,8 @@ export function useRoomSession({
     setHistory(nextHistory);
     ttlSecondsRef.current = response.room.ttlSeconds;
     setExpiresAt(response.room.expiresAt ?? null);
+    erasableRef.current = response.room.erasable === true && key !== null;
+    setErasable(erasableRef.current);
     setStatus("live");
     // Rows present at hydration are not arrivals, so they must not animate in.
     setEnteringIds(new Set());
@@ -494,7 +624,7 @@ export function useRoomSession({
   }
 
   /** Returns true when the clip was accepted, so the caller can clear the editor. */
-  async function send(text: string) {
+  async function send(text: string, { burn = false } = {}) {
     if (!roomCodeRef.current) {
       return false;
     }
@@ -506,7 +636,21 @@ export function useRoomSession({
         text,
         senderId: senderIdRef.current,
         from: { name: getDeviceName(), ...(mark ? { device: mark } : {}) },
+        ...(burn ? { burn: true as const } : {}),
       });
+
+      if (burn && response.clip.burn !== true) {
+        // A server instance from before one-time clips took it as an ordinary
+        // one. Better gone than kept under a promise nothing will honour.
+        await transport
+          .eraseClips(code, { ids: [response.clip.id] })
+          .catch(() => {});
+        handlersRef.current.pushToast(
+          "Could not send as a one-time clip. Nothing was kept — try again.",
+          "error",
+        );
+        return false;
+      }
 
       const sessionClip: SessionClip = {
         ...response.clip,
@@ -535,6 +679,45 @@ export function useRoomSession({
     }
   }
 
+  /**
+   * Deletes for the whole room, not just from this list. The rows go when the
+   * server confirms, so a refused delete leaves them where they were.
+   */
+  async function erase(request: { ids: number[] } | { upTo: number }) {
+    const code = roomCodeRef.current;
+    if (!code) {
+      return false;
+    }
+
+    try {
+      const response = await transport.eraseClips(code, request);
+      if (roomCodeRef.current === code) {
+        // The ids asked for as well as the ones removed: a clip someone else
+        // had already deleted is gone either way.
+        applyRemoved([
+          ...response.ids,
+          ...("ids" in request ? request.ids : []),
+        ]);
+      }
+      return true;
+    } catch (error) {
+      handlersRef.current.pushToast(
+        error instanceof Error ? error.message : "Could not delete.",
+        "error",
+      );
+      return false;
+    }
+  }
+
+  function remove(id: number) {
+    return erase({ ids: [id] });
+  }
+
+  /** Everything the room holds as of the newest clip this device has seen. */
+  function clear() {
+    return erase({ upTo: lastSeenIdRef.current });
+  }
+
   function leave() {
     setRealtimeReady(false);
     onRealtimeClose();
@@ -549,6 +732,10 @@ export function useRoomSession({
     lockedRef.current = false;
     missed.reset();
     setHistory([]);
+    setErasable(false);
+    erasableRef.current = false;
+    pendingBurnsRef.current.clear();
+    spentRef.current.clear();
     setExpiresAt(null);
     setStatus("offline");
     setEnteringIds(new Set());
@@ -574,9 +761,13 @@ export function useRoomSession({
     arrivalId,
     enteringIds,
     expiresAt,
+    erasable,
     initializedRoomRef,
     hydrate,
     send,
+    consume,
+    remove,
+    clear,
     leave,
     fail,
   };

@@ -225,6 +225,23 @@ describe("--name", () => {
   });
 });
 
+describe("--burn", () => {
+  it("is off unless asked for", () => {
+    assert.equal(parse(["send", "hi"]).burn, false);
+  });
+
+  it("makes the clip a one-time clip", () => {
+    assert.equal(parse(["send", "hunter2", "--burn"]).burn, true);
+  });
+
+  it("is an error on recv, which burns what it reads without being told", () => {
+    assert.match(
+      reject(["recv", "-r", "X7KP2M", "--burn"]),
+      /--burn applies to send, not recv/,
+    );
+  });
+});
+
 describe("--last and --all", () => {
   it("default to replaying nothing", () => {
     const args = parse(["recv", "-r", "X7KP2M"]);

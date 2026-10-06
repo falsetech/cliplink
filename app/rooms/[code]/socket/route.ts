@@ -10,7 +10,11 @@ import {
 } from "@/lib/cliplink/constants";
 import { publishSignal, subscribeRoom } from "@/lib/cliplink/pubsub";
 import { storage } from "@/lib/cliplink/storage";
-import type { Clip, WsServerMessage } from "@/lib/cliplink/types";
+import type {
+  Clip,
+  EraseClipsResponse,
+  WsServerMessage,
+} from "@/lib/cliplink/types";
 import {
   parseClientMessage,
   validatePeerId,
@@ -46,6 +50,7 @@ export async function GET(
       let lastSentId = initialAfterId;
       let backlogFlushed = false;
       const buffered: Clip[] = [];
+      const bufferedErases: EraseClipsResponse[] = [];
       let signalWindowStart = Date.now();
       let signalCount = 0;
 
@@ -64,7 +69,23 @@ export async function GET(
       };
 
       // Subscribe before reading backlog so no clip published mid-fetch is lost.
+      const sendErase = ({ ids, gen }: EraseClipsResponse) => {
+        send({ type: "removed", ids, gen });
+      };
+
       const unsubscribe = subscribeRoom(code, {
+        // Held until the backlog is out, like clips: a removal sent ahead of
+        // the clip it removes would be undone by the clip arriving after it.
+        onErase: (erased) => {
+          if (closed) {
+            return;
+          }
+          if (!backlogFlushed) {
+            bufferedErases.push(erased);
+            return;
+          }
+          sendErase(erased);
+        },
         onClip: (clip) => {
           if (closed) {
             return;
@@ -143,7 +164,7 @@ export async function GET(
             return;
           }
 
-          for (const clip of backlog) {
+          for (const clip of backlog.clips) {
             sendClip(clip);
           }
 
@@ -154,8 +175,14 @@ export async function GET(
             }
           }
           buffered.length = 0;
+          for (const erased of bufferedErases) {
+            sendErase(erased);
+          }
+          bufferedErases.length = 0;
 
-          send({ type: "ready" });
+          // The count as the backlog was read. A backlog holds no deletions,
+          // so this is how a reconnecting client learns it missed one.
+          send({ type: "ready", eraseGen: backlog.eraseGen });
         } catch (error) {
           console.error("WebSocket backlog fetch failed", error);
           send({ type: "error", reason: "internal_error" });
