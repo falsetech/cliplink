@@ -18,6 +18,7 @@ export {
   ROOM_KEY_CHARS,
   ROOM_KEY_CHECK_CHARS,
   ROOM_TTL_SECONDS,
+  SOCKET_HANDOFF_CLOSE_CODE,
 } from "@thebkht/cliplink";
 
 export const MAX_ROOM_CLIPS = 50;
@@ -81,3 +82,15 @@ export const DISK_SINK_MIN_BYTES = 64 * 1024 * 1024;
 export const SEED_BUDGET_BYTES = 2 * 1024 * 1024 * 1024;
 export const SIGNAL_RATE_WINDOW_MS = 10_000;
 export const SIGNAL_RATE_MAX_MESSAGES = 200;
+/**
+ * How long before its function is stopped a socket asks its client to open a
+ * replacement. Long enough for a handshake from the far side of the world and
+ * the backlog read behind it, with room for one slow attempt.
+ */
+export const SOCKET_HANDOFF_LEAD_MS = 30_000;
+/**
+ * The longest a socket's function runs when the platform does not say, which
+ * is the default on every Vercel plan. Assumed only on Vercel: a server run
+ * any other way has no such limit, and its sockets are left alone.
+ */
+export const SOCKET_ASSUMED_MAX_DURATION_MS = 300_000;

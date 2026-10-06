@@ -6,9 +6,10 @@
 - **A `presence` signal.** `{ type: "presence", name, peer }`, sealed like every other signal, tells the room what a device is called. `peer` repeats the sender's id inside the seal and a signal whose `peer` is not the peer it came from is dropped, since the `from` beside a signal is the server's word.
 - **`send --name <name>`.** The name a clip is shown under; the default is the machine's hostname. The CLI sends a name and no such mark — it keeps no identity between runs, and still does not.
 - **`recv --json` gains `name`**, present when the clip says who sent it.
+- **A socket the server is about to stop is replaced before it goes.** A deployment that runs its sockets inside functions with a time limit stops each one when the limit is reached, and the client saw an abnormal close, fell back to polling and redialled after a backoff — on Vercel, every five minutes. The server may now send `{ type: "reconnect" }` ahead of that. The WebSocket transport opens a second socket from the last clip it reported, and once that one is `ready` closes the first with `SOCKET_HANDOFF_CLOSE_CODE` (4001), which tells the server the peer has not left. Nothing reaches `onDisconnect` or `onOpen`. A clip both sockets carry is reported once, and signals are taken from the old socket until the new one is ready. A replacement that fails to open is dropped and the old socket carries on.
 - `normalizeDeviceName`, `parseClipMeta`, `validateClipMeta`, `sealClipMeta`, `openClipMeta`, `MAX_DEVICE_NAME_CHARS` and `MAX_CLIP_META_CHARS` are exported. `RoomKey` gains `metaKey`.
 
-Wire changes, all additive: an optional sealed `meta` on a clip and on the clip `POST`, and one new sealed signal type. A client from before this release ignores both — it drops a signal type it does not know and never reads `meta` — and its own clips arrive unattributed and otherwise unchanged.
+Wire changes, all additive: an optional sealed `meta` on a clip and on the clip `POST`, one new sealed signal type, and a `reconnect` socket frame, which an older client ignores and so reconnects as it did before. A client from before this release ignores both — it drops a signal type it does not know and never reads `meta` — and its own clips arrive unattributed and otherwise unchanged.
 
 ## 0.2.2
 
