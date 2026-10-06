@@ -98,6 +98,15 @@ function argsFor(argv: string[]): ParsedArgs {
 
 const noStdin = Object.assign(Readable.from([]), { isTTY: true });
 
+/** A line of output as a URL, or null for one that is not. */
+function asUrl(line: string) {
+  try {
+    return new URL(line);
+  } catch {
+    return null;
+  }
+}
+
 describe("send", () => {
   const realFetch = globalThis.fetch;
   let server: FakeServer;
@@ -115,8 +124,8 @@ describe("send", () => {
   async function run(argv: string[]) {
     const out = reporter();
     const code = await send(argsFor(argv), out.report, noStdin);
-    const link = out.notes.find((note) => note.startsWith(BASE));
-    const encoded = link ? parseRoomKeyFromHash(new URL(link).hash) : null;
+    const link = out.notes.map(asUrl).find((url) => url?.origin === BASE);
+    const encoded = link ? parseRoomKeyFromHash(link.hash) : null;
     const key: RoomKey | null = encoded ? await importRoomKey(encoded) : null;
     return { ...out, code, key };
   }
