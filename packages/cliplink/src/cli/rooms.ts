@@ -121,6 +121,19 @@ export async function rooms(
   }
 
   const saved = await readSavedRooms(env);
+
+  if (args.codes) {
+    // For scripts and the shell completions: codes only, the live ones, each
+    // once though it may be saved against several servers. An empty list is
+    // an answer here, not something to explain.
+    for (const code of new Set(
+      saved.filter((room) => !isExpired(room, now)).map((room) => room.code),
+    )) {
+      report.data(code);
+    }
+    return 0;
+  }
+
   if (saved.length === 0) {
     report.note("No rooms saved. Send with --save to keep one.");
     return 0;
