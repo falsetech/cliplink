@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
-import { delimiter, join } from "node:path";
+import { delimiter, isAbsolute, join, win32 } from "node:path";
 
 import type { Env } from "./env.ts";
 
@@ -46,75 +46,89 @@ const POWERSHELL_WRITE =
 function powershell(file: string): Backend {
   const flags = ["-NoProfile", "-NonInteractive", "-Command"];
   return {
-    name: file,
+    name: "PowerShell",
     read: { file, args: [...flags, POWERSHELL_READ] },
     write: { file, args: [...flags, POWERSHELL_WRITE] },
   };
 }
 
-const BACKENDS = {
-  pbcopy: {
-    name: "pbcopy",
-    read: { file: "pbpaste", args: [] },
-    write: { file: "pbcopy", args: [] },
-  },
-  wayland: {
-    name: "wl-clipboard",
-    // Without --no-newline wl-paste appends one, and every read would differ
-    // from the text that was written.
-    read: { file: "wl-paste", args: ["--no-newline"] },
-    write: { file: "wl-copy", args: [] },
-    emptyWhenReadFails: true,
-  },
-  xclip: {
-    name: "xclip",
-    read: { file: "xclip", args: ["-selection", "clipboard", "-out"] },
-    write: { file: "xclip", args: ["-selection", "clipboard", "-in"] },
-    emptyWhenReadFails: true,
-  },
-  xsel: {
-    name: "xsel",
-    read: { file: "xsel", args: ["--clipboard", "--output"] },
-    write: { file: "xsel", args: ["--clipboard", "--input"] },
-  },
-} as const satisfies Record<string, Backend>;
+/**
+ * Where a command lives, as an absolute path, or null when it is not on PATH.
+ * The backends run what this returns rather than a bare name, so the command
+ * found is the command run.
+ */
+export type Locate = (command: string) => string | null;
 
 /**
  * Which tool to use, or what to tell the person when there is none.
  *
- * Pure, given a way to ask whether a command exists, so every platform's
- * choice can be tested from any one of them.
+ * Pure, given a way to find a command, so every platform's choice can be
+ * tested from any one of them.
  */
 export function chooseBackend(
   platform: NodeJS.Platform,
   env: Env,
-  has: (command: string) => boolean,
+  locate: Locate,
 ): Backend | string {
   if (platform === "darwin") {
-    return has("pbcopy") && has("pbpaste")
-      ? BACKENDS.pbcopy
+    const pbcopy = locate("pbcopy");
+    const pbpaste = locate("pbpaste");
+    return pbcopy && pbpaste
+      ? { name: "pbcopy", read: { file: pbpaste, args: [] }, write: { file: pbcopy, args: [] } }
       : "pbcopy and pbpaste were not found on PATH.";
   }
 
   if (platform === "win32") {
-    return powershell("powershell.exe");
+    // By its full path: Windows looks for a bare program name in the current
+    // directory before PATH, so a powershell.exe in whatever directory this
+    // was started from would otherwise be the one run.
+    return powershell(
+      win32.join(
+        env.SystemRoot ?? "C:\\Windows",
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe",
+      ),
+    );
   }
 
   // Under WSL the Linux side usually has no display of its own, and the
   // clipboard worth syncing is Windows'.
   const wsl = Boolean(env.WSL_DISTRO_NAME || env.WSL_INTEROP);
 
-  if (env.WAYLAND_DISPLAY && has("wl-copy") && has("wl-paste")) {
-    return BACKENDS.wayland;
+  const wlCopy = locate("wl-copy");
+  const wlPaste = locate("wl-paste");
+  if (env.WAYLAND_DISPLAY && wlCopy && wlPaste) {
+    return {
+      name: "wl-clipboard",
+      // Without --no-newline wl-paste appends one, and every read would
+      // differ from the text that was written.
+      read: { file: wlPaste, args: ["--no-newline"] },
+      write: { file: wlCopy, args: [] },
+      emptyWhenReadFails: true,
+    };
   }
-  if (env.DISPLAY && has("xclip")) {
-    return BACKENDS.xclip;
+  const xclip = locate("xclip");
+  if (env.DISPLAY && xclip) {
+    return {
+      name: "xclip",
+      read: { file: xclip, args: ["-selection", "clipboard", "-out"] },
+      write: { file: xclip, args: ["-selection", "clipboard", "-in"] },
+      emptyWhenReadFails: true,
+    };
   }
-  if (env.DISPLAY && has("xsel")) {
-    return BACKENDS.xsel;
+  const xsel = locate("xsel");
+  if (env.DISPLAY && xsel) {
+    return {
+      name: "xsel",
+      read: { file: xsel, args: ["--clipboard", "--output"] },
+      write: { file: xsel, args: ["--clipboard", "--input"] },
+    };
   }
-  if (wsl && has("powershell.exe")) {
-    return powershell("powershell.exe");
+  const windowsPowershell = locate("powershell.exe");
+  if (wsl && windowsPowershell) {
+    return powershell(windowsPowershell);
   }
 
   if (env.WAYLAND_DISPLAY) {
@@ -128,20 +142,28 @@ export function chooseBackend(
     : "No clipboard to watch: neither WAYLAND_DISPLAY nor DISPLAY is set.";
 }
 
-/** Whether `command` is an executable somewhere on `PATH`. */
-async function onPath(command: string, env: Env) {
+/**
+ * The absolute path of `command` on `PATH`, or null.
+ *
+ * Only absolute entries are searched. An empty or relative one — `.`, or the
+ * empty entry a stray colon leaves — names the current directory, and running
+ * a clipboard tool from wherever this happened to be started is how a
+ * checked-out repository gets to run its own `pbpaste`.
+ */
+async function findOnPath(command: string, env: Env) {
   for (const dir of (env.PATH ?? "").split(delimiter)) {
-    if (!dir) {
+    if (!isAbsolute(dir)) {
       continue;
     }
+    const candidate = join(dir, command);
     try {
-      await access(join(dir, command), constants.X_OK);
-      return true;
+      await access(candidate, constants.X_OK);
+      return candidate;
     } catch {
       // Not here; keep looking.
     }
   }
-  return false;
+  return null;
 }
 
 /** The clipboard on this machine, or the reason there is not one to use. */
@@ -150,20 +172,20 @@ export async function detectClipboard(
   env: Env = process.env,
 ): Promise<Clipboard | string> {
   const candidates = ["pbcopy", "pbpaste", "wl-copy", "wl-paste", "xclip", "xsel", "powershell.exe"];
-  const found = new Set<string>();
-  // Windows resolves commands through PATHEXT, and powershell.exe is always
-  // there; there is nothing to look for.
+  const found = new Map<string, string>();
+  // Windows has one place to look, which chooseBackend names itself.
   if (platform !== "win32") {
     await Promise.all(
       candidates.map(async (command) => {
-        if (await onPath(command, env)) {
-          found.add(command);
+        const path = await findOnPath(command, env);
+        if (path) {
+          found.set(command, path);
         }
       }),
     );
   }
 
-  const backend = chooseBackend(platform, env, (command) => found.has(command));
+  const backend = chooseBackend(platform, env, (command) => found.get(command) ?? null);
   return typeof backend === "string" ? backend : clipboardFor(backend);
 }
 

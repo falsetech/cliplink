@@ -72,6 +72,12 @@ export async function openSession(args: ParsedArgs): Promise<Session> {
     args.ttlSeconds ?? undefined,
     key.eraseCheck,
   );
+  // The code goes into the link, the QR, rooms.json under --save and from
+  // there into shell completions, so a server that answers with something
+  // that is not a room code does not get it that far.
+  if (!isValidRoomCode(code)) {
+    throw new Error(`${args.baseUrl} answered with "${String(code).slice(0, 40)}", which is not a room code.`);
+  }
   const transport = createEncryptedTransport(createWebSocketTransport(options));
   transport.setRoomKey(code, key);
 

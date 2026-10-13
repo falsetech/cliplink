@@ -1,13 +1,22 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { chooseBackend, clipboardFor, type Backend } from "../src/cli/clipboard.ts";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-/** `has` for a machine with exactly these commands. */
+import {
+  chooseBackend,
+  clipboardFor,
+  detectClipboard,
+  type Backend,
+} from "../src/cli/clipboard.ts";
+
+/** `locate` for a machine with exactly these commands, all in /usr/bin. */
 const having =
   (...commands: string[]) =>
   (command: string) =>
-    commands.includes(command);
+    commands.includes(command) ? `/usr/bin/${command}` : null;
 
 function nameOf(choice: Backend | string) {
   return typeof choice === "string" ? choice : choice.name;
@@ -18,8 +27,16 @@ describe("chooseBackend", () => {
     assert.equal(nameOf(chooseBackend("darwin", {}, having("pbcopy", "pbpaste"))), "pbcopy");
   });
 
-  it("uses PowerShell on Windows, with nothing to look for", () => {
-    assert.equal(nameOf(chooseBackend("win32", {}, having())), "powershell.exe");
+  it("runs PowerShell on Windows by its full path, never from the current directory", () => {
+    const choice = chooseBackend("win32", { SystemRoot: "D:\\Win" }, having());
+    assert.ok(typeof choice !== "string");
+    assert.equal(choice.read.file, "D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+  });
+
+  it("runs the command it found, by its path", () => {
+    const choice = chooseBackend("darwin", {}, having("pbcopy", "pbpaste"));
+    assert.ok(typeof choice !== "string");
+    assert.deepEqual([choice.read.file, choice.write.file], ["/usr/bin/pbpaste", "/usr/bin/pbcopy"]);
   });
 
   it("prefers wl-clipboard under Wayland, even with an X server alongside", () => {
@@ -43,7 +60,7 @@ describe("chooseBackend", () => {
     const env = { WSL_DISTRO_NAME: "Ubuntu" };
     assert.equal(
       nameOf(chooseBackend("linux", env, having("powershell.exe"))),
-      "powershell.exe",
+      "PowerShell",
     );
   });
 
@@ -58,6 +75,29 @@ describe("chooseBackend", () => {
 
   it("says there is no clipboard on a machine with no display", () => {
     assert.match(nameOf(chooseBackend("linux", {}, having("xclip"))), /DISPLAY/);
+  });
+});
+
+describe("detectClipboard", () => {
+  it("finds a tool in an absolute PATH entry, and skips relative ones", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "cliplink-path-"));
+    try {
+      for (const name of ["pbcopy", "pbpaste"]) {
+        await writeFile(join(dir, name), "#!/bin/sh\n");
+        await chmod(join(dir, name), 0o755);
+      }
+
+      const found = await detectClipboard("darwin", { PATH: dir });
+      assert.ok(typeof found !== "string", "found by its absolute directory");
+
+      // The same directory, named relative to where this runs, is not searched.
+      const relative = await detectClipboard("darwin", {
+        PATH: ["", ".", join("..", "..", dir)].join(":"),
+      });
+      assert.equal(typeof relative, "string");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

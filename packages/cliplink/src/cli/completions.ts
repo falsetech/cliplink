@@ -4,8 +4,8 @@ import { COMMANDS, FLAGS, flagsFor, SHELLS, type Command, type FlagSpec, type Sh
  * `cliplink completions <shell>` — a completion script, built from the same
  * tables the parser reads, so it offers exactly the flags each command takes.
  *
- * A room code is completed from `cliplink rooms --codes`, which prints codes
- * and nothing else. Keys are never offered: a completion is shown on screen
+ * A room code is completed from `cliplink rooms --codes`, which prints
+ * well-formed codes and nothing else, and no script evaluates what it prints. Keys are never offered: a completion is shown on screen
  * and may be recorded with it, and `rooms` withholds keys for that reason.
  */
 
@@ -63,7 +63,14 @@ _cliplink() {
 
   case "$prev" in
     ${caseLabel(rooms)})
-      COMPREPLY=($(compgen -W "$(${ROOM_CODES})" -- "$cur"))
+      # Matched by hand rather than through compgen -W, which expands its word
+      # list — a $(…) in it would run. The codes come from a file, and only
+      # what was typed is compared against them.
+      COMPREPLY=()
+      local code
+      while IFS= read -r code; do
+        [[ "$code" == "$cur"* ]] && COMPREPLY+=("$code")
+      done < <(${ROOM_CODES})
       return ;;
     ${caseLabel(other)})
       return ;;
