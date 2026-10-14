@@ -7,8 +7,9 @@ name: CodeQL
 on:
   push:
     branches: [main]
+  # Every pull request, whatever its base: a PR stacked on another branch
+  # still lands on main once that branch does, and was going there unchecked.
   pull_request:
-    branches: [main]
   schedule:
     # Mondays, alongside the Scorecard run. A scheduled scan re-checks the same
     # code against query packs that have since been updated.
@@ -36,7 +37,7 @@ jobs:
           persist-credentials: false
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
+        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
         with:
           languages: javascript-typescript
           # Nothing is compiled to analyze: the app is JavaScript and both
@@ -44,4 +45,4 @@ jobs:
           build-mode: none
 
       - name: Analyze
-        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
+        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4

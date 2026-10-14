@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 
-import { parseArgs } from "./args.ts";
+import { parseArgs, type Command, type ParsedArgs } from "./args.ts";
+import { completionScript } from "./completions.ts";
 import { describeError } from "./errors.ts";
 import { HELP } from "./help.ts";
 import { link } from "./link.ts";
-import { createReporter } from "./output.ts";
+import { createReporter, type Reporter } from "./output.ts";
 import { recv } from "./recv.ts";
 import { rooms } from "./rooms.ts";
 import { send } from "./send.ts";
+import { watch } from "./watch.ts";
 
 async function version() {
   // dist/cli/cli.js → the package root.
@@ -16,6 +18,29 @@ async function version() {
   const { version: value } = JSON.parse(await readFile(manifest, "utf8"));
   return value as string;
 }
+
+type Run = (args: ParsedArgs, report: Reporter, signal: AbortSignal) => Promise<number>;
+
+const COMMANDS: Record<Command, Run> = {
+  help: async () => {
+    process.stderr.write(HELP);
+    return 0;
+  },
+  version: async () => {
+    process.stdout.write(`${await version()}\n`);
+    return 0;
+  },
+  completions: async (args) => {
+    // The parser does not let completions through without a shell.
+    process.stdout.write(completionScript(args.shell ?? "bash"));
+    return 0;
+  },
+  rooms: (args, report) => rooms(args, report),
+  link: (args, report) => link(args, report),
+  send: (args, report) => send(args, report),
+  recv,
+  watch: (args, report, signal) => watch(args, report, signal),
+};
 
 export async function main(argv: string[]): Promise<number> {
   const parsed = parseArgs(argv, process.env);
@@ -28,37 +53,15 @@ export async function main(argv: string[]): Promise<number> {
   const { args } = parsed;
   const report = createReporter({ quiet: args.quiet });
 
-  if (args.command === "help") {
-    process.stderr.write(HELP);
-    return 0;
-  }
-  if (args.command === "version") {
-    process.stdout.write(`${await version()}\n`);
-    return 0;
-  }
-
-  // Neither opens a socket, so both run before the signal handlers the
-  // network commands need.
-  if (args.command === "rooms" || args.command === "link") {
-    try {
-      return args.command === "rooms" ? await rooms(args, report) : await link(args, report);
-    } catch (error) {
-      report.warn(describeError(error));
-      return 1;
-    }
-  }
-
-  // Ctrl-C is how `recv` is meant to end, so it exits cleanly rather than
-  // leaving the socket to be torn down by the signal.
+  // Ctrl-C is how `recv` and `watch` are meant to end, so they exit cleanly
+  // rather than leaving the socket to be torn down by the signal.
   const controller = new AbortController();
   const interrupt = () => controller.abort();
   process.on("SIGINT", interrupt);
   process.on("SIGTERM", interrupt);
 
   try {
-    return args.command === "send"
-      ? await send(args, report)
-      : await recv(args, report, controller.signal);
+    return await COMMANDS[args.command](args, report, controller.signal);
   } catch (error) {
     report.warn(describeError(error));
     return 1;

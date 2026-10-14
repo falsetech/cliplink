@@ -30,13 +30,14 @@ function json(body: unknown, status = 200) {
 /** Just the room-creating half of the API; joining reaches no server. */
 class FakeServer {
   ttlSeconds = 21_600;
+  code = CODE;
   creates: Array<Record<string, unknown>> = [];
 
   fetch = async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input));
     if (url.pathname === "/rooms") {
       this.creates.push(JSON.parse(String(init?.body ?? "{}")));
-      return json({ code: CODE, ttlSeconds: this.ttlSeconds });
+      return json({ code: this.code, ttlSeconds: this.ttlSeconds });
     }
     throw new Error(`Unexpected request to ${url}`);
   };
@@ -112,6 +113,17 @@ describe("openSession", () => {
 
       await openSession(argsFor(["send", "hi"]));
       assert.equal("ttlSeconds" in server.creates[1], false);
+    });
+
+    it("refuses a code from the server that is not a room code, and saves nothing", async () => {
+      // It would go into rooms.json, and from there into a shell completion.
+      server.code = "$(touch pwned)";
+
+      await assert.rejects(
+        openSession(argsFor(["send", "hi", "--save"])),
+        /which is not a room code/,
+      );
+      assert.deepEqual(await readSavedRooms({ CLIPLINK_CONFIG_DIR: dir }), []);
     });
 
     it("writes nothing without --save", async () => {

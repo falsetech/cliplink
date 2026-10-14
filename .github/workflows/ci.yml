@@ -3,8 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
+  # Every pull request, whatever its base: a PR stacked on another branch
+  # still lands on main once that branch does, and was going there unchecked.
   pull_request:
-    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -27,7 +28,7 @@ jobs:
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -82,3 +83,9 @@ jobs:
           # Everything shipped here is MIT. A copyleft or unlicensed dependency
           # arriving in a grouped bump is worth stopping to look at.
           deny-licenses: AGPL-1.0-or-later, AGPL-3.0-or-later, GPL-2.0-or-later, GPL-3.0-or-later, LGPL-2.0-or-later
+          # libvips, LGPL-3.0-or-later: the prebuilt binaries sharp loads at
+          # runtime, which next pulls in as an optional dependency for image
+          # optimisation. Loaded as a separate library and never shipped by
+          # this repo, so LGPL asks nothing of the code here. Pinned: an
+          # exemption covers any licence, so each new release is a decision.
+          allow-dependencies-licenses: pkg:npm/%40img/sharp-libvips-darwin-arm64@1.3.4, pkg:npm/%40img/sharp-libvips-darwin-x64@1.3.4, pkg:npm/%40img/sharp-libvips-linux-arm@1.3.4, pkg:npm/%40img/sharp-libvips-linux-arm64@1.3.4, pkg:npm/%40img/sharp-libvips-linux-ppc64@1.3.4, pkg:npm/%40img/sharp-libvips-linux-riscv64@1.3.4, pkg:npm/%40img/sharp-libvips-linux-s390x@1.3.4, pkg:npm/%40img/sharp-libvips-linux-x64@1.3.4, pkg:npm/%40img/sharp-libvips-linuxmusl-arm64@1.3.4, pkg:npm/%40img/sharp-libvips-linuxmusl-x64@1.3.4
