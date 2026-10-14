@@ -356,6 +356,48 @@ describe("createEncryptedTransport", () => {
       assert.equal(state.connects, 0, "an in-order removal needs no second look");
     });
 
+    it("delivers clips in the order their frames arrived, however long each takes to open", async () => {
+      const { transport, state } = await joined();
+      const { clips } = stream(transport);
+      const first = await sealedClip(10, "slow to open");
+      const second = await sealedClip(11, "quick");
+
+      // Hold the first decryption until told, so the second frame finishes
+      // opening first. A listener that tracks the highest id seen would skip
+      // clip 10 if 11 were delivered ahead of it.
+      const subtle = globalThis.crypto.subtle;
+      const decrypt = subtle.decrypt.bind(subtle);
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let calls = 0;
+      const decrypting = mock.method(subtle, "decrypt", async (...args: Parameters<SubtleCrypto["decrypt"]>) => {
+        calls += 1;
+        if (calls === 1) {
+          await held;
+        }
+        return decrypt(...args);
+      });
+
+      try {
+        state.handlers?.onClips([first]);
+        state.handlers?.onClips([second]);
+        await waitFor(() => calls === 2, "both frames to start opening");
+        await settle();
+        assert.equal(clips.length, 0, "the second waits for the first");
+
+        release();
+        await waitFor(() => clips.length === 2, "both frames");
+        assert.deepEqual(
+          clips.map((batch) => batch.map((entry) => entry.id)),
+          [[10], [11]],
+        );
+      } finally {
+        decrypting.mock.restore();
+      }
+    });
+
     it("does not deliver a clip whose removal arrived while it was being opened", async () => {
       const { transport, state } = await joined();
       const { clips } = stream(transport);
