@@ -312,7 +312,11 @@ export function createEncryptedTransport(
         },
         onClips: (clips) => {
           const opened = decryptClips(clips);
-          const next = delivered.then(() => opened).then(handlers.onClips);
+          const next = delivered
+            .then(() => opened)
+            // Again at delivery: a removal can land while an opened frame
+            // waits its turn, after decryptClips last looked.
+            .then((kept) => handlers.onClips(kept.filter((clip) => !gone.has(clip.id))));
           // One failed delivery must not hold back every one after it.
           delivered = next.catch(() => {});
         },

@@ -398,6 +398,49 @@ describe("createEncryptedTransport", () => {
       }
     });
 
+    it("does not deliver a clip removed while it waited behind an earlier frame", async () => {
+      const { transport, state } = await joined();
+      const { clips } = stream(transport);
+      const first = await sealedClip(10, "slow to open");
+      const second = await sealedClip(11, "removed while waiting");
+
+      const subtle = globalThis.crypto.subtle;
+      const decrypt = subtle.decrypt.bind(subtle);
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let calls = 0;
+      let opened = 0;
+      const decrypting = mock.method(subtle, "decrypt", async (...args: Parameters<SubtleCrypto["decrypt"]>) => {
+        calls += 1;
+        if (calls === 1) {
+          await held;
+        }
+        const plain = await decrypt(...args);
+        opened += 1;
+        return plain;
+      });
+
+      try {
+        state.handlers?.onClips([first]);
+        state.handlers?.onClips([second]);
+        // The second frame is open and queued; only then is it removed.
+        await waitFor(() => opened === 1, "the second frame to open");
+        await settle();
+        state.handlers?.onRemoved?.([11], 1);
+
+        release();
+        await waitFor(() => clips.length === 2, "both frames");
+        assert.deepEqual(
+          clips.map((batch) => batch.map((entry) => entry.id)),
+          [[10], []],
+        );
+      } finally {
+        decrypting.mock.restore();
+      }
+    });
+
     it("does not deliver a clip whose removal arrived while it was being opened", async () => {
       const { transport, state } = await joined();
       const { clips } = stream(transport);
