@@ -154,7 +154,7 @@ describe("rooms", () => {
   });
 
   it("names it among the commands when none was given", () => {
-    assert.match(reject([]), /send, recv, rooms, link, help or version/);
+    assert.match(reject([]), /send, recv, watch, rooms, link, completions, help or version/);
   });
 
   it("takes the rooms flags", () => {
@@ -220,7 +220,7 @@ describe("--name", () => {
   it("is an error on recv, rather than silently ignored", () => {
     assert.match(
       reject(["recv", "-r", "X7KP2M", "--name", "ci"]),
-      /--name applies to send, not recv/,
+      /--name applies to send and watch, not recv/,
     );
   });
 });
@@ -366,5 +366,63 @@ describe("--timeout", () => {
 
   it("is an error on send, rather than silently ignored", () => {
     assert.match(reject(["send", "hi", "--timeout", "30"]), /--timeout applies to recv, not send/);
+  });
+});
+
+describe("watch", () => {
+  it("creates a room when none is named, like send", () => {
+    const args = parse(["watch"]);
+    assert.equal(args.command, "watch");
+    assert.equal(args.room, null);
+  });
+
+  it("takes --send-only or --recv-only, not both", () => {
+    assert.equal(parse(["watch", "--send-only"]).sendOnly, true);
+    assert.equal(parse(["watch", "--recv-only"]).recvOnly, true);
+    assert.match(reject(["watch", "--send-only", "--recv-only"]), /pick one/);
+  });
+
+  it("keeps its flags to itself", () => {
+    assert.match(reject(["recv", "-r", "X7KP2M", "--send-only"]), /--send-only applies to watch, not recv/);
+    assert.match(reject(["watch", "--json"]), /--json applies to recv, not watch/);
+    assert.match(reject(["watch", "--burn"]), /--burn applies to send, not watch/);
+  });
+
+  it("takes --name and --ttl, as a command that sends and may create", () => {
+    const args = parse(["watch", "--name", "Desk", "--ttl", "3600"]);
+    assert.equal(args.name, "Desk");
+    assert.equal(args.ttlSeconds, 3600);
+  });
+
+  it("takes no text", () => {
+    assert.match(reject(["watch", "hello"]), /watch takes no text/);
+  });
+});
+
+describe("completions", () => {
+  it("takes one of the shells", () => {
+    assert.equal(parse(["completions", "zsh"]).shell, "zsh");
+    assert.equal(parse(["completions", "fish"]).text, "");
+  });
+
+  it("names the shells when none or another is given", () => {
+    assert.match(reject(["completions"]), /needs a shell: bash, zsh, fish/);
+    assert.match(reject(["completions", "pwsh"]), /No completions for "pwsh"/);
+  });
+});
+
+describe("flags given to a command they mean nothing to", () => {
+  it("are refused rather than ignored", () => {
+    assert.match(reject(["rooms", "--room", "X7KP2M"]), /--room applies to send, recv, watch and link, not rooms/);
+    assert.match(reject(["rooms", "--one"]), /--one applies to recv, not rooms/);
+    assert.match(reject(["send", "hi", "--codes"]), /--codes applies to rooms, not send/);
+  });
+
+  it("but the room in the environment is not a flag, and stays harmless", () => {
+    assert.equal(parse(["rooms"], { CLIPLINK_ROOM: "X7KP2M" }).command, "rooms");
+  });
+
+  it("still accepts the spelling --no-colour", () => {
+    assert.equal(parse(["send", "hi", "--no-colour"]).color, false);
   });
 });

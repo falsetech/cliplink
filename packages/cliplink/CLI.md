@@ -23,8 +23,10 @@ and the clip is on your phone. No account, no install on the other device.
 ```
 cliplink send [text]        Send a clip. With no text, reads stdin.
 cliplink recv               Print clips as they arrive, until Ctrl-C.
+cliplink watch              Sync this machine's clipboard with a room.
 cliplink rooms              List the rooms --save has kept.
 cliplink link               Print the share link and QR for a room.
+cliplink completions <shell>  Print a completion script: bash, zsh, fish.
 ```
 
 | Option | |
@@ -33,26 +35,66 @@ cliplink link               Print the share link and QR for a room.
 | `-k, --key <key\|url>` | Room key. See [Keys](#keys). |
 | `--open` | Room with no key of its own: the code opens it. |
 | `--save` | Remember this room and key in the config file. |
-| `--ttl <seconds>` | Lifetime of a room being created (3600–86400). |
-| `--name <name>` | `send`: the name the clip is shown under. Default is the hostname. |
+| `--ttl <seconds>` | `send`, `watch`: lifetime of a room being created (3600–86400). |
+| `--name <name>` | `send`, `watch`: the name clips are shown under. Default is the hostname. |
 | `--burn` | `send`: a one-time clip, deleted once another device reads it. |
 | `-1, --one` | `recv`: print the next clip, then exit. |
 | `--json` | `recv`: print each clip as a JSON object. |
 | `--last <n>` | `recv`: replay the last n clips before listening. |
 | `--all` | `recv`: replay every clip the room still holds. |
 | `--timeout <secs>` | `recv`: give up after this long. Exits 1 if no clip arrived. |
+| `--send-only` | `watch`: send what is copied here; write nothing to this clipboard. |
+| `--recv-only` | `watch`: copy what arrives; send nothing from this clipboard. |
 | `--forget <code>` | `rooms`: forget one saved room. |
 | `--forget-all` | `rooms`: forget every saved room. |
 | `--prune` | `rooms`: drop the rooms that have expired. |
 | `--show-keys` | `rooms`: print the saved keys, withheld by default. |
+| `--codes` | `rooms`: print only the saved codes, one per line. |
 | `-q, --quiet` | Suppress commentary on stderr. |
 | `--no-color` | Draw the QR without colour. |
 | `--url <origin>` | Deployment to talk to. |
 
 Short flags cluster, so `-q1` is `-q -1`. A flag that takes a value comes last.
+A flag given to a command it means nothing to is an error, not ignored.
 
 Environment: `CLIPLINK_ROOM`, `CLIPLINK_ROOM_KEY`, `CLIPLINK_URL`,
 `CLIPLINK_CONFIG_DIR`, `NO_COLOR`.
+
+## watch
+
+`cliplink watch` keeps the system clipboard and a room in step until Ctrl-C:
+what you copy here is sent, and what arrives is copied here. With no `--room`
+it creates one and prints the link and QR, as `send` does.
+
+- It talks to the clipboard through the platform's own tools: `pbcopy` and
+  `pbpaste` on macOS; `wl-copy` and `wl-paste` under Wayland; `xclip` or
+  `xsel` under X; PowerShell on Windows and under WSL. Without one it says
+  what to install and exits 1, before touching a room.
+- What is on the clipboard when it starts is not sent. Only a change is.
+- It does not send back a clip it has just copied, and skips its own clips
+  when the room relays them.
+- A one-time clip is deleted once it has been copied, as `recv` deletes one
+  it prints.
+- The clipboard is read twice a second. A copy larger than the clip limit is
+  skipped with a warning.
+
+## Shell completions
+
+```bash
+# bash, in ~/.bashrc
+source <(cliplink completions bash)
+
+# zsh: save it on $fpath…
+cliplink completions zsh > ~/.zfunc/_cliplink
+# …or, after compinit in ~/.zshrc
+source <(cliplink completions zsh)
+
+# fish
+cliplink completions fish > ~/.config/fish/completions/cliplink.fish
+```
+
+`--room` and `--forget` complete from the rooms `--save` has kept, through
+`cliplink rooms --codes`. Keys are never offered.
 
 ## stdout is the data channel
 
@@ -129,6 +171,12 @@ cliplink recv --room X7KP2M --one --timeout 30 | pbcopy
 
 # Script against the clip metadata, not just the text
 cliplink recv --room X7KP2M --json | jq -r '.senderId'
+
+# Share this machine's clipboard with a new room
+cliplink watch
+
+# Only take clips from the room, never send this clipboard
+cliplink watch --room X7KP2M --recv-only
 
 # Show the link and QR again for a room you already have
 cliplink link --room X7KP2M

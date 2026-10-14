@@ -224,3 +224,36 @@ describe("rooms --prune", () => {
     assert.match((await run(["rooms", "--prune"], env, NOW)).stderr, /Nothing to prune/);
   });
 });
+
+describe("rooms --codes", () => {
+  it("prints the live codes alone, once each, and no key", async () => {
+    const env = await tempEnv();
+    await saveRoom({ code: "X7KP2M", key: "SECRET", baseUrl: "https://a", savedAt: NOW }, env);
+    await saveRoom({ code: "X7KP2M", key: "OTHER", baseUrl: "https://b", savedAt: NOW }, env);
+    await saveRoom({ code: "AB12CD", baseUrl: "https://a", savedAt: NOW }, env);
+    await saveRoom(
+      { code: "DEAD00", baseUrl: "https://a", savedAt: NOW - 2, expiresAt: NOW - 1 },
+      env,
+    );
+
+    const result = await run(["rooms", "--codes"], env, NOW);
+
+    assert.equal(result.code, 0);
+    assert.equal(result.stdout, "AB12CD\nX7KP2M\n");
+    assert.equal(result.stderr, "");
+  });
+
+  it("leaves out an entry that is not a room code, since a shell reads the list", async () => {
+    const env = await tempEnv();
+    await saveRoom({ code: "X7KP2M", baseUrl: "https://a", savedAt: NOW }, env);
+    await saveRoom({ code: "$(touch pwned)", baseUrl: "https://a", savedAt: NOW }, env);
+
+    const result = await run(["rooms", "--codes"], env, NOW);
+    assert.equal(result.stdout, "X7KP2M\n");
+  });
+
+  it("prints nothing, and says nothing, when nothing is saved", async () => {
+    const result = await run(["rooms", "--codes"], await tempEnv(), NOW);
+    assert.deepEqual([result.code, result.stdout, result.stderr], [0, "", ""]);
+  });
+});

@@ -1,6 +1,10 @@
 /**
  * Argument parsing, kept apart from anything that touches the network or the
  * filesystem so the whole surface can be tested as a pure function.
+ *
+ * The commands and flags are each one table. The parser, `--help` and the
+ * shell completions all read them, so a flag cannot be accepted without being
+ * documented, or completed without being accepted.
  */
 
 import {
@@ -13,10 +17,30 @@ import {
 
 import type { Env } from "./env.ts";
 
-export const COMMANDS = ["send", "recv", "rooms", "link", "help", "version"] as const;
-export type Command = (typeof COMMANDS)[number];
-
 export const DEFAULT_BASE_URL = "https://cliplink.thebkht.com";
+
+export const SHELLS = ["bash", "zsh", "fish"] as const;
+export type Shell = (typeof SHELLS)[number];
+
+export const COMMANDS = [
+  { name: "send", usage: "send [text]", summary: "Send a clip. With no text, reads stdin." },
+  { name: "recv", usage: "recv", summary: "Print clips as they arrive, until Ctrl-C." },
+  {
+    name: "watch",
+    usage: "watch",
+    summary: "Sync this machine's clipboard with a room.",
+  },
+  { name: "rooms", usage: "rooms", summary: "List the rooms --save has kept." },
+  { name: "link", usage: "link", summary: "Print the share link and QR for a room." },
+  {
+    name: "completions",
+    usage: "completions <shell>",
+    summary: `Print a completion script: ${SHELLS.join(", ")}.`,
+  },
+  { name: "help", usage: null, summary: "Print usage." },
+  { name: "version", usage: null, summary: "Print the version." },
+] as const;
+export type Command = (typeof COMMANDS)[number]["name"];
 
 export type ParsedArgs = {
   command: Command;
@@ -28,7 +52,7 @@ export type ParsedArgs = {
   open: boolean;
   /** Write the room and key to the config file. The one path that persists a key. */
   save: boolean;
-  /** `send` only: the name this clip is shown under. Null means the hostname. */
+  /** `send` and `watch`: the name clips are shown under. Null means the hostname. */
   name: string | null;
   /** `send` only: a one-time clip, deleted once another device reads it. */
   burn: boolean;
@@ -42,6 +66,10 @@ export type ParsedArgs = {
   all: boolean;
   /** `recv` only: give up after this many seconds. */
   timeoutSeconds: number | null;
+  /** `watch` only: send what is copied here, but write nothing to the clipboard. */
+  sendOnly: boolean;
+  /** `watch` only: copy what arrives, but send nothing from the clipboard. */
+  recvOnly: boolean;
   /** Suppress the human-facing commentary on stderr. */
   quiet: boolean;
   /**
@@ -60,34 +88,284 @@ export type ParsedArgs = {
   prune: boolean;
   /** `rooms` only: print the saved keys, which the listing otherwise withholds. */
   showKeys: boolean;
+  /** `rooms` only: print the saved codes alone, one per line. */
+  codes: boolean;
+  /** `completions` only: the shell to write a script for. */
+  shell: Shell | null;
 };
 
 export type ParseResult =
   | { ok: true; args: ParsedArgs }
   | { ok: false; message: string };
 
-const FLAGS_WITH_VALUES = new Set([
-  "--room",
-  "--key",
-  "--name",
-  "--ttl",
-  "--url",
-  "--forget",
-  "--last",
-  "--timeout",
-]);
+/** The commands that resolve a room, which is what most flags are about. */
+const ROOM_COMMANDS = ["send", "recv", "watch", "link"] as const satisfies readonly Command[];
 
-const ALIASES: Record<string, string> = {
-  "-r": "--room",
-  "-k": "--key",
-  "-1": "--one",
-  "-q": "--quiet",
-  "-h": "--help",
-  "-v": "--version",
+export type FlagSpec = {
+  name: `--${string}`;
+  short?: `-${string}`;
+  /** Other spellings that are accepted and never advertised. */
+  also?: readonly string[];
+  /** What the value is called in `--help`. Present exactly when the flag takes one. */
+  value?: string;
+  /** The commands it means something to. Absent means every command. */
+  commands?: readonly Command[];
+  /** What `--help` says; a newline continues the description on the next line. */
+  help: string;
+  /** What a shell can offer as the value. */
+  complete?: "rooms";
+  /** Parsing it settles the command, whatever else the line says. */
+  settles?: Command;
+  /** Records the flag. A string is the error to report instead. */
+  set?: (args: ParsedArgs, value: string) => string | void;
 };
 
+export const FLAGS: readonly FlagSpec[] = [
+  {
+    name: "--room",
+    short: "-r",
+    value: "<code|url>",
+    commands: ROOM_COMMANDS,
+    help: "Room to join. A full room link works too.",
+    complete: "rooms",
+    set: (args, value) => {
+      args.room = value;
+    },
+  },
+  {
+    name: "--key",
+    short: "-k",
+    value: "<key|url>",
+    commands: ROOM_COMMANDS,
+    help: "Room key. See KEYS below.",
+    set: (args, value) => {
+      args.key = value;
+    },
+  },
+  {
+    name: "--open",
+    commands: ROOM_COMMANDS,
+    help: "Room with no key of its own: the code opens it.",
+    set: (args) => {
+      args.open = true;
+    },
+  },
+  {
+    name: "--save",
+    commands: ROOM_COMMANDS,
+    help: "Remember this room and key in the config file.",
+    set: (args) => {
+      args.save = true;
+    },
+  },
+  {
+    name: "--ttl",
+    value: "<seconds>",
+    commands: ["send", "watch"],
+    help: `Lifetime of a room being created\n(${MIN_ROOM_TTL_SECONDS}–${MAX_ROOM_TTL_SECONDS}).`,
+    set: (args, value) => {
+      // validateRoomTtl is the same check the server applies, so the bounds
+      // the help text advertises are enforced before a round trip rather than
+      // learned from a rejection. Its messages name the wire field, though,
+      // and the person typed a flag.
+      const ttl = validateRoomTtl(Number(value));
+      if (!ttl.ok) {
+        return Number.isFinite(Number(value))
+          ? `--ttl must be between ${MIN_ROOM_TTL_SECONDS} and ${MAX_ROOM_TTL_SECONDS} seconds.`
+          : "--ttl must be a number of seconds.";
+      }
+      args.ttlSeconds = ttl.ttlSeconds;
+    },
+  },
+  {
+    name: "--name",
+    value: "<name>",
+    commands: ["send", "watch"],
+    help: "The name clips are shown under.\nDefault is this machine's hostname.",
+    set: (args, value) => {
+      const deviceName = normalizeDeviceName(value);
+      if (!deviceName || deviceName !== value.trim()) {
+        return `--name takes one line of up to ${MAX_DEVICE_NAME_CHARS} characters.`;
+      }
+      args.name = deviceName;
+    },
+  },
+  {
+    name: "--burn",
+    commands: ["send"],
+    help: "A one-time clip. The first device to read\nit deletes it for everyone. recv counts as\nreading: what it prints, it deletes.",
+    set: (args) => {
+      args.burn = true;
+    },
+  },
+  {
+    name: "--one",
+    short: "-1",
+    commands: ["recv"],
+    help: "Print the next clip, then exit.",
+    set: (args) => {
+      args.one = true;
+    },
+  },
+  {
+    name: "--json",
+    commands: ["recv"],
+    help: "Print each clip as a JSON object.",
+    set: (args) => {
+      args.json = true;
+    },
+  },
+  {
+    name: "--last",
+    value: "<n>",
+    commands: ["recv"],
+    help: "Replay the last n clips before listening.",
+    set: (args, value) => {
+      // Number("") is 0, and an empty --last is a mistake rather than a
+      // request for no clips.
+      const count = value.trim() === "" ? Number.NaN : Number(value);
+      if (!Number.isInteger(count) || count < 0) {
+        return "--last takes a whole number of clips.";
+      }
+      args.last = count;
+    },
+  },
+  {
+    name: "--all",
+    commands: ["recv"],
+    help: "Replay every clip the room still holds.",
+    set: (args) => {
+      args.all = true;
+    },
+  },
+  {
+    name: "--timeout",
+    value: "<secs>",
+    commands: ["recv"],
+    help: "Give up after this long. Exits 1 if no\nclip arrived, so a script can tell.",
+    set: (args, value) => {
+      const seconds = value.trim() === "" ? Number.NaN : Number(value);
+      if (!Number.isFinite(seconds) || seconds <= 0) {
+        return "--timeout takes a positive number of seconds.";
+      }
+      args.timeoutSeconds = seconds;
+    },
+  },
+  {
+    name: "--send-only",
+    commands: ["watch"],
+    help: "Send what is copied here; write nothing\nto this clipboard.",
+    set: (args) => {
+      args.sendOnly = true;
+    },
+  },
+  {
+    name: "--recv-only",
+    commands: ["watch"],
+    help: "Copy what arrives; send nothing from\nthis clipboard.",
+    set: (args) => {
+      args.recvOnly = true;
+    },
+  },
+  {
+    name: "--forget",
+    value: "<code>",
+    commands: ["rooms"],
+    help: "Forget one saved room.",
+    complete: "rooms",
+    set: (args, value) => {
+      args.forget = value;
+    },
+  },
+  {
+    name: "--forget-all",
+    commands: ["rooms"],
+    help: "Forget every saved room.",
+    set: (args) => {
+      args.forgetAll = true;
+    },
+  },
+  {
+    name: "--prune",
+    commands: ["rooms"],
+    help: "Drop the rooms that have expired.",
+    set: (args) => {
+      args.prune = true;
+    },
+  },
+  {
+    name: "--show-keys",
+    commands: ["rooms"],
+    help: "Print the saved keys, withheld by default.",
+    set: (args) => {
+      args.showKeys = true;
+    },
+  },
+  {
+    name: "--codes",
+    commands: ["rooms"],
+    help: "Print only the saved codes, one per line.",
+    set: (args) => {
+      args.codes = true;
+    },
+  },
+  {
+    name: "--quiet",
+    short: "-q",
+    help: "Suppress commentary on stderr.",
+    set: (args) => {
+      args.quiet = true;
+    },
+  },
+  {
+    name: "--no-color",
+    also: ["--no-colour"],
+    commands: ROOM_COMMANDS,
+    help: "Draw the QR without colour. See NO_COLOR.",
+    set: (args) => {
+      args.color = false;
+    },
+  },
+  {
+    name: "--url",
+    value: "<origin>",
+    commands: ROOM_COMMANDS,
+    help: `Deployment to talk to.\nDefault ${DEFAULT_BASE_URL}`,
+    set: (args, value) => {
+      args.baseUrl = value;
+    },
+  },
+  { name: "--help", short: "-h", help: "This text.", settles: "help" },
+  { name: "--version", short: "-v", help: "Version.", settles: "version" },
+];
+
+/** Every spelling a flag answers to, mapped to its entry. */
+const BY_SPELLING = new Map<string, FlagSpec>(
+  FLAGS.flatMap((flag) =>
+    [flag.name, flag.short, ...(flag.also ?? [])]
+      .filter((spelling): spelling is string => spelling !== undefined)
+      .map((spelling) => [spelling, flag] as const),
+  ),
+);
+
+/** The flags a command accepts. */
+export function flagsFor(command: Command) {
+  return FLAGS.filter((flag) => !flag.commands || flag.commands.includes(command));
+}
+
 function isCommand(value: string): value is Command {
-  return (COMMANDS as readonly string[]).includes(value);
+  return COMMANDS.some((command) => command.name === value);
+}
+
+function isShell(value: string): value is Shell {
+  return (SHELLS as readonly string[]).includes(value);
+}
+
+/** "send", "send and watch", "send, recv and watch". */
+function list(names: readonly string[], conjunction = "and") {
+  return names.length < 2
+    ? names.join("")
+    : `${names.slice(0, -1).join(", ")} ${conjunction} ${names.at(-1)}`;
 }
 
 /**
@@ -114,19 +392,19 @@ function expandClusters(argv: string[]): ParseResult | string[] {
     const letters = /^-([A-Za-z0-9]{2,})$/.exec(raw)?.[1];
     if (
       letters === undefined ||
-      ALIASES[raw] !== undefined ||
-      ![...letters].every((letter) => ALIASES[`-${letter}`] !== undefined)
+      BY_SPELLING.has(raw) ||
+      ![...letters].every((letter) => BY_SPELLING.has(`-${letter}`))
     ) {
       expanded.push(raw);
       continue;
     }
 
     for (const [position, letter] of [...letters].entries()) {
-      const name = ALIASES[`-${letter}`];
-      if (FLAGS_WITH_VALUES.has(name) && position < letters.length - 1) {
+      const flag = BY_SPELLING.get(`-${letter}`);
+      if (flag?.value && position < letters.length - 1) {
         return {
           ok: false,
-          message: `${name} takes a value, so -${letter} must come last in ${raw}.`,
+          message: `${flag.name} takes a value, so -${letter} must come last in ${raw}.`,
         };
       }
       expanded.push(`-${letter}`);
@@ -141,7 +419,9 @@ function expandClusters(argv: string[]): ParseResult | string[] {
  *
  * Unknown flags are an error rather than positional text: a mistyped `--quite`
  * silently becoming the clip you send is the kind of thing you only notice on
- * the other device.
+ * the other device. So is a known flag given to a command it means nothing to
+ * — silently ignoring one would let `cliplink send --prune` look like it had
+ * pruned something.
  */
 export function parseArgs(rawArgv: string[], env: Env = {}): ParseResult {
   const expanded = expandClusters(rawArgv);
@@ -164,6 +444,8 @@ export function parseArgs(rawArgv: string[], env: Env = {}): ParseResult {
     last: null,
     all: false,
     timeoutSeconds: null,
+    sendOnly: false,
+    recvOnly: false,
     quiet: false,
     // https://no-color.org: set to anything non-empty, and colour is off.
     color: (env.NO_COLOR ?? "") === "",
@@ -173,135 +455,58 @@ export function parseArgs(rawArgv: string[], env: Env = {}): ParseResult {
     forgetAll: false,
     prune: false,
     showKeys: false,
+    codes: false,
+    shell: null,
   };
 
   const positional: string[] = [];
   let command: Command | null = null;
-  /** Whether the room was named on the command line or came from the environment. */
-  let roomFromFlag = false;
+  /** The flags given on the command line, in order, by their canonical name. */
+  const given: FlagSpec[] = [];
 
   for (let index = 0; index < argv.length; index += 1) {
     const raw = argv[index];
-    const token = ALIASES[raw] ?? raw;
 
     // `--` ends flag parsing, so a clip may begin with a dash.
-    if (token === "--") {
+    if (raw === "--") {
       positional.push(...argv.slice(index + 1));
       break;
     }
 
-    if (token.startsWith("-") && token !== "-") {
-      const eq = token.indexOf("=");
-      const name = eq === -1 ? token : token.slice(0, eq);
-      const inline = eq === -1 ? null : token.slice(eq + 1);
+    if (raw.startsWith("-") && raw !== "-") {
+      const eq = raw.indexOf("=");
+      const spelling = eq === -1 ? raw : raw.slice(0, eq);
+      const inline = eq === -1 ? null : raw.slice(eq + 1);
+      const flag = BY_SPELLING.get(spelling);
 
-      if (FLAGS_WITH_VALUES.has(name)) {
-        const value = inline ?? argv[++index];
-        if (value === undefined) {
-          return { ok: false, message: `${name} needs a value.` };
+      if (!flag) {
+        return { ok: false, message: `Unknown option ${spelling}.` };
+      }
+      if (flag.settles) {
+        return { ok: true, args: { ...args, command: flag.settles } };
+      }
+
+      let value = "";
+      if (flag.value) {
+        const next = inline ?? argv[++index];
+        if (next === undefined) {
+          return { ok: false, message: `${flag.name} needs a value.` };
         }
-        if (name === "--room") {
-          args.room = value;
-          roomFromFlag = true;
-        } else if (name === "--key") {
-          args.key = value;
-        } else if (name === "--name") {
-          const deviceName = normalizeDeviceName(value);
-          if (!deviceName || deviceName !== value.trim()) {
-            return {
-              ok: false,
-              message: `--name takes one line of up to ${MAX_DEVICE_NAME_CHARS} characters.`,
-            };
-          }
-          args.name = deviceName;
-        } else if (name === "--url") {
-          args.baseUrl = value;
-        } else if (name === "--forget") {
-          args.forget = value;
-        } else if (name === "--timeout") {
-          const seconds = value.trim() === "" ? Number.NaN : Number(value);
-          if (!Number.isFinite(seconds) || seconds <= 0) {
-            return { ok: false, message: "--timeout takes a positive number of seconds." };
-          }
-          args.timeoutSeconds = seconds;
-        } else if (name === "--last") {
-          // Number("") is 0, and an empty --last is a mistake rather than a
-          // request for no clips.
-          const count = value.trim() === "" ? Number.NaN : Number(value);
-          if (!Number.isInteger(count) || count < 0) {
-            return { ok: false, message: "--last takes a whole number of clips." };
-          }
-          args.last = count;
-        } else {
-          // validateRoomTtl is the same check the server applies, so the
-          // bounds the help text advertises are enforced before a round trip
-          // rather than learned from a rejection. Its messages name the wire
-          // field, though, and the person typed a flag.
-          const ttl = validateRoomTtl(Number(value));
-          if (!ttl.ok) {
-            return {
-              ok: false,
-              message: Number.isFinite(Number(value))
-                ? `--ttl must be between ${MIN_ROOM_TTL_SECONDS} and ${MAX_ROOM_TTL_SECONDS} seconds.`
-                : "--ttl must be a number of seconds.",
-            };
-          }
-          args.ttlSeconds = ttl.ttlSeconds;
-        }
-        continue;
+        value = next;
+      } else if (inline !== null) {
+        return { ok: false, message: `${flag.name} does not take a value.` };
       }
 
-      if (inline !== null) {
-        return { ok: false, message: `${name} does not take a value.` };
+      const error = flag.set?.(args, value);
+      if (typeof error === "string") {
+        return { ok: false, message: error };
       }
-
-      switch (name) {
-        case "--open":
-          args.open = true;
-          break;
-        case "--save":
-          args.save = true;
-          break;
-        case "--burn":
-          args.burn = true;
-          break;
-        case "--one":
-          args.one = true;
-          break;
-        case "--json":
-          args.json = true;
-          break;
-        case "--all":
-          args.all = true;
-          break;
-        case "--quiet":
-          args.quiet = true;
-          break;
-        case "--no-color":
-        case "--no-colour":
-          args.color = false;
-          break;
-        case "--forget-all":
-          args.forgetAll = true;
-          break;
-        case "--prune":
-          args.prune = true;
-          break;
-        case "--show-keys":
-          args.showKeys = true;
-          break;
-        case "--help":
-          return { ok: true, args: { ...args, command: "help" } };
-        case "--version":
-          return { ok: true, args: { ...args, command: "version" } };
-        default:
-          return { ok: false, message: `Unknown option ${name}.` };
-      }
+      given.push(flag);
       continue;
     }
 
-    if (command === null && isCommand(token)) {
-      command = token;
+    if (command === null && isCommand(raw)) {
+      command = raw;
       continue;
     }
 
@@ -311,12 +516,28 @@ export function parseArgs(rawArgv: string[], env: Env = {}): ParseResult {
   if (command === null) {
     return {
       ok: false,
-      message: "Expected a command: send, recv, rooms, link, help or version.",
+      message: `Expected a command: ${list(
+        COMMANDS.map((entry) => entry.name),
+        "or",
+      )}.`,
     };
   }
 
   args.command = command;
   args.text = positional.join(" ");
+
+  const misplaced = given.find(
+    (flag) => flag.commands && !flag.commands.includes(command),
+  );
+  if (misplaced?.commands) {
+    return {
+      ok: false,
+      message: `${misplaced.name} applies to ${list(misplaced.commands)}, not ${command}.`,
+    };
+  }
+
+  /** Whether the room was named on the command line or came from the environment. */
+  const roomFromFlag = given.some((flag) => flag.name === "--room");
 
   if (args.open && args.key) {
     return {
@@ -330,68 +551,46 @@ export function parseArgs(rawArgv: string[], env: Env = {}): ParseResult {
       message: "--open rooms have no key to save; the room code alone opens them.",
     };
   }
-  if (command === "send" && args.one) {
-    return { ok: false, message: "--one applies to recv, not send." };
-  }
-  if (command !== "send" && args.name !== null) {
-    return { ok: false, message: `--name applies to send, not ${command}.` };
-  }
-  if (command !== "send" && args.burn) {
-    return { ok: false, message: `--burn applies to send, not ${command}.` };
-  }
-  if (command !== "recv" && args.json) {
-    return { ok: false, message: `--json applies to recv, not ${command}.` };
-  }
-  if (command !== "recv" && args.timeoutSeconds !== null) {
-    return { ok: false, message: `--timeout applies to recv, not ${command}.` };
-  }
-  if (command !== "recv" && (args.last !== null || args.all)) {
-    const name = args.all ? "--all" : "--last";
-    return { ok: false, message: `${name} applies to recv, not ${command}.` };
-  }
   if (args.last !== null && args.all) {
     return {
       ok: false,
       message: "--last takes a count and --all takes everything; pick one.",
     };
   }
-  if (command === "recv" && args.text) {
-    return { ok: false, message: "recv takes no text to send." };
-  }
-  if (command === "recv" && !args.room) {
-    return { ok: false, message: "recv needs a room: pass --room, or CLIPLINK_ROOM." };
-  }
-  if (command === "rooms" && args.text) {
-    return { ok: false, message: "rooms takes no text." };
-  }
-  if (command === "link" && args.text) {
-    return { ok: false, message: "link takes no text." };
-  }
-  if (command === "link" && !args.room) {
-    // link never creates a room. Minting one just to print its link would
-    // leave a room on the server that nobody asked for.
-    return { ok: false, message: "link needs a room: pass --room, or CLIPLINK_ROOM." };
-  }
-  if (command !== "rooms") {
-    // These read and write the saved-rooms file and mean nothing anywhere
-    // else. Silently ignoring one would let `cliplink send --prune` look like
-    // it had pruned something.
-    const misplaced = (
-      [
-        [args.forget !== null, "--forget"],
-        [args.forgetAll, "--forget-all"],
-        [args.prune, "--prune"],
-        [args.showKeys, "--show-keys"],
-      ] as const
-    ).find(([given]) => given);
-    if (misplaced) {
-      return { ok: false, message: `${misplaced[1]} applies to rooms, not ${command}.` };
-    }
+  if (args.sendOnly && args.recvOnly) {
+    return {
+      ok: false,
+      message: "--send-only and --recv-only together would do nothing; pick one.",
+    };
   }
   if (args.forget !== null && args.forgetAll) {
     return {
       ok: false,
       message: "--forget names one room and --forget-all takes them all; pick one.",
+    };
+  }
+
+  if (command === "completions") {
+    if (!isShell(args.text)) {
+      return {
+        ok: false,
+        message: args.text
+          ? `No completions for "${args.text}". Pick one of ${SHELLS.join(", ")}.`
+          : `completions needs a shell: ${SHELLS.join(", ")}.`,
+      };
+    }
+    args.shell = args.text;
+    args.text = "";
+  } else if (command !== "send" && args.text) {
+    return { ok: false, message: `${command} takes no text.` };
+  }
+
+  if ((command === "recv" || command === "link") && !args.room) {
+    // link never creates a room. Minting one just to print its link would
+    // leave a room on the server that nobody asked for.
+    return {
+      ok: false,
+      message: `${command} needs a room: pass --room, or CLIPLINK_ROOM.`,
     };
   }
   if (args.ttlSeconds !== null && args.room) {

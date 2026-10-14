@@ -9,8 +9,7 @@ import {
 import type { ParsedArgs } from "./args.ts";
 import { createRandomSenderId } from "./identity.ts";
 import type { Reporter } from "./output.ts";
-import { renderQr } from "./qr.ts";
-import { openSession } from "./room.ts";
+import { announceNewRoom, openSession } from "./room.ts";
 
 /** Everything piped in, so `git log | cliplink send` works. */
 export async function readStdin(stream: NodeJS.ReadableStream): Promise<string> {
@@ -75,15 +74,7 @@ export async function send(
     }
 
     if (session.created) {
-      report.note(`Room ${session.code} — open on your other device:`);
-      report.note();
-      report.note(session.url);
-      if (report.interactive) {
-        report.note();
-        report.note(renderQr(session.url, { color: args.color }));
-      }
-      report.note();
-      report.note("The room key is in the link's #fragment and never reaches the server.");
+      announceNewRoom(session, report, args.color);
     } else {
       report.note(`Sent to ${session.code}.`);
     }

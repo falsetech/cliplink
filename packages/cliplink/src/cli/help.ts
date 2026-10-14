@@ -1,43 +1,49 @@
-import { DEFAULT_BASE_URL } from "./args.ts";
+import { COMMANDS, FLAGS, type FlagSpec } from "./args.ts";
+
+/** Where every description starts, so the column lines up. */
+const DESCRIPTION_COLUMN = 26;
+
+function usage() {
+  const listed = COMMANDS.flatMap((command) =>
+    command.usage === null ? [] : [{ ...command, usage: `cliplink ${command.usage}` }],
+  );
+  const width = Math.max(...listed.map((command) => command.usage.length)) + 2;
+  return listed
+    .map((command) => `  ${command.usage.padEnd(width)}${command.summary}`)
+    .join("\n");
+}
+
+/**
+ * One flag's lines. A flag meant for some commands only says which, unless it
+ * belongs to every command that resolves a room, which is most of them and
+ * would make the list harder to scan than it is to explain once.
+ */
+function option(flag: FlagSpec) {
+  const spelling = `${flag.short ? `${flag.short}, ` : "    "}${flag.name}${
+    flag.value ? ` ${flag.value}` : ""
+  }`;
+  const scope =
+    flag.commands && flag.commands.length < 4 ? `${flag.commands.join(", ")}: ` : "";
+  // Scoped, the description reads as the rest of a sentence: "recv: print…".
+  const help = scope ? `${flag.help[0].toLowerCase()}${flag.help.slice(1)}` : flag.help;
+  const [first, ...rest] = `${scope}${help}`.split("\n");
+  const indent = " ".repeat(DESCRIPTION_COLUMN);
+  return [
+    `  ${spelling.padEnd(DESCRIPTION_COLUMN - 2)}${first}`,
+    ...rest.map((line) => `${indent}${line}`),
+  ].join("\n");
+}
 
 export const HELP = `cliplink — cross-device clipboard, from the terminal
 
 USAGE
-  cliplink send [text]        Send a clip. With no text, reads stdin.
-  cliplink recv               Print clips as they arrive, until Ctrl-C.
-  cliplink rooms              List the rooms --save has kept.
-  cliplink link               Print the share link and QR for a room.
+${usage()}
 
-  With no --room, send creates a room and prints a link and QR code for
-  the other device. That is the path that leaves no key anywhere.
+  With no --room, send and watch create a room and print a link and QR
+  code for the other device. That is the path that leaves no key anywhere.
 
 OPTIONS
-  -r, --room <code|url>   Room to join. A full room link works too.
-  -k, --key <key|url>     Room key. See KEYS below.
-      --open              Room with no key of its own: the code opens it.
-      --save              Remember this room and key in the config file.
-      --ttl <seconds>     Lifetime of a room being created (3600–86400).
-      --name <name>       send: the name the clip is shown under.
-                          Default is this machine's hostname.
-      --burn              send: a one-time clip. The first device to read
-                          it deletes it for everyone. recv counts as
-                          reading: what it prints, it deletes.
-  -1, --one               recv: print the next clip, then exit.
-      --json              recv: print each clip as a JSON object.
-      --last <n>          recv: replay the last n clips before listening.
-      --all               recv: replay every clip the room still holds.
-      --timeout <secs>    recv: give up after this long. Exits 1 if no
-                          clip arrived, so a script can tell.
-  -q, --quiet             Suppress commentary on stderr.
-      --no-color          Draw the QR without colour. See NO_COLOR.
-      --forget <code>     rooms: forget one saved room.
-      --forget-all        rooms: forget every saved room.
-      --prune             rooms: drop the rooms that have expired.
-      --show-keys         rooms: print the saved keys, withheld by default.
-      --url <origin>      Deployment to talk to.
-                          Default ${DEFAULT_BASE_URL}
-  -h, --help              This text.
-  -v, --version           Version.
+${FLAGS.map(option).join("\n")}
 
 KEYS
   Rooms are end-to-end encrypted. The server stores ciphertext and never
@@ -67,8 +73,11 @@ EXAMPLES
   cliplink recv -r X7KP2M                 follow the room until Ctrl-C
   cliplink recv -r X7KP2M --json          one JSON object per clip
   cliplink recv -r X7KP2M --all           everything the room still holds
+  cliplink watch                          share this clipboard with a new room
+  cliplink watch -r X7KP2M --recv-only    copy what arrives, send nothing
   cliplink link -r X7KP2M                 re-show the link and QR for a room
   cliplink rooms --prune                  list saved rooms, dropping dead ones
+  cliplink completions zsh > ~/.zfunc/_cliplink   install zsh completions
 
   Only clip text goes to stdout, so a pipe gets the clip and nothing else.
 

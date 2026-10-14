@@ -1,4 +1,4 @@
-import { normalizeRoomCode } from "../index.ts";
+import { isValidRoomCode, normalizeRoomCode } from "../index.ts";
 
 import type { ParsedArgs } from "./args.ts";
 import {
@@ -121,6 +121,24 @@ export async function rooms(
   }
 
   const saved = await readSavedRooms(env);
+
+  if (args.codes) {
+    // For scripts and the shell completions: codes only, the live ones, each
+    // once though it may be saved against several servers. An empty list is
+    // an answer here, not something to explain.
+    for (const code of new Set(
+      saved
+        // A shell reads this list, so only what a room code can be is let
+        // through: rooms.json is a file anyone with this account can edit,
+        // and an entry saved from a misbehaving server could hold anything.
+        .filter((room) => isValidRoomCode(room.code) && !isExpired(room, now))
+        .map((room) => room.code),
+    )) {
+      report.data(code);
+    }
+    return 0;
+  }
+
   if (saved.length === 0) {
     report.note("No rooms saved. Send with --save to keep one.");
     return 0;

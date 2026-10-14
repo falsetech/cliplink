@@ -13,6 +13,8 @@ import {
 import type { ParsedArgs } from "./args.ts";
 import { findSavedRoom, saveRoom } from "./config.ts";
 import { extractKey, extractRoomCode, KeyError, resolveKey, type KeySource } from "./key.ts";
+import type { Reporter } from "./output.ts";
+import { renderQr } from "./qr.ts";
 
 export type Session = {
   code: string;
@@ -70,6 +72,12 @@ export async function openSession(args: ParsedArgs): Promise<Session> {
     args.ttlSeconds ?? undefined,
     key.eraseCheck,
   );
+  // The code goes into the link, the QR, rooms.json under --save and from
+  // there into shell completions, so a server that answers with something
+  // that is not a room code does not get it that far.
+  if (!isValidRoomCode(code)) {
+    throw new Error(`${args.baseUrl} answered with "${String(code).slice(0, 40)}", which is not a room code.`);
+  }
   const transport = createEncryptedTransport(createWebSocketTransport(options));
   transport.setRoomKey(code, key);
 
@@ -94,6 +102,19 @@ export async function openSession(args: ParsedArgs): Promise<Session> {
     url: buildRoomUrl(code, args.baseUrl, key.encoded),
     created: true,
   };
+}
+
+/** What a run that created its room prints, so the other device can join it. */
+export function announceNewRoom(session: Session, report: Reporter, color: boolean) {
+  report.note(`Room ${session.code} — open on your other device:`);
+  report.note();
+  report.note(session.url);
+  if (report.interactive) {
+    report.note();
+    report.note(renderQr(session.url, { color }));
+  }
+  report.note();
+  report.note("The room key is in the link's #fragment and never reaches the server.");
 }
 
 async function joinRoom(args: ParsedArgs) {

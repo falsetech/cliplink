@@ -283,6 +283,14 @@ export function createEncryptedTransport(
           // Left for the next count that arrives to notice.
         });
       };
+      /**
+       * The clips handed over so far, in order. Each frame's clips are opened
+       * as soon as the frame arrives, but delivered only after every earlier
+       * frame's: decrypting takes as long as it takes, and a listener that
+       * tracks the highest id it has seen would otherwise skip a clip whose
+       * successor happened to open first.
+       */
+      let delivered: Promise<void> = Promise.resolve();
 
       return wire.streamClips(code, afterId, peerId, {
         onOpen: (eraseGen) => {
@@ -303,7 +311,14 @@ export function createEncryptedTransport(
           }
         },
         onClips: (clips) => {
-          void decryptClips(clips).then(handlers.onClips);
+          const opened = decryptClips(clips);
+          const next = delivered
+            .then(() => opened)
+            // Again at delivery: a removal can land while an opened frame
+            // waits its turn, after decryptClips last looked.
+            .then((kept) => handlers.onClips(kept.filter((clip) => !gone.has(clip.id))));
+          // One failed delivery must not hold back every one after it.
+          delivered = next.catch(() => {});
         },
         onSealedSignal: (from, sealed) => {
           const key = roomKey;
