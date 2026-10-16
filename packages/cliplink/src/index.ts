@@ -27,6 +27,7 @@ export {
 } from "./crypto.ts";
 export {
   createEncryptedTransport,
+  RoomIsOpenError,
   RoomKeyMismatchError,
   UNDECRYPTABLE_TEXT,
   type EncryptedTransport,

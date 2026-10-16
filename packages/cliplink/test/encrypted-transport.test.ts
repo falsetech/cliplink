@@ -3,6 +3,7 @@ import { before, describe, it, mock } from "node:test";
 
 import {
   decryptClipText,
+  deriveOpenRoomKey,
   encryptClipText,
   generateRoomKey,
   openClipMeta,
@@ -13,6 +14,7 @@ import {
 } from "../src/crypto.ts";
 import {
   createEncryptedTransport,
+  RoomIsOpenError,
   RoomKeyMismatchError,
   UNDECRYPTABLE_TEXT,
 } from "../src/encrypted-transport.ts";
@@ -129,6 +131,8 @@ describe("createEncryptedTransport", () => {
   /** A transport over a fresh fake wire, with the room key loaded unless told otherwise. */
   function setup({ withKey = true } = {}) {
     const { wire, state } = fakeWire();
+    // The room this key made: a room is created with its key's fingerprint.
+    state.room = { ...state.room, keyCheck: key.check };
     const transport = createEncryptedTransport(wire);
     if (withKey) {
       transport.setRoomKey(ROOM, key);
@@ -215,10 +219,21 @@ describe("createEncryptedTransport", () => {
       assert.equal(clips[0].text, "hello");
     });
 
-    it("connects to a room with no fingerprint, an open or older one, whatever the key", async () => {
+    it("connects to an open room, which has no fingerprint, with the key its code derives", async () => {
       const { transport, state } = setup();
-      assert.equal(state.room.keyCheck, undefined);
+      state.room = { ...state.room, keyCheck: undefined };
+      transport.setRoomKey(ROOM, await deriveOpenRoomKey(ROOM));
+
       await assert.doesNotReject(transport.connect(ROOM));
+    });
+
+    it("refuses to take a key of its own into an open room", async () => {
+      // A chosen code someone else claimed first as an open room: a device
+      // that joined it quietly would be posting where a stranger can read.
+      const { transport, state } = setup();
+      state.room = { ...state.room, keyCheck: undefined };
+
+      await assert.rejects(transport.connect(ROOM), RoomIsOpenError);
     });
 
     it("with no key loaded, reads nothing and still does not throw", async () => {

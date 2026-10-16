@@ -75,7 +75,10 @@ import {
   resolveRoomSecret,
   type RoomKey,
 } from "@/lib/cliplink/crypto";
-import { RoomKeyMismatchError } from "@/lib/cliplink/encrypted-transport";
+import {
+  RoomIsOpenError,
+  RoomKeyMismatchError,
+} from "@/lib/cliplink/encrypted-transport";
 import {
   connectRoom,
   createKeyedRoom,
@@ -198,6 +201,10 @@ export default function CliplinkApp({
   // ref because it is rendered — and it is already in the address bar, so this
   // is no wider an exposure than the fragment it came from.
   const [roomKeyEncoded, setRoomKeyEncoded] = useState<string | null>(null);
+  // An open room: its code is its key. Shown for as long as the room is, since
+  // a code someone chose can be claimed first, as an open room, by someone
+  // else — and nothing else about the room would look any different.
+  const [openRoom, setOpenRoom] = useState(false);
   const [shareState, setShareState] = useState<ShareState>(() =>
     share?.error
       ? {
@@ -580,10 +587,12 @@ export default function CliplinkApp({
       await room.hydrate(nextRoomCode, key);
     } catch (error) {
       setRoomKeyEncoded(null);
+      setOpenRoom(false);
       throw error;
     }
     const shareable = key && secret ? key.encoded : null;
     setRoomKeyEncoded(shareable);
+    setOpenRoom(key !== null && !secret);
     editor.reset();
     closeOverlays();
     setKeyPrompt(null);
@@ -701,6 +710,13 @@ export default function CliplinkApp({
     setIsBusy(true);
     try {
       await hydrateRoom(normalized, key, secret);
+      if (key !== null && !secret) {
+        pushToast(
+          "Joined an open room — not end-to-end encrypted. Anyone with the code can read it.",
+          "info",
+        );
+        return;
+      }
       pushToast(
         key === null
           ? "Joined, but locked — enter the room key to read it."
@@ -722,7 +738,11 @@ export default function CliplinkApp({
       room.setRoomCode(null);
       updateUrl(null, null);
       pushToast(
-        error instanceof Error ? error.message : "Room not found.",
+        error instanceof RoomIsOpenError
+          ? "This room is open, not end-to-end encrypted, so it is not the room your key was made for. Not joined."
+          : error instanceof Error
+            ? error.message
+            : "Room not found.",
         "error",
       );
     } finally {
@@ -791,6 +811,7 @@ export default function CliplinkApp({
     // Cleared before the URL is rewritten, so the fragment goes with it and
     // the key is not left sitting in the address bar of a room we have left.
     setRoomKeyEncoded(null);
+    setOpenRoom(false);
     updateUrl(null, null);
     pushToast("Left room.", "info");
   }
@@ -1122,6 +1143,15 @@ export default function CliplinkApp({
                   )}
                 />
                 {status.label}
+              </Badge>
+            ) : null}
+            {joined && openRoom ? (
+              <Badge
+                variant="secondary"
+                className="h-7 px-2.5 text-warning"
+                title="Not end-to-end encrypted: anyone with the room code can read it."
+              >
+                Open
               </Badge>
             ) : null}
             {joined ? (

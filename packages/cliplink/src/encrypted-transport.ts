@@ -1,5 +1,6 @@
 import {
   decryptClipText,
+  deriveOpenRoomKey,
   encryptClipText,
   openClipMeta,
   openSignal,
@@ -31,6 +32,21 @@ export class RoomKeyMismatchError extends Error {
   constructor() {
     super("That key does not match this room.");
     this.name = "RoomKeyMismatchError";
+  }
+}
+
+/**
+ * Thrown when a key of its own — generated, or from a passphrase — is brought
+ * to a room that has none: an open room, which its code alone opens.
+ *
+ * Not a mismatch, and not harmless. A chosen code can be claimed first by
+ * someone else as an open room, and a device that joined it without a word
+ * would be posting to a room whose every reader is a stranger's guess away.
+ */
+export class RoomIsOpenError extends Error {
+  constructor() {
+    super("This room is open, not end-to-end encrypted: anyone with its code can read it.");
+    this.name = "RoomIsOpenError";
   }
 }
 
@@ -202,6 +218,16 @@ export function createEncryptedTransport(
       const key = roomKey;
       if (key && response.room.keyCheck && response.room.keyCheck !== key.check) {
         throw new RoomKeyMismatchError();
+      }
+      // A room with no fingerprint is an open one, and the only key that
+      // belongs to it is the one its code derives. Any other was meant for an
+      // encrypted room that this is not.
+      if (
+        key &&
+        !response.room.keyCheck &&
+        key.check !== (await deriveOpenRoomKey(code)).check
+      ) {
+        throw new RoomIsOpenError();
       }
       // A fresh snapshot is the whole truth about the room: start over from it.
       startOver(response.room.eraseGen ?? null);

@@ -1,4 +1,4 @@
-import { RoomKeyMismatchError } from "../index.ts";
+import { RoomIsOpenError, RoomKeyMismatchError } from "../index.ts";
 
 import { KeyError } from "./key.ts";
 
@@ -17,6 +17,12 @@ import { KeyError } from "./key.ts";
 export function describeError(error: unknown): string {
   if (error instanceof RoomKeyMismatchError) {
     return "That key or passphrase does not open this room. Check the link, key or passphrase you were given.";
+  }
+  if (error instanceof RoomIsOpenError) {
+    return (
+      "This room is open, not end-to-end encrypted: anyone with its code can read it,\n" +
+      "so it is not the room your key or passphrase was made for. Use --open to join it anyway."
+    );
   }
   if (error instanceof KeyError) {
     return error.message;
