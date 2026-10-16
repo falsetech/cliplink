@@ -33,8 +33,10 @@ cliplink completions <shell>  Print a completion script: bash, zsh, fish.
 | --- | --- |
 | `-r, --room <code\|url>` | Room to join. A full room link works too. |
 | `-k, --key <key\|url>` | Room key. See [Keys](#keys). |
+| `--passphrase` | Ask for a passphrase to use as the room key (12+ characters). See [Keys](#keys). |
 | `--open` | Room with no key of its own: the code opens it. |
 | `--save` | Remember this room and key in the config file. |
+| `--code <code>` | `send`, `watch`: code to claim for a room being created (6–16 letters and digits). |
 | `--ttl <seconds>` | `send`, `watch`: lifetime of a room being created (3600–86400). |
 | `--name <name>` | `send`, `watch`: the name clips are shown under. Default is the hostname. |
 | `--burn` | `send`: a one-time clip, deleted once another device reads it. |
@@ -57,7 +59,7 @@ cliplink completions <shell>  Print a completion script: bash, zsh, fish.
 Short flags cluster, so `-q1` is `-q -1`. A flag that takes a value comes last.
 A flag given to a command it means nothing to is an error, not ignored.
 
-Environment: `CLIPLINK_ROOM`, `CLIPLINK_ROOM_KEY`, `CLIPLINK_URL`,
+Environment: `CLIPLINK_ROOM`, `CLIPLINK_ROOM_KEY`, `CLIPLINK_PASSPHRASE`, `CLIPLINK_URL`,
 `CLIPLINK_CONFIG_DIR`, `NO_COLOR`.
 
 ## watch
@@ -135,6 +137,32 @@ that writes a key to disk, and it does so only when you ask, per run.
 
 `--open` rooms derive their key from the room code. The server sees the code,
 so those are encrypted at rest but **not** end-to-end.
+
+### Passphrases
+
+A room can instead take its key from a passphrase, so that it opens anywhere
+from two things a person can remember — the code and the passphrase — with no
+link or key to carry across:
+
+```sh
+cliplink watch --code MYDESK --passphrase   # asks twice, creates MYDESK
+cliplink recv -r MYDESK --passphrase        # asks once, joins it
+```
+
+`--passphrase` asks on the terminal and never takes a value, so the passphrase
+stays out of shell history and `ps`; for scripts, set `CLIPLINK_PASSPHRASE`.
+With no `--code`, a random code is chosen as usual. The passphrase is case
+sensitive and needs at least 12 characters.
+
+The key is stretched from the passphrase with PBKDF2-SHA-256 (600 000 rounds)
+salted with the room code. The server still never sees it, but it does hold
+the key's fingerprint, against which someone with the server's data could test
+guesses offline. A passphrase room is exactly as strong as its passphrase:
+use several unrelated words. A generated key has no such weakness.
+
+`--code` works for an `--open` room too, but there the code is the key: a code
+you can remember is one someone else can guess, and whoever guesses it reads
+the room.
 
 A saved room is identified by its code *and* the server it was saved against,
 so a room code held for a local dev server is never matched against the same

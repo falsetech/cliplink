@@ -6,7 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { ROOM_TTL_SECONDS } from "@/lib/cliplink/constants";
+import {
+  MAX_ROOM_CODE_LENGTH,
+  ROOM_TTL_SECONDS,
+} from "@/lib/cliplink/constants";
 import { normalizeRoomCode } from "@/lib/cliplink/room-code";
 import { validateRoomCode } from "@/lib/cliplink/validation";
 
@@ -17,6 +20,8 @@ type LandingViewProps = {
   isBusy: boolean;
   onJoinCodeChange: (code: string) => void;
   onCreate: (privateRoom: boolean) => void;
+  /** Opens the sheet for a chosen code, and a passphrase if private. */
+  onCustomize: (privateRoom: boolean) => void;
   onJoin: () => void;
 };
 
@@ -25,6 +30,7 @@ export function LandingView({
   isBusy,
   onJoinCodeChange,
   onCreate,
+  onCustomize,
   onJoin,
 }: LandingViewProps) {
   // Default to the private room. The safer of two choices should be the one
@@ -70,7 +76,7 @@ export function LandingView({
             />
           </div>
           <Separator className="ml-5 w-auto" />
-          <div className="p-2">
+          <div className="flex flex-col gap-1 p-2">
             <Button
               className="w-full"
               size="lg"
@@ -79,6 +85,14 @@ export function LandingView({
             >
               <IconPlus size={16} weight="bold" />
               New Room
+            </Button>
+            <Button
+              variant="ghost"
+              className="w-full text-link"
+              onClick={() => onCustomize(privateRoom)}
+              disabled={isBusy}
+            >
+              {privateRoom ? "Choose Code or Passphrase…" : "Choose Code…"}
             </Button>
           </div>
         </div>
@@ -97,7 +111,7 @@ export function LandingView({
             autoCapitalize="characters"
             autoCorrect="off"
             spellCheck={false}
-            maxLength={6}
+            maxLength={MAX_ROOM_CODE_LENGTH}
             placeholder="Enter code"
             aria-label="Room code"
             value={joinCode}

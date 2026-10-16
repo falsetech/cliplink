@@ -8,10 +8,15 @@
  */
 
 import {
+  isValidRoomCode,
+  MAX_ROOM_CODE_LENGTH,
   MAX_ROOM_TTL_SECONDS,
   MAX_DEVICE_NAME_CHARS,
+  MIN_PASSPHRASE_CHARS,
+  MIN_ROOM_CODE_LENGTH,
   MIN_ROOM_TTL_SECONDS,
   normalizeDeviceName,
+  normalizeRoomCode,
   validateRoomTtl,
 } from "../index.ts";
 
@@ -52,6 +57,15 @@ export type ParsedArgs = {
   open: boolean;
   /** Write the room and key to the config file. The one path that persists a key. */
   save: boolean;
+  /** `send` and `watch`: the code to claim for a room being created. */
+  code: string | null;
+  /**
+   * A passphrase to derive the key from, out of CLIPLINK_PASSPHRASE. Never
+   * from argv: `--passphrase` asks for it on the terminal instead.
+   */
+  passphrase: string | null;
+  /** `--passphrase`: read the passphrase from the terminal. */
+  askPassphrase: boolean;
   /** `send` and `watch`: the name clips are shown under. Null means the hostname. */
   name: string | null;
   /** `send` only: a one-time clip, deleted once another device reads it. */
@@ -143,6 +157,14 @@ export const FLAGS: readonly FlagSpec[] = [
     },
   },
   {
+    name: "--passphrase",
+    commands: ROOM_COMMANDS,
+    help: `Ask for a passphrase to use as the room key\n(${MIN_PASSPHRASE_CHARS}+ characters). See KEYS below.`,
+    set: (args) => {
+      args.askPassphrase = true;
+    },
+  },
+  {
     name: "--open",
     commands: ROOM_COMMANDS,
     help: "Room with no key of its own: the code opens it.",
@@ -156,6 +178,22 @@ export const FLAGS: readonly FlagSpec[] = [
     help: "Remember this room and key in the config file.",
     set: (args) => {
       args.save = true;
+    },
+  },
+  {
+    name: "--code",
+    value: "<code>",
+    commands: ["send", "watch"],
+    help: `Code to claim for a room being created\n(${MIN_ROOM_CODE_LENGTH}–${MAX_ROOM_CODE_LENGTH} letters and digits).`,
+    set: (args, value) => {
+      const code = normalizeRoomCode(value);
+      // normalizeRoomCode forgives what a paste carries in, and also cuts at
+      // the longest code; a code that only fit by being cut is not the one
+      // that was typed.
+      if (!isValidRoomCode(code) || code !== value.replace(/[\s-]/g, "").toUpperCase()) {
+        return `--code takes ${MIN_ROOM_CODE_LENGTH} to ${MAX_ROOM_CODE_LENGTH} letters and digits.`;
+      }
+      args.code = code;
     },
   },
   {
@@ -437,6 +475,9 @@ export function parseArgs(rawArgv: string[], env: Env = {}): ParseResult {
     key: env.CLIPLINK_ROOM_KEY ?? null,
     open: false,
     save: false,
+    code: null,
+    passphrase: env.CLIPLINK_PASSPHRASE || null,
+    askPassphrase: false,
     name: null,
     burn: false,
     one: false,
@@ -545,6 +586,19 @@ export function parseArgs(rawArgv: string[], env: Env = {}): ParseResult {
       message: "--open derives the key from the room code, so --key cannot be given too.",
     };
   }
+  const hasPassphrase = args.passphrase !== null || args.askPassphrase;
+  if (args.open && hasPassphrase) {
+    return {
+      ok: false,
+      message: "--open derives the key from the room code, so a passphrase cannot be given too.",
+    };
+  }
+  if (args.key && hasPassphrase) {
+    return {
+      ok: false,
+      message: "A room opens with its key or with a passphrase, not both.\nCheck --key, --passphrase, CLIPLINK_ROOM_KEY and CLIPLINK_PASSPHRASE.",
+    };
+  }
   if (args.open && args.save) {
     return {
       ok: false,
@@ -601,6 +655,15 @@ export function parseArgs(rawArgv: string[], env: Env = {}): ParseResult {
       message: roomFromFlag
         ? "--ttl sets the lifetime of a room being created, and this run joins one."
         : "--ttl sets the lifetime of a room being created, and CLIPLINK_ROOM already names one to join. Unset it to create a room.",
+    };
+  }
+
+  if (args.code !== null && args.room) {
+    return {
+      ok: false,
+      message: roomFromFlag
+        ? "--code names a room being created, and this run joins one. Pass the code as --room to join it."
+        : "--code names a room being created, and CLIPLINK_ROOM already names one to join. Unset it to create a room.",
     };
   }
 

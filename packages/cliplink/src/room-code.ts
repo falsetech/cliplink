@@ -1,6 +1,17 @@
-import { ROOM_CODE_LENGTH } from "./protocol.ts";
+import {
+  MAX_ROOM_CODE_LENGTH,
+  MIN_ROOM_CODE_LENGTH,
+  ROOM_CODE_LENGTH,
+} from "./protocol.ts";
 
-const ROOM_CODE_PATTERN = new RegExp(`^[A-Z0-9]{${ROOM_CODE_LENGTH}}$`);
+/**
+ * Generated codes are six characters; chosen ones may run longer. Both share
+ * one alphabet of uppercase letters and digits, which is what lets a code sit
+ * unescaped in a URL path and a Redis key name.
+ */
+const ROOM_CODE_PATTERN = new RegExp(
+  `^[A-Z0-9]{${MIN_ROOM_CODE_LENGTH},${MAX_ROOM_CODE_LENGTH}}$`,
+);
 /** 32 characters: no O/0 or I/1 to confuse, and a power of two so a byte maps without bias. */
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -8,7 +19,7 @@ export function normalizeRoomCode(value: string | null | undefined) {
   return (value ?? "")
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
-    .slice(0, ROOM_CODE_LENGTH);
+    .slice(0, MAX_ROOM_CODE_LENGTH);
 }
 
 export function isValidRoomCode(value: string) {

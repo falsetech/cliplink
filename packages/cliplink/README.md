@@ -42,7 +42,10 @@ const options = { baseUrl: "https://cliplink.thebkht.com" };
 // The key is generated here and never sent. The server is told only its
 // fingerprint, which lets it tell a joiner their key is wrong.
 const key = await generateRoomKey();
-const { code } = await createHttpClient(options).createRoomRequest(key.check);
+const { code } = await createHttpClient(options).createRoomRequest({
+  keyCheck: key.check,
+  eraseCheck: key.eraseCheck,
+});
 
 const transport = createEncryptedTransport(createWebSocketTransport(options));
 transport.setRoomKey(code, key);
@@ -89,6 +92,13 @@ lifted out of one room cannot be replayed into another.
 
 The key travels in a URL fragment, which browsers never send to a server. That
 is the whole reason the encryption is end-to-end rather than merely at rest.
+
+`createKeyedRoom` does the above in one call, and can also claim a chosen code
+(6–16 letters and digits) or derive the key from a passphrase with
+`deriveRoomKeyFromPassphrase`: PBKDF2-SHA-256, 600 000 rounds, salted with the
+room code. A passphrase key is only as strong as the passphrase, since the
+server holds the key's fingerprint. `resolveRoomSecret` reads what a joiner
+typed as either a key or a passphrase.
 
 `deriveOpenRoomKey` is the deliberate exception: it derives a key from the room
 code, so the code alone opens the room. The server sees the code, so this is

@@ -12,6 +12,8 @@
  * room's key is the server's to derive by design.
  */
 
+import { normalizePassphrase, validatePassphrase } from "./passphrase.ts";
+
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
 /** Bytes of the non-secret key fingerprint. Not a key, and not reversible. */
@@ -210,6 +212,51 @@ export async function deriveOpenRoomKey(roomCode: string): Promise<RoomKey> {
   return deriveRoomKey(new Uint8Array(seed));
 }
 
+/**
+ * PBKDF2-SHA-256 rounds for a passphrase. OWASP's figure for this hash, and
+ * the whole of what stands between a weak passphrase and someone testing
+ * guesses against the room's stored fingerprint. Part of the derivation: a
+ * different count is a different key, so it cannot change without a new salt
+ * prefix to go with it.
+ */
+export const PASSPHRASE_KDF_ITERATIONS = 600_000;
+const PASSPHRASE_SALT_PREFIX = "cliplink:passphrase:v1:";
+
+/**
+ * A room key from a passphrase someone chose, for a room they can reopen
+ * anywhere by typing it.
+ *
+ * Unlike a generated key this has little entropy, so it goes through a slow
+ * KDF before the usual HKDF split — the server keeps the key's fingerprint,
+ * and every guess against it has to pay for these rounds. The room code is
+ * the salt, so one passphrase opens one room and no table of guesses carries
+ * from one room to the next. `roomCode` must be canonical (see
+ * `normalizeRoomCode`); a lowercase code derives a different key.
+ */
+export async function deriveRoomKeyFromPassphrase(
+  passphrase: string,
+  roomCode: string,
+): Promise<RoomKey> {
+  const base = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(normalizePassphrase(passphrase)),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      hash: "SHA-256",
+      salt: encoder.encode(PASSPHRASE_SALT_PREFIX + roomCode),
+      iterations: PASSPHRASE_KDF_ITERATIONS,
+    },
+    base,
+    KEY_BYTES * 8,
+  );
+  return deriveRoomKey(new Uint8Array(bits));
+}
+
 /** Strips the grouping dashes and anything else a paste may have carried in. */
 export function normalizeRoomKey(value: string | null | undefined) {
   return (value ?? "").toUpperCase().replace(/[^0-9A-Z]/g, "");
@@ -237,6 +284,44 @@ export async function importRoomKey(encoded: string): Promise<RoomKey | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether typed text reads as a generated room key. One rule, used both to
+ * interpret what a joiner typed and to refuse a passphrase at creation that
+ * would later be mistaken for a key — a room nobody could get back into.
+ */
+export function looksLikeRoomKey(typed: string) {
+  const normalized = normalizeRoomKey(typed);
+  return (
+    normalized.length === ENCODED_KEY_CHARS && decodeBase32(normalized) !== null
+  );
+}
+
+/**
+ * Whatever a joiner typed into the one field that asks for "key or
+ * passphrase": a 52-character key if it reads as one, a passphrase otherwise.
+ * Null when it is neither — too short to be a passphrase, or too long to feed
+ * the KDF. A passphrase that is merely wrong still derives a key; the room's
+ * fingerprint is what turns that away.
+ */
+export async function resolveRoomSecret(
+  typed: string,
+  roomCode: string,
+): Promise<{ key: RoomKey; kind: "key" | "passphrase" } | null> {
+  if (looksLikeRoomKey(typed)) {
+    const key = await importRoomKey(typed);
+    return key ? { key, kind: "key" } : null;
+  }
+
+  if (!validatePassphrase(typed).ok) {
+    return null;
+  }
+
+  return {
+    key: await deriveRoomKeyFromPassphrase(typed, roomCode),
+    kind: "passphrase",
+  };
 }
 
 /**

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { createHttpClient, resolveBaseUrl } from "../src/http.ts";
+import {
+  ApiRequestError,
+  createHttpClient,
+  resolveBaseUrl,
+} from "../src/http.ts";
 import { SOCKET_HANDOFF_CLOSE_CODE } from "../src/protocol.ts";
 import { createWebSocketTransport } from "../src/ws.ts";
 import type { WsServerMessage } from "../src/types.ts";
@@ -16,6 +20,7 @@ function recordingFetch(body: unknown, status = 200) {
     calls.push({ url: String(url), init });
     return {
       ok: status >= 200 && status < 300,
+      status,
       json: async () => body,
     } as Response;
   }) as unknown as typeof globalThis.fetch;
@@ -59,6 +64,15 @@ describe("createHttpClient", () => {
     assert.equal(calls[1].url, "https://second.example/rooms/X7KP2M/clips?after=7");
   });
 
+  it("names the room's generation on a poll, when given one", async () => {
+    const { calls, fetchImpl } = recordingFetch({ clips: [] });
+    const client = createHttpClient({ baseUrl: BASE, fetch: fetchImpl });
+
+    await client.pollClipsRequest("X7KP2M", 7, 1_700_000_123);
+
+    assert.equal(calls[0].url, `${BASE}/rooms/X7KP2M/clips?after=7&created=1700000123`);
+  });
+
   it("posts a clip as JSON", async () => {
     const { calls, fetchImpl } = recordingFetch({ clip: { id: 1 } });
     const client = createHttpClient({ baseUrl: BASE, fetch: fetchImpl });
@@ -85,7 +99,10 @@ describe("createHttpClient", () => {
     const { calls, fetchImpl } = recordingFetch({ code: "X7KP2M" });
     const client = createHttpClient({ baseUrl: BASE, fetch: fetchImpl });
 
-    await client.createRoomRequest("HQTVJ4C81PPB4", 3600);
+    await client.createRoomRequest({
+      keyCheck: "HQTVJ4C81PPB4",
+      ttlSeconds: 3600,
+    });
 
     assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
       keyCheck: "HQTVJ4C81PPB4",
@@ -97,12 +114,57 @@ describe("createHttpClient", () => {
     const { calls, fetchImpl } = recordingFetch({ code: "X7KP2M" });
     const client = createHttpClient({ baseUrl: BASE, fetch: fetchImpl });
 
-    await client.createRoomRequest("HQTVJ4C81PPB4", undefined, "check");
+    await client.createRoomRequest({
+      keyCheck: "HQTVJ4C81PPB4",
+      eraseCheck: "check",
+    });
 
     assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
       keyCheck: "HQTVJ4C81PPB4",
       eraseCheck: "check",
     });
+  });
+
+  it("sends a chosen code with the key fingerprint", async () => {
+    const { calls, fetchImpl } = recordingFetch({ code: "MYDESK" });
+    const client = createHttpClient({ baseUrl: BASE, fetch: fetchImpl });
+
+    await client.createRoomRequest({ code: "MYDESK", keyCheck: "HQTVJ4C81PPB4" });
+
+    assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
+      code: "MYDESK",
+      keyCheck: "HQTVJ4C81PPB4",
+    });
+  });
+
+  it("sends a chosen code for an open room, with no key fingerprint", async () => {
+    const { calls, fetchImpl } = recordingFetch({ code: "MYDESK" });
+    const client = createHttpClient({ baseUrl: BASE, fetch: fetchImpl });
+
+    await client.createRoomRequest({ code: "MYDESK" });
+
+    assert.deepEqual(JSON.parse(String(calls[0].init?.body)), { code: "MYDESK" });
+  });
+
+  it("carries the status and error code of a refusal", async () => {
+    const { fetchImpl } = recordingFetch(
+      {
+        error: "Conflict",
+        code: "room_code_taken",
+        details: "That room code is already in use.",
+      },
+      409,
+    );
+    const client = createHttpClient({ baseUrl: BASE, fetch: fetchImpl });
+
+    await assert.rejects(
+      client.createRoomRequest({ code: "MYDESK", keyCheck: "HQTVJ4C81PPB4" }),
+      (error) =>
+        error instanceof ApiRequestError &&
+        error.status === 409 &&
+        error.code === "room_code_taken" &&
+        error.message === "That room code is already in use.",
+    );
   });
 
   it("deletes with the token in a header, and the selector as the body", async () => {
@@ -235,6 +297,26 @@ function connect(baseUrl: string) {
 }
 
 describe("createWebSocketTransport", () => {
+  it("names the room's generation, when given one, on every socket", () => {
+    const transport = createWebSocketTransport({
+      baseUrl: BASE,
+      WebSocket: FakeSocket as unknown as typeof globalThis.WebSocket,
+    });
+    transport.streamClips(
+      "X7KP2M",
+      12,
+      "peer-abcdef",
+      { onClips: () => {}, onDisconnect: () => {} },
+      1_700_000_123,
+    );
+
+    assert.equal(
+      FakeSocket.last?.url,
+      "wss://cliplink.example/rooms/X7KP2M/socket?after=12&peer=peer-abcdef&created=1700000123",
+    );
+    transport.disconnect();
+  });
+
   it("upgrades https to wss against the configured origin", () => {
     const { socket } = connect(BASE);
     assert.equal(

@@ -8,7 +8,23 @@
  * ceilings are not: they live in the app, where they can move freely.
  */
 
+/** Characters in a code the server or client generates. */
 export const ROOM_CODE_LENGTH = 6;
+/**
+ * Bounds on a code a creator chooses. The floor is the generated length, so
+ * every code ever issued stays valid; the ceiling keeps a code something a
+ * person can still read out and type.
+ */
+export const MIN_ROOM_CODE_LENGTH = ROOM_CODE_LENGTH;
+export const MAX_ROOM_CODE_LENGTH = 16;
+/**
+ * A passphrase-derived key is only as strong as the passphrase, and the
+ * server holds the key's fingerprint — something to test guesses against
+ * offline. Twelve characters, behind a slow KDF, is the floor.
+ */
+export const MIN_PASSPHRASE_CHARS = 12;
+/** A bound on what is fed to the KDF, not a recommendation. */
+export const MAX_PASSPHRASE_CHARS = 256;
 export const ROOM_TTL_SECONDS = 60 * 60 * 6;
 export const MIN_ROOM_TTL_SECONDS = 60 * 60;
 export const MAX_ROOM_TTL_SECONDS = 60 * 60 * 24;
@@ -61,3 +77,6 @@ export const CIPHERTEXT_PATTERN = /^v1\.[A-Za-z0-9_-]+$/;
  * not left — its other socket is already open — so no `peer-left` goes out.
  */
 export const SOCKET_HANDOFF_CLOSE_CODE = 4001;
+
+/** The query parameter a poll or socket names its room's generation in. */
+export const ROOM_GENERATION_PARAM = "created";

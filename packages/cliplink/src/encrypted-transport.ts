@@ -1,5 +1,6 @@
 import {
   decryptClipText,
+  deriveOpenRoomKey,
   encryptClipText,
   openClipMeta,
   openSignal,
@@ -13,6 +14,7 @@ import type {
   SealedTransport,
   TransportClient,
 } from "./types.ts";
+import { ApiRequestError } from "./http.ts";
 import { parseClipMeta, parseSignalPayload } from "./validation.ts";
 
 /**
@@ -31,6 +33,37 @@ export class RoomKeyMismatchError extends Error {
   constructor() {
     super("That key does not match this room.");
     this.name = "RoomKeyMismatchError";
+  }
+}
+
+/**
+ * Thrown when a key of its own — generated, or from a passphrase — is brought
+ * to a room that has none: an open room, which its code alone opens.
+ *
+ * Not a mismatch, and not harmless. A chosen code can be claimed first by
+ * someone else as an open room, and a device that joined it without a word
+ * would be posting to a room whose every reader is a stranger's guess away.
+ */
+export class RoomIsOpenError extends Error {
+  constructor() {
+    super("This room is open, not end-to-end encrypted: anyone with its code can read it.");
+    this.name = "RoomIsOpenError";
+  }
+}
+
+/**
+ * Thrown when the room this transport connected to is no longer there: it
+ * expired, or it expired and its code now names a room someone else made.
+ *
+ * The second is the reason this exists. A code is all a poll or a socket
+ * names, so without a look at which room answered, a device left in a room
+ * past its end would carry on in whatever room took the code next — with
+ * nothing on screen to say the room had changed under it.
+ */
+export class RoomGoneError extends Error {
+  constructor() {
+    super("This room has expired, or its code now belongs to another room.");
+    this.name = "RoomGoneError";
   }
 }
 
@@ -64,6 +97,12 @@ export function createEncryptedTransport(
 ): EncryptedTransport {
   let roomKey: RoomKey | null = null;
   let roomCode: RoomCode | null = null;
+  /**
+   * When the connected room was created: what tells it apart from a room made
+   * later under the same code. Null before a connect, or from a server that
+   * does not say.
+   */
+  let roomCreatedAt: number | null = null;
 
   // Signals seal asynchronously but must arrive in the order they were sent —
   // an ICE candidate overtaking the description it belongs to would break the
@@ -186,6 +225,7 @@ export function createEncryptedTransport(
     setRoomKey(nextRoomCode, key) {
       if (nextRoomCode !== roomCode) {
         startOver(null);
+        roomCreatedAt = null;
       }
       roomCode = nextRoomCode;
       roomKey = key;
@@ -195,6 +235,7 @@ export function createEncryptedTransport(
       startOver(null);
       roomCode = null;
       roomKey = null;
+      roomCreatedAt = null;
     },
 
     async connect(code) {
@@ -203,8 +244,19 @@ export function createEncryptedTransport(
       if (key && response.room.keyCheck && response.room.keyCheck !== key.check) {
         throw new RoomKeyMismatchError();
       }
+      // A room with no fingerprint is an open one, and the only key that
+      // belongs to it is the one its code derives. Any other was meant for an
+      // encrypted room that this is not.
+      if (
+        key &&
+        !response.room.keyCheck &&
+        key.check !== (await deriveOpenRoomKey(code)).check
+      ) {
+        throw new RoomIsOpenError();
+      }
       // A fresh snapshot is the whole truth about the room: start over from it.
       startOver(response.room.eraseGen ?? null);
+      roomCreatedAt = response.room.createdAt ?? null;
       return { ...response, clips: await decryptClips(response.clips) };
     },
 
@@ -238,7 +290,14 @@ export function createEncryptedTransport(
     },
 
     async pollClips(code, afterId) {
-      const response = await wire.pollClips(code, afterId);
+      const generation = roomCreatedAt ?? undefined;
+      const response = await wire.pollClips(code, afterId, generation).catch((error: unknown) => {
+        throw error instanceof ApiRequestError &&
+          error.status === 404 &&
+          error.code === "room_not_found"
+          ? new RoomGoneError()
+          : error;
+      });
       const clips = await decryptClips(response.clips);
       if (!isAhead(response.eraseGen)) {
         return { clips };
@@ -345,7 +404,7 @@ export function createEncryptedTransport(
         // the app has no reason to care which channel it came in on.
         onPeerLeft: (from) => handlers.onSignal?.(from, { type: "peer-left" }),
         onDisconnect: handlers.onDisconnect,
-      });
+      }, roomCreatedAt ?? undefined);
     },
 
     sendSignal(payload, to) {

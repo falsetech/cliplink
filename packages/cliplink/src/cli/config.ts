@@ -62,7 +62,7 @@ function isSavedRoom(value: unknown): value is SavedRoom {
 /**
  * The origin half of a saved room's identity.
  *
- * A room code is six characters and unique only to the server that issued it,
+ * A room code is short and unique only to the server that issued it,
  * so the same code can name one room on a dev server and a different one in
  * production. Matching on the code alone offered a key from one for the other,
  * which fails as a mismatch at best and is a key from the wrong room at worst.

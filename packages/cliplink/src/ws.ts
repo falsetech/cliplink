@@ -1,5 +1,5 @@
 import { createHttpClient, resolveBaseUrl } from "./http.ts";
-import { SOCKET_HANDOFF_CLOSE_CODE } from "./protocol.ts";
+import { ROOM_GENERATION_PARAM, SOCKET_HANDOFF_CLOSE_CODE } from "./protocol.ts";
 import type {
   RoomCode,
   SealedTransport,
@@ -36,7 +36,7 @@ export function createWebSocketTransport(
     pollClips: http.pollClipsRequest,
     eraseClips: http.eraseClipsRequest,
 
-    streamClips(roomCode: RoomCode, afterId, peerId, handlers) {
+    streamClips(roomCode: RoomCode, afterId, peerId, handlers, generation) {
       // Resolved here rather than at construction: a browser transport is built
       // at module scope, which is also evaluated during server rendering.
       const SocketImpl = options.WebSocket ?? globalThis.WebSocket;
@@ -102,6 +102,11 @@ export function createWebSocketTransport(
           after: String(after),
           peer: peerId,
         });
+        // A replacement too, dialled minutes later: by then the code may
+        // belong to another room.
+        if (generation !== undefined) {
+          params.set(ROOM_GENERATION_PARAM, String(generation));
+        }
         const socketUrl = toSocketOrigin(resolveBaseUrl(options.baseUrl));
         socketUrl.pathname = `/rooms/${roomCode}/socket`;
         socketUrl.search = params.toString();

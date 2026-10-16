@@ -21,6 +21,7 @@ import type {
 } from "@/lib/cliplink/types";
 import {
   createEncryptedTransport,
+  RoomGoneError,
   UNDECRYPTABLE_TEXT,
 } from "@/lib/cliplink/encrypted-transport";
 import type { RoomKey } from "@/lib/cliplink/crypto";
@@ -77,6 +78,11 @@ type RoomSessionOptions = {
   /** Fired when the socket drops, so peer-derived state can be cleared. */
   onRealtimeClose: () => void;
   onSignal: (from: PeerId, payload: SignalPayload) => void;
+  /**
+   * The room expired, or another room now has its code. Polling stops; what
+   * to do with a room that is not there any more is the caller's to decide.
+   */
+  onRoomGone: () => void;
 };
 
 /**
@@ -93,6 +99,7 @@ export function useRoomSession({
   onRealtimeOpen,
   onRealtimeClose,
   onSignal,
+  onRoomGone,
 }: RoomSessionOptions) {
   const [roomCode, setRoomCode] = useState<RoomCode | null>(null);
   // Joined, but with no key to read the room with. The clips still arrive and
@@ -137,6 +144,7 @@ export function useRoomSession({
     onRealtimeOpen,
     onRealtimeClose,
     onSignal,
+    onRoomGone,
   });
   useEffect(() => {
     handlersRef.current = {
@@ -144,6 +152,7 @@ export function useRoomSession({
       onRealtimeOpen,
       onRealtimeClose,
       onSignal,
+      onRoomGone,
     };
   });
 
@@ -559,6 +568,16 @@ export function useRoomSession({
         applyIncomingClips(additions.reverse());
       }
     } catch (error) {
+      if (error instanceof RoomGoneError) {
+        // Not a failure to retry: there is nothing under this code to reach,
+        // or what is there is someone else's room.
+        stopPolling();
+        clearRealtimeRetry();
+        if (roomCodeRef.current === nextRoomCode) {
+          handlersRef.current.onRoomGone();
+        }
+        return;
+      }
       setStatus("error");
       handlersRef.current.pushToast(
         error instanceof Error ? error.message : "Polling failed.",

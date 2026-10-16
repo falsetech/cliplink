@@ -1,10 +1,13 @@
 import {
   deriveOpenRoomKey,
+  deriveRoomKeyFromPassphrase,
   formatRoomKey,
   importRoomKey,
+  MAX_ROOM_CODE_LENGTH,
+  MIN_ROOM_CODE_LENGTH,
   normalizeRoomKey,
   parseRoomKeyFromHash,
-  ROOM_CODE_LENGTH,
+  validatePassphrase,
   type RoomKey,
 } from "../index.ts";
 
@@ -18,7 +21,13 @@ import {
  * visible in `ps` — so the help text says so and the other two exist to avoid
  * needing it.
  */
-export type KeySource = "flag" | "env" | "saved" | "open" | "generated";
+export type KeySource =
+  | "flag"
+  | "env"
+  | "saved"
+  | "open"
+  | "generated"
+  | "passphrase";
 
 export type ResolvedKey = {
   key: RoomKey;
@@ -53,27 +62,46 @@ export function extractKey(input: string): string | null {
   return normalizeRoomKey(trimmed);
 }
 
+const ROOM_PATH = new RegExp(
+  `/room/([A-Za-z0-9]{${MIN_ROOM_CODE_LENGTH},${MAX_ROOM_CODE_LENGTH}})(?![A-Za-z0-9])`,
+);
+
 /** The room code in a room URL, so a pasted link names both halves. */
 export function extractRoomCode(input: string): string | null {
-  const match = input
-    .trim()
-    .match(new RegExp(`/room/([A-Za-z0-9]{${ROOM_CODE_LENGTH}})`));
+  const match = input.trim().match(ROOM_PATH);
   return match ? match[1].toUpperCase() : null;
 }
 
 export async function resolveKey(
   roomCode: string,
-  options: { key: string | null; open: boolean; source: KeySource },
+  options: {
+    key: string | null;
+    open: boolean;
+    source: KeySource;
+    passphrase?: string | null;
+  },
 ): Promise<ResolvedKey> {
   if (options.open) {
     return { key: await deriveOpenRoomKey(roomCode), source: "open" };
+  }
+
+  if (!options.key && options.passphrase) {
+    const valid = validatePassphrase(options.passphrase);
+    if (!valid.ok) {
+      throw new KeyError(valid.message);
+    }
+    return {
+      key: await deriveRoomKeyFromPassphrase(options.passphrase, roomCode),
+      source: "passphrase",
+    };
   }
 
   const encoded = options.key ? extractKey(options.key) : null;
   if (!encoded) {
     throw new KeyError(
       `Room ${roomCode} is end-to-end encrypted, so it needs its key.\n` +
-        "Pass the room link or key as --key, set CLIPLINK_ROOM_KEY, or use --open for a room that has none.",
+        "Pass the room link or key as --key, set CLIPLINK_ROOM_KEY, use --passphrase if\n" +
+        "the room was made with one, or --open for a room that has none.",
     );
   }
 

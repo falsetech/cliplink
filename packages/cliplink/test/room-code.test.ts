@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it, mock } from "node:test";
 
-import { ROOM_CODE_LENGTH } from "../src/protocol.ts";
+import {
+  MAX_ROOM_CODE_LENGTH,
+  MIN_ROOM_CODE_LENGTH,
+  ROOM_CODE_LENGTH,
+} from "../src/protocol.ts";
 import {
   buildRoomUrl,
   generateRoomCode,
@@ -103,9 +107,12 @@ describe("normalizeRoomCode", () => {
     assert.equal(normalizeRoomCode("X7K\tP2M\n"), "X7KP2M");
   });
 
-  it("stops at the code length", () => {
-    assert.equal(normalizeRoomCode("x7kp2mzzz"), "X7KP2M");
-    assert.equal(normalizeRoomCode("X7KP2M".repeat(4)).length, ROOM_CODE_LENGTH);
+  it("stops at the longest code", () => {
+    assert.equal(normalizeRoomCode("x7kp2mzzz"), "X7KP2MZZZ");
+    assert.equal(
+      normalizeRoomCode("X7KP2M".repeat(4)).length,
+      MAX_ROOM_CODE_LENGTH,
+    );
   });
 
   it("returns an empty string for nothing usable", () => {
@@ -122,19 +129,24 @@ describe("normalizeRoomCode", () => {
     }
   });
 
-  it("yields something isValidRoomCode accepts only when six characters survive", () => {
+  it("yields something isValidRoomCode accepts only when at least six characters survive", () => {
     assert.equal(isValidRoomCode(normalizeRoomCode("x7k-p2m")), true);
+    assert.equal(isValidRoomCode(normalizeRoomCode("my-desk")), true);
     assert.equal(isValidRoomCode(normalizeRoomCode("x7k-p2")), false);
     assert.equal(isValidRoomCode(normalizeRoomCode("")), false);
   });
 });
 
 describe("isValidRoomCode", () => {
-  it("wants exactly six uppercase letters or digits", () => {
+  it("wants six to sixteen uppercase letters or digits", () => {
+    assert.equal(MIN_ROOM_CODE_LENGTH, 6);
+    assert.equal(MAX_ROOM_CODE_LENGTH, 16);
     assert.equal(isValidRoomCode("X7KP2M"), true);
+    assert.equal(isValidRoomCode("X7KP2MM"), true);
+    assert.equal(isValidRoomCode("BAKHTIYORLAPTOP1"), true);
     assert.equal(isValidRoomCode("x7kp2m"), false);
     assert.equal(isValidRoomCode("X7KP2"), false);
-    assert.equal(isValidRoomCode("X7KP2MM"), false);
+    assert.equal(isValidRoomCode("BAKHTIYORLAPTOP12"), false);
     assert.equal(isValidRoomCode("X7KP-M"), false);
     assert.equal(isValidRoomCode(""), false);
   });
