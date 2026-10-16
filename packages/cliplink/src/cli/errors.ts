@@ -16,7 +16,7 @@ import { KeyError } from "./key.ts";
  */
 export function describeError(error: unknown): string {
   if (error instanceof RoomKeyMismatchError) {
-    return "That key does not open this room. Check the link or key you were given.";
+    return "That key or passphrase does not open this room. Check the link, key or passphrase you were given.";
   }
   if (error instanceof KeyError) {
     return error.message;

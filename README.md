@@ -26,14 +26,14 @@
 
 Moving a URL, a snippet, or a file from your laptop to your phone is still solved badly. AirDrop is Apple-only. Nearby Share is Android-only. Everything genuinely cross-platform means emailing yourself, DMing yourself on Slack, or uploading to someone else's cloud.
 
-CLIPLINK is the browser-native answer. Open a page, get a 6-character room code, share it with your other device — anything you send appears there instantly and is copied to the clipboard automatically.
+CLIPLINK is the browser-native answer. Open a page, get a short room code, share it with your other device — anything you send appears there instantly and is copied to the clipboard automatically.
 
 Nothing persists. Rooms expire on a timer, history lasts only as long as the room, and files never touch a server at all.
 
 ## Features
 
 - **Zero auth, zero install** — create or join a room in one click, in any modern browser
-- **Join three ways** — 6-character code, shared URL (`/room/X7KP2M#k=…`), or in-room QR code, encoded locally so the key never leaves the device
+- **Join three ways** — room code (random, or one you choose, with an optional passphrase), shared URL (`/room/X7KP2M#k=…`), or in-room QR code, encoded locally so the key never leaves the device
 - **Encrypted both ways** — private rooms generate an AES-GCM-256 key in the browser that never reaches the server, carried in the URL fragment or pasted in; open rooms derive their key from the code, so the code alone opens them. Private rooms joined without a key open locked and unlock in place
 - **Realtime text sync** — WebSocket transport, with HTTP polling as an automatic fallback
 - **Auto-copy on receive** — incoming clips land on your clipboard, with a toast and a subtle flash

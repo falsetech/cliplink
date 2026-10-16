@@ -11,8 +11,10 @@ import {
   MAX_ERASE_IDS,
   MAX_FILE_BYTES,
   MAX_FILE_NAME_CHARS,
+  MAX_ROOM_CODE_LENGTH,
   MAX_ROOM_TTL_SECONDS,
   MAX_SIGNAL_BYTES,
+  MIN_ROOM_CODE_LENGTH,
   MIN_ROOM_TTL_SECONDS,
   ROOM_KEY_CHECK_CHARS,
   ROOM_TTL_SECONDS,
@@ -32,6 +34,29 @@ const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 export function validateRoomCode(code: string) {
   return isValidRoomCode(code);
 }
+
+/**
+ * A code the creator asked for, as the server receives it. Absent is fine —
+ * the server allocates one. Present, it must already be canonical: the client
+ * normalizes what a person typed, and a server that quietly uppercased it
+ * would answer with a code other than the one that was asked for.
+ */
+export function validateRequestedRoomCode(input: unknown) {
+  if (input === undefined || input === null) {
+    return { ok: true as const, code: undefined };
+  }
+
+  if (typeof input !== "string" || !isValidRoomCode(input)) {
+    return {
+      ok: false as const,
+      message: `Room code must be ${MIN_ROOM_CODE_LENGTH} to ${MAX_ROOM_CODE_LENGTH} uppercase letters and digits.`,
+    };
+  }
+
+  return { ok: true as const, code: input };
+}
+
+export { validatePassphrase } from "./passphrase.ts";
 
 /**
  * All the server can check. It holds ciphertext it cannot open, so "is this

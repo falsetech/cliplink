@@ -2,7 +2,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CLIPLINK is a zero-auth, ephemeral cross-device clipboard: create a room, share a 6-character code, and text sent from one device appears — and is auto-copied — on every other device in the room. Files move peer-to-peer over WebRTC and never touch the server.
+CLIPLINK is a zero-auth, ephemeral cross-device clipboard: create a room, share a short code (random, or chosen), and text sent from one device appears — and is auto-copied — on every other device in the room. Files move peer-to-peer over WebRTC and never touch the server.
 
 Read [`AGENTS.md`](AGENTS.md) first: **this is Next.js 16, which has breaking changes from what is likely in your training data.** Consult `node_modules/next/dist/docs/` before writing framework code.
 

@@ -2,6 +2,7 @@ import type {
   ApiError,
   CreateClipRequest,
   CreateClipResponse,
+  CreateRoomRequest,
   CreateRoomResponse,
   EraseClipsRequest,
   EraseClipsResponse,
@@ -16,6 +17,23 @@ export function resolveBaseUrl(baseUrl: TransportOptions["baseUrl"]) {
   return typeof baseUrl === "function" ? baseUrl() : baseUrl;
 }
 
+/**
+ * A refusal from the room API. The message is what the server said, as it
+ * always was; `status` and `code` are there for a caller that has to tell one
+ * refusal from another — a taken room code from everything else.
+ */
+export class ApiRequestError extends Error {
+  readonly status: number;
+  readonly code: string | undefined;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   let payload: T | ApiError;
   try {
@@ -23,16 +41,21 @@ async function parseResponse<T>(response: Response): Promise<T> {
   } catch {
     // A route the server does not have answers with no JSON at all — which is
     // what a deployment from before a request existed does with it.
-    throw new Error(
+    throw new ApiRequestError(
       response.ok
         ? "The server sent a response that could not be read."
         : `The server refused the request (${response.status}).`,
+      response.status,
     );
   }
 
   if (!response.ok) {
     const error = payload as ApiError;
-    throw new Error(error.details ?? error.error);
+    throw new ApiRequestError(
+      error.details ?? error.error,
+      response.status,
+      error.code,
+    );
   }
 
   return payload as T;
@@ -54,9 +77,7 @@ export type HttpClient = {
     request: EraseClipsRequest,
   ) => Promise<EraseClipsResponse>;
   createRoomRequest: (
-    keyCheck?: string,
-    ttlSeconds?: number,
-    eraseCheck?: string,
+    request?: CreateRoomRequest,
   ) => Promise<CreateRoomResponse>;
 };
 
@@ -120,10 +141,14 @@ export function createHttpClient({
      * joiner can be told their key is wrong without the server being any closer
      * to holding it. Omitted for an open room, whose key comes from the code and
      * which therefore has nothing to check against. `eraseCheck` is omitted
-     * there too: the server derives an open room's for itself.
+     * there too: the server derives an open room's for itself. `code` asks
+     * for a particular code rather than leaving the server to pick one.
      */
-    async createRoomRequest(keyCheck, ttlSeconds, eraseCheck) {
+    async createRoomRequest({ code, keyCheck, ttlSeconds, eraseCheck } = {}) {
       const body: Record<string, unknown> = {};
+      if (code) {
+        body.code = code;
+      }
       if (keyCheck) {
         body.keyCheck = keyCheck;
       }

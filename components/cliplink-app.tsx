@@ -13,6 +13,10 @@ import { useTheme } from "next-themes";
 
 import { ClipEditor } from "@/components/cliplink/clip-editor";
 import { CommandPalette } from "@/components/cliplink/command-palette";
+import {
+  CreateRoomSheet,
+  type CustomRoom,
+} from "@/components/cliplink/create-room-sheet";
 import { FileTransfers } from "@/components/cliplink/file-transfers";
 import { PlayerSheet } from "@/components/cliplink/player-sheet";
 import { HistoryList } from "@/components/cliplink/history-list";
@@ -53,7 +57,12 @@ import {
   subscribeToNotifications,
 } from "@/lib/cliplink/attention";
 import { writeClipboard } from "@/lib/cliplink/clipboard";
-import { MAX_CLIP_CHARS, MAX_FILES_PER_SHARE } from "@/lib/cliplink/constants";
+import {
+  MAX_CLIP_CHARS,
+  MAX_FILES_PER_SHARE,
+  MAX_ROOM_CODE_LENGTH,
+  MIN_ROOM_CODE_LENGTH,
+} from "@/lib/cliplink/constants";
 import {
   entriesFromDataTransfer,
   entriesFromFileList,
@@ -62,12 +71,16 @@ import {
 import {
   deriveOpenRoomKey,
   formatRoomKey,
-  generateRoomKey,
   importRoomKey,
+  resolveRoomSecret,
   type RoomKey,
 } from "@/lib/cliplink/crypto";
 import { RoomKeyMismatchError } from "@/lib/cliplink/encrypted-transport";
-import { connectRoom, createRoomRequest } from "@/lib/cliplink/http";
+import {
+  connectRoom,
+  createKeyedRoom,
+  createOpenRoom,
+} from "@/lib/cliplink/http";
 import {
   describeShare,
   holdShare,
@@ -159,6 +172,10 @@ export default function CliplinkApp({
   const [joinCode, setJoinCode] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [showQrSheet, setShowQrSheet] = useState(false);
+  // Which kind of room the Customize sheet is for, while it is open.
+  const [customizing, setCustomizing] = useState<"private" | "open" | null>(
+    null,
+  );
   const [showDevices, setShowDevices] = useState(false);
   /** The file the player is open on, by id so it follows the live item. */
   const [playingId, setPlayingId] = useState<string | null>(null);
@@ -578,37 +595,48 @@ export default function CliplinkApp({
    * so the server cannot read it; an open one derives its key from the room
    * code, so the code alone opens it and there is nothing extra to pass on —
    * at the cost of the server being able to derive that key too.
+   *
+   * `custom` is the Customize sheet's: a chosen code, a passphrase, or both
+   * — never a passphrase for an open room. Its failures are returned for the
+   * sheet to show beside the fields, which stay filled in, rather than
+   * toasted.
    */
-  async function createRoom(privateRoom: boolean) {
+  async function createRoom(
+    privateRoom: boolean,
+    custom?: CustomRoom,
+  ): Promise<string | null> {
     setIsBusy(true);
     try {
       if (privateRoom) {
-        const key = await generateRoomKey();
-        // The erase check has to go with the request that makes the room:
-        // there is no later moment at which it can safely be set.
-        const response = await createRoomRequest(
-          key.check,
-          undefined,
-          key.eraseCheck,
+        // The key's fingerprint and erase check go with the request that
+        // makes the room: there is no later moment at which they can safely
+        // be set.
+        const { code, key } = await createKeyedRoom(custom);
+        await hydrateRoom(code, key, true);
+        pushToast(
+          custom?.passphrase
+            ? "Room created — open it anywhere with its code and passphrase."
+            : "Private room created — share the link or the key.",
+          "success",
         );
-        await hydrateRoom(response.code, key, true);
-        pushToast("Private room created — share the link or the key.", "success");
-        return;
+        return null;
       }
 
-      const response = await createRoomRequest();
-      await hydrateRoom(
-        response.code,
-        await deriveOpenRoomKey(response.code),
-        false,
-      );
+      const { code, key } = await createOpenRoom({ code: custom?.code });
+      await hydrateRoom(code, key, false);
       pushToast("Open room created — the code is all anyone needs.", "success");
+      return null;
     } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Could not create room.";
+      // Nothing was joined, so there is no room to fail: the sheet is still
+      // up, and says what went wrong beside what to change.
+      if (custom) {
+        return message;
+      }
       room.fail();
-      pushToast(
-        error instanceof Error ? error.message : "Could not create room.",
-        "error",
-      );
+      pushToast(message, "error");
+      return null;
     } finally {
       setIsBusy(false);
     }
@@ -617,7 +645,10 @@ export default function CliplinkApp({
   async function joinExistingRoom(nextRoomCode: string, fromLink = false) {
     const normalized = normalizeRoomCode(nextRoomCode);
     if (!validateRoomCode(normalized)) {
-      pushToast("Enter a valid 6-character room code.", "info");
+      pushToast(
+        `Enter a valid room code: ${MIN_ROOM_CODE_LENGTH} to ${MAX_ROOM_CODE_LENGTH} letters and digits.`,
+        "info",
+      );
       return;
     }
 
@@ -836,15 +867,21 @@ export default function CliplinkApp({
     }
   }
 
-  async function submitRoomKey(encoded: string) {
-    const key = await importRoomKey(encoded);
-    if (!key) {
+  /** What was typed into the key prompt: a room key, or a passphrase. */
+  async function submitRoomKey(typed: string) {
+    const code = keyPrompt?.code ?? "";
+    // A passphrase takes a moment to stretch into a key.
+    setIsBusy(true);
+    const resolved = await resolveRoomSecret(typed, code).finally(() =>
+      setIsBusy(false),
+    );
+    if (!resolved) {
       setKeyPrompt((current) =>
         current ? { ...current, mismatch: true } : current,
       );
       return;
     }
-    await joinWithKey(keyPrompt?.code ?? "", key, false, true);
+    await joinWithKey(code, resolved.key, false, true);
   }
 
   async function shareRoom(code: RoomCode) {
@@ -1137,6 +1174,9 @@ export default function CliplinkApp({
                 isBusy={isBusy}
                 onJoinCodeChange={setJoinCode}
                 onCreate={(privateRoom) => void createRoom(privateRoom)}
+                onCustomize={(privateRoom) =>
+                  setCustomizing(privateRoom ? "private" : "open")
+                }
                 onJoin={() => void joinExistingRoom(joinCode)}
               />
             ) : (
@@ -1229,6 +1269,14 @@ export default function CliplinkApp({
           onClose={() => setShowDevices(false)}
         />
       ) : null}
+
+      <CreateRoomSheet
+        open={customizing !== null}
+        privateRoom={customizing !== "open"}
+        isBusy={isBusy}
+        onClose={() => setCustomizing(null)}
+        onSubmit={(custom) => createRoom(customizing !== "open", custom)}
+      />
 
       <KeyPrompt
         open={keyPrompt !== null}

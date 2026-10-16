@@ -17,7 +17,7 @@ describe("describeError", () => {
 
     assert.equal(
       message,
-      "That key does not open this room. Check the link or key you were given.",
+      "That key or passphrase does not open this room. Check the link, key or passphrase you were given.",
     );
     // The error's own wording names the room; the CLI's names the link or key
     // the person was handed, which is the thing they can act on.

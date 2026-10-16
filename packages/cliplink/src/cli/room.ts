@@ -2,10 +2,14 @@ import {
   buildRoomUrl,
   createEncryptedTransport,
   createHttpClient,
+  createKeyedRoom,
+  createOpenRoom,
   createWebSocketTransport,
-  generateRoomKey,
   isValidRoomCode,
+  MAX_ROOM_CODE_LENGTH,
+  MIN_ROOM_CODE_LENGTH,
   normalizeRoomCode,
+  RoomCreateError,
   type EncryptedTransport,
   type RoomKey,
 } from "../index.ts";
@@ -14,6 +18,7 @@ import type { ParsedArgs } from "./args.ts";
 import { findSavedRoom, saveRoom } from "./config.ts";
 import { extractKey, extractRoomCode, KeyError, resolveKey, type KeySource } from "./key.ts";
 import type { Reporter } from "./output.ts";
+import { readSecretFromTerminal, type ReadSecret } from "./prompt.ts";
 import { renderQr } from "./qr.ts";
 
 export type Session = {
@@ -44,12 +49,16 @@ function transportOptions(baseUrl: string) {
  * in shell history, in the environment, or on disk — the property the web app
  * has by keeping the key in a URL fragment.
  */
-export async function openSession(args: ParsedArgs): Promise<Session> {
+export async function openSession(
+  args: ParsedArgs,
+  { readSecret = readSecretFromTerminal }: { readSecret?: ReadSecret } = {},
+): Promise<Session> {
   const options = transportOptions(args.baseUrl);
   const http = createHttpClient(options);
 
   if (args.room) {
-    const { code, key, keySource } = await joinRoom(args);
+    const passphrase = await passphraseFor(args, readSecret, false);
+    const { code, key, keySource } = await joinRoom(args, passphrase);
     const transport = createEncryptedTransport(createWebSocketTransport(options));
     transport.setRoomKey(code, key);
     return {
@@ -62,22 +71,26 @@ export async function openSession(args: ParsedArgs): Promise<Session> {
     };
   }
 
-  const key = await generateRoomKey();
-  // The server is told the fingerprint, never the key: it can tell a joiner
-  // their key is wrong without being any closer to holding it.
-  // The erase check goes with it, or clips in this room could never be
-  // deleted: it can only be set as the room is made.
-  const { code, ttlSeconds } = await http.createRoomRequest(
-    key.check,
-    args.ttlSeconds ?? undefined,
-    key.eraseCheck,
-  );
-  // The code goes into the link, the QR, rooms.json under --save and from
-  // there into shell completions, so a server that answers with something
-  // that is not a room code does not get it that far.
-  if (!isValidRoomCode(code)) {
-    throw new Error(`${args.baseUrl} answered with "${String(code).slice(0, 40)}", which is not a room code.`);
-  }
+  const passphrase = await passphraseFor(args, readSecret, true);
+  const request = {
+    http,
+    code: args.code ?? undefined,
+    ttlSeconds: args.ttlSeconds ?? undefined,
+  };
+  // The server is told the key's fingerprint and erase check, never the key,
+  // and a chosen code is claimed or refused in the same request. An open
+  // room has no key of its own to tell it about.
+  const { code, key, ttlSeconds } = await (
+    args.open
+      ? createOpenRoom(request)
+      : createKeyedRoom({ ...request, passphrase: passphrase ?? undefined })
+  ).catch((error: unknown) => {
+    // Its messages are written for a person, but name no server.
+    if (error instanceof RoomCreateError && error.reason === "bad_response") {
+      throw new Error(`${args.baseUrl}: ${error.message}`);
+    }
+    throw error;
+  });
   const transport = createEncryptedTransport(createWebSocketTransport(options));
   transport.setRoomKey(code, key);
 
@@ -97,9 +110,9 @@ export async function openSession(args: ParsedArgs): Promise<Session> {
   return {
     code,
     key,
-    keySource: "generated",
+    keySource: args.open ? "open" : passphrase === null ? "generated" : "passphrase",
     transport,
-    url: buildRoomUrl(code, args.baseUrl, key.encoded),
+    url: buildRoomUrl(code, args.baseUrl, args.open ? undefined : key.encoded),
     created: true,
   };
 }
@@ -114,16 +127,43 @@ export function announceNewRoom(session: Session, report: Reporter, color: boole
     report.note(renderQr(session.url, { color }));
   }
   report.note();
+  if (session.keySource === "open") {
+    report.note("This room is open: anyone with the code can read it, the server included.");
+    return;
+  }
   report.note("The room key is in the link's #fragment and never reaches the server.");
+  if (session.keySource === "passphrase") {
+    report.note(`Or join with room code ${session.code} and your passphrase.`);
+  }
 }
 
-async function joinRoom(args: ParsedArgs) {
+/**
+ * The passphrase for this run, if it has one. Asked for twice when creating:
+ * a typo there makes a room that the passphrase you meant does not open.
+ */
+async function passphraseFor(
+  args: ParsedArgs,
+  readSecret: ReadSecret,
+  creating: boolean,
+): Promise<string | null> {
+  if (!args.askPassphrase) {
+    return args.passphrase;
+  }
+
+  const passphrase = await readSecret("Passphrase: ");
+  if (creating && (await readSecret("Again, to confirm: ")) !== passphrase) {
+    throw new KeyError("The passphrases do not match.");
+  }
+  return passphrase;
+}
+
+async function joinRoom(args: ParsedArgs, passphrase: string | null) {
   // A pasted room link names both halves, which is the obvious thing to try.
   const fromLink = extractRoomCode(args.room ?? "");
   const code = normalizeRoomCode(fromLink ?? args.room);
   if (!isValidRoomCode(code)) {
     throw new KeyError(
-      `"${args.room}" is not a room code. Codes are six letters and digits, like X7KP2M.`,
+      `"${args.room}" is not a room code. Codes are ${MIN_ROOM_CODE_LENGTH} to ${MAX_ROOM_CODE_LENGTH} letters and digits, like X7KP2M.`,
     );
   }
 
@@ -139,7 +179,8 @@ async function joinRoom(args: ParsedArgs) {
     }
   }
 
-  if (!key && !args.open) {
+  // A passphrase someone typed for this run outranks one saved earlier.
+  if (!key && !args.open && !passphrase) {
     const saved = await findSavedRoom(code, args.baseUrl);
     if (saved?.key) {
       key = saved.key;
@@ -147,7 +188,12 @@ async function joinRoom(args: ParsedArgs) {
     }
   }
 
-  const resolved = await resolveKey(code, { key, open: args.open, source });
+  const resolved = await resolveKey(code, {
+    key,
+    open: args.open,
+    source,
+    passphrase,
+  });
 
   if (args.save && !args.open) {
     await saveRoom({

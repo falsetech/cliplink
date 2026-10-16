@@ -6,11 +6,12 @@ import {
 } from "@/lib/cliplink/errors";
 import { openRoomEraseCheck } from "@/lib/cliplink/erase";
 import { getClientIp, roomCreateRateLimit } from "@/lib/cliplink/rate-limit";
-import { storage } from "@/lib/cliplink/storage";
+import { RoomCodeTakenError, storage } from "@/lib/cliplink/storage";
 import type { CreateRoomRequest, CreateRoomResponse } from "@/lib/cliplink/types";
 import {
   validateEraseCheck,
   validateKeyCheck,
+  validateRequestedRoomCode,
   validateRoomTtl,
 } from "@/lib/cliplink/validation";
 
@@ -48,18 +49,32 @@ export async function POST(request: Request) {
     return errorResponse(400, "invalid_erase_check", eraseCheck.message);
   }
 
+  const code = validateRequestedRoomCode(payload.code);
+  if (!code.ok) {
+    return errorResponse(400, "invalid_room_code", code.message);
+  }
+
   let room;
   try {
-    room = await storage.createRoom(
-      ttl.ttlSeconds,
-      keyCheck.keyCheck,
+    room = await storage.createRoom({
+      code: code.code,
+      ttlSeconds: ttl.ttlSeconds,
+      keyCheck: keyCheck.keyCheck,
       // A room with no key fingerprint is an open one, whose check only the
       // server can supply — see openRoomEraseCheck. A keyed room that sent
       // none stays undeletable: its creator predates deletion.
-      eraseCheck.eraseCheck ??
+      eraseCheck:
+        eraseCheck.eraseCheck ??
         (keyCheck.keyCheck ? undefined : openRoomEraseCheck),
-    );
+    });
   } catch (error) {
+    if (error instanceof RoomCodeTakenError) {
+      return errorResponse(
+        409,
+        "room_code_taken",
+        "That room code is already in use.",
+      );
+    }
     return storageErrorResponse(error);
   }
 

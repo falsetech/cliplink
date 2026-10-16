@@ -64,6 +64,13 @@ export type ApiError = {
 };
 
 export type CreateRoomRequest = {
+  /**
+   * The code the creator wants, already canonical. Absent, the server
+   * allocates one. Allowed for an open room too, whose key is its code: a
+   * chosen code there is a key someone else can guess, which the creator is
+   * told before they choose one.
+   */
+  code?: RoomCode;
   ttlSeconds?: number;
   /** Fingerprint of the key the creator generated. Never the key itself. */
   keyCheck?: string;

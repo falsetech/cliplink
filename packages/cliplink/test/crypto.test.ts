@@ -4,14 +4,17 @@ import { describe, it } from "node:test";
 import {
   decryptClipText,
   deriveOpenRoomKey,
+  deriveRoomKeyFromPassphrase,
   encryptClipText,
   formatRoomKey,
   generateRoomKey,
   importRoomKey,
+  looksLikeRoomKey,
   normalizeRoomKey,
   openClipMeta,
   openSignal,
   sealClipMeta,
+  resolveRoomSecret,
   sealSignal,
 } from "../src/crypto.ts";
 import {
@@ -331,5 +334,74 @@ describe("the erase token", () => {
     ]);
     assert.equal(first.eraseCheck, second.eraseCheck);
     assert.equal(first.eraseCheck, ERASE.openCheck);
+  });
+});
+
+describe("deriveRoomKeyFromPassphrase", () => {
+  const PASSPHRASE = "correct horse battery staple";
+
+  // PBKDF2-SHA-256, 600 000 rounds, salt "cliplink:passphrase:v1:MYDESK",
+  // checked against Python's hashlib. A room made with a passphrase is
+  // reopened by typing it on another device, perhaps on another build: this
+  // derivation can never change.
+  it("derives the pinned key", async () => {
+    const key = await deriveRoomKeyFromPassphrase(PASSPHRASE, "MYDESK");
+    assert.equal(key.encoded, "F4JAQEX99NT31B55V4K1M8QN69GMHZRPS5NH2BNAKD4VTZHCK64G");
+    assert.equal(key.check, "DWFJZQ0C84238");
+  });
+
+  it("gives the same passphrase a different key in every room", async () => {
+    const [desk, other] = await Promise.all([
+      deriveRoomKeyFromPassphrase(PASSPHRASE, "MYDESK"),
+      deriveRoomKeyFromPassphrase(PASSPHRASE, "MYDESK2"),
+    ]);
+    assert.notEqual(desk.encoded, other.encoded);
+  });
+
+  it("is case-sensitive, but forgives the ends and the Unicode form", async () => {
+    const [plain, padded, upper] = await Promise.all([
+      deriveRoomKeyFromPassphrase("caf\u00e9 au lait please", ROOM),
+      deriveRoomKeyFromPassphrase(" cafe\u0301 au lait please\n", ROOM),
+      deriveRoomKeyFromPassphrase("CAF\u00c9 AU LAIT PLEASE", ROOM),
+    ]);
+    assert.equal(padded.encoded, plain.encoded);
+    assert.notEqual(upper.encoded, plain.encoded);
+  });
+
+  it("makes a key that seals and opens like any other", async () => {
+    const key = await deriveRoomKeyFromPassphrase(PASSPHRASE, ROOM);
+    const sealed = await encryptClipText(key, ROOM, "hello");
+    assert.equal(await decryptClipText(key, ROOM, sealed), "hello");
+  });
+});
+
+describe("resolveRoomSecret", () => {
+  it("reads a key as a key, grouped or not", async () => {
+    const key = await generateRoomKey();
+    for (const typed of [key.encoded, formatRoomKey(key.encoded)]) {
+      const resolved = await resolveRoomSecret(typed, ROOM);
+      assert.equal(resolved?.kind, "key");
+      assert.equal(resolved?.key.encoded, key.encoded);
+    }
+  });
+
+  it("derives from anything else long enough to be a passphrase", async () => {
+    const resolved = await resolveRoomSecret("correct horse battery staple", "MYDESK");
+    assert.equal(resolved?.kind, "passphrase");
+    assert.equal(resolved?.key.check, "DWFJZQ0C84238");
+  });
+
+  it("is null for what is neither", async () => {
+    assert.equal(await resolveRoomSecret("eleven char", ROOM), null);
+    assert.equal(await resolveRoomSecret("   ", ROOM), null);
+    assert.equal(await resolveRoomSecret("x".repeat(257), ROOM), null);
+  });
+
+  it("agrees with looksLikeRoomKey on what a key is", async () => {
+    const key = await generateRoomKey();
+    assert.equal(looksLikeRoomKey(key.encoded), true);
+    assert.equal(looksLikeRoomKey("correct horse battery staple"), false);
+    // Fifty-two characters, but U is not in the key alphabet.
+    assert.equal(looksLikeRoomKey("U".repeat(52)), false);
   });
 });

@@ -1,12 +1,25 @@
 export {
+  createKeyedRoom,
+  createOpenRoom,
+  RoomCreateError,
+  type CreatedRoom,
+  type CreateKeyedRoomOptions,
+  type CreateOpenRoomOptions,
+  type CreateRoomFailure,
+} from "./create-room.ts";
+export {
   decryptClipText,
   deriveOpenRoomKey,
+  deriveRoomKeyFromPassphrase,
   encryptClipText,
   formatRoomKey,
   generateRoomKey,
   importRoomKey,
+  looksLikeRoomKey,
   normalizeRoomKey,
   openClipMeta,
+  PASSPHRASE_KDF_ITERATIONS,
+  resolveRoomSecret,
   openSignal,
   sealClipMeta,
   sealSignal,
@@ -19,12 +32,14 @@ export {
   type EncryptedTransport,
 } from "./encrypted-transport.ts";
 export {
+  ApiRequestError,
   createHttpClient,
   // Anyone implementing TransportClient against a lazy origin needs the same
   // one-line resolution the built-in transports use.
   resolveBaseUrl,
   type HttpClient,
 } from "./http.ts";
+export { normalizePassphrase } from "./passphrase.ts";
 export { encodeQr, type QrMatrix } from "./qr.ts";
 export {
   buildRoomUrl,
@@ -46,8 +61,12 @@ export {
   MAX_ERASE_IDS,
   MAX_FILE_BYTES,
   MAX_FILE_NAME_CHARS,
+  MAX_PASSPHRASE_CHARS,
+  MAX_ROOM_CODE_LENGTH,
   MAX_ROOM_TTL_SECONDS,
   MAX_SIGNAL_BYTES,
+  MIN_PASSPHRASE_CHARS,
+  MIN_ROOM_CODE_LENGTH,
   MIN_ROOM_TTL_SECONDS,
   POLL_INTERVAL_MS,
   ROOM_CODE_LENGTH,
@@ -69,7 +88,9 @@ export {
   validateEraseCheck,
   validateEraseToken,
   validateKeyCheck,
+  validatePassphrase,
   validatePeerId,
+  validateRequestedRoomCode,
   validateRoomCode,
   validateRoomTtl,
   validateSenderId,

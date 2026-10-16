@@ -189,7 +189,7 @@ export function createRoomActions(ctx: RoomActionContext): RoomAction[] {
       id: "enter-key",
       label: "Enter room key",
       group: "Room",
-      keywords: ["unlock", "decrypt", "password", "locked"],
+      keywords: ["unlock", "decrypt", "password", "passphrase", "locked"],
       enabled: ctx.locked,
       perform: ctx.enterRoomKey,
     },
