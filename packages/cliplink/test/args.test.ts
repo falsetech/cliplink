@@ -110,6 +110,56 @@ describe("environment", () => {
   });
 });
 
+describe("--code and --passphrase", () => {
+  it("takes a code for a room being created, normalized", () => {
+    assert.equal(parse(["send", "hi", "--code", "my-desk"]).code, "MYDESK");
+    assert.equal(parse(["watch", "--code", "MYDESK"]).code, "MYDESK");
+  });
+
+  it("refuses a code that is too short, too long, or would only fit by being cut", () => {
+    assert.match(reject(["send", "hi", "--code", "ABC"]), /6 to 16 letters/);
+    assert.match(reject(["send", "hi", "--code", "A".repeat(17)]), /6 to 16 letters/);
+    assert.match(reject(["send", "hi", "--code", "my_desk"]), /6 to 16 letters/);
+  });
+
+  it("refuses --code when joining", () => {
+    assert.match(
+      reject(["send", "hi", "--room", "X7KP2M", "--code", "MYDESK"]),
+      /Pass the code as --room/,
+    );
+    assert.match(
+      reject(["send", "hi", "--code", "MYDESK"], { CLIPLINK_ROOM: "X7KP2M" }),
+      /CLIPLINK_ROOM already names one/,
+    );
+  });
+
+  it("takes --code for an --open room too", () => {
+    const args = parse(["send", "hi", "--code", "MYNOTES", "--open"]);
+    assert.equal(args.code, "MYNOTES");
+    assert.equal(args.open, true);
+  });
+
+  it("asks for a passphrase, but never takes one on the command line", () => {
+    assert.equal(parse(["send", "hi", "--passphrase"]).askPassphrase, true);
+    assert.match(reject(["send", "hi", "--passphrase=hunter2hunter2"]), /does not take a value/);
+  });
+
+  it("reads one from CLIPLINK_PASSPHRASE", () => {
+    const args = parse(["recv", "-r", "MYDESK"], { CLIPLINK_PASSPHRASE: "correct horse" });
+    assert.equal(args.passphrase, "correct horse");
+    assert.equal(parse(["recv", "-r", "MYDESK"], { CLIPLINK_PASSPHRASE: "" }).passphrase, null);
+  });
+
+  it("refuses a passphrase alongside a key or --open", () => {
+    assert.match(reject(["send", "hi", "--passphrase", "--key", "K"]), /not both/);
+    assert.match(
+      reject(["recv", "-r", "MYDESK"], { CLIPLINK_PASSPHRASE: "p", CLIPLINK_ROOM_KEY: "K" }),
+      /not both/,
+    );
+    assert.match(reject(["send", "hi", "--passphrase", "--open"]), /--open derives the key/);
+  });
+});
+
 describe("combinations that cannot mean anything", () => {
   it("refuses --open with --key", () => {
     assert.match(reject(["send", "hi", "--open", "--key", "K"]), /--open derives the key/);

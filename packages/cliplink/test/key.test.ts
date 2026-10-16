@@ -49,6 +49,18 @@ describe("extractRoomCode", () => {
   it("is null when there is no room path", () => {
     assert.equal(extractRoomCode("X7KP2M"), null);
   });
+
+  it("reads a chosen code of any length, and nothing past it", () => {
+    assert.equal(
+      extractRoomCode("https://cliplink.example/room/bakhtiyorlaptop1#k=AAA"),
+      "BAKHTIYORLAPTOP1",
+    );
+    assert.equal(extractRoomCode("https://cliplink.example/room/mydesk2/"), "MYDESK2");
+    assert.equal(
+      extractRoomCode("https://cliplink.example/room/BAKHTIYORLAPTOP12"),
+      null,
+    );
+  });
 });
 
 describe("resolveKey", () => {
@@ -87,6 +99,24 @@ describe("resolveKey", () => {
         assert.match(error.message, /--open/);
         return true;
       },
+    );
+  });
+
+  it("derives a passphrase room's key, salted with the code", async () => {
+    const resolved = await resolveKey("MYDESK", {
+      key: null,
+      open: false,
+      source: "env",
+      passphrase: "correct horse battery staple",
+    });
+    assert.equal(resolved.source, "passphrase");
+    assert.equal(resolved.key.check, "DWFJZQ0C84238");
+  });
+
+  it("refuses a passphrase too short to have made a room", async () => {
+    await assert.rejects(
+      resolveKey(ROOM, { key: null, open: false, source: "env", passphrase: "short" }),
+      /at least 12 characters/,
     );
   });
 

@@ -30,6 +30,9 @@ import {
   validateClipText,
   validateKeyCheck,
   validatePeerId,
+  validatePassphrase,
+  readRoomGeneration,
+  validateRequestedRoomCode,
   validateRoomCode,
   validateRoomTtl,
   validateSenderId,
@@ -39,8 +42,10 @@ import {
 const NOT_STRINGS = [42, true, {}, [], ["v1.abc"]];
 
 describe("validateRoomCode", () => {
-  it("accepts six uppercase letters and digits", () => {
+  it("accepts six to sixteen uppercase letters and digits", () => {
     assert.equal(validateRoomCode("X7KP2M"), true);
+    assert.equal(validateRoomCode("MYDESK2026"), true);
+    assert.equal(validateRoomCode("ABCDEFGHJKLMNPQR"), true);
     assert.equal(validateRoomCode("ABCDEF"), true);
     assert.equal(validateRoomCode("234567"), true);
   });
@@ -48,7 +53,7 @@ describe("validateRoomCode", () => {
   it("rejects the wrong length", () => {
     assert.equal(validateRoomCode(""), false);
     assert.equal(validateRoomCode("X7KP2"), false);
-    assert.equal(validateRoomCode("X7KP2MA"), false);
+    assert.equal(validateRoomCode("ABCDEFGHJKLMNPQRS"), false);
   });
 
   it("rejects lowercase, punctuation and whitespace", () => {
@@ -61,6 +66,49 @@ describe("validateRoomCode", () => {
   it("is anchored, so a valid code inside a longer string does not pass", () => {
     assert.equal(validateRoomCode("../X7KP2M"), false);
     assert.equal(validateRoomCode("X7KP2M/../"), false);
+  });
+});
+
+describe("validateRequestedRoomCode", () => {
+  it("lets the server allocate when no code is asked for", () => {
+    assert.deepEqual(validateRequestedRoomCode(undefined), { ok: true, code: undefined });
+    assert.deepEqual(validateRequestedRoomCode(null), { ok: true, code: undefined });
+  });
+
+  it("takes a canonical code and nothing it would have to fix up", () => {
+    assert.deepEqual(validateRequestedRoomCode("MYDESK"), { ok: true, code: "MYDESK" });
+    for (const input of ["mydesk", "MY-DESK", "ABC", "A".repeat(17), ...NOT_STRINGS]) {
+      assert.equal(validateRequestedRoomCode(input).ok, false, String(input));
+    }
+  });
+});
+
+describe("readRoomGeneration", () => {
+  const read = (query: string) => readRoomGeneration(new URLSearchParams(query));
+
+  it("reads a creation time, and nothing else, as the room asked about", () => {
+    assert.equal(read("created=1700000123"), 1_700_000_123);
+    assert.equal(read("after=4"), null);
+    for (const bad of ["created=", "created=abc", "created=-1", "created=1.5", "created=1e400"]) {
+      assert.equal(read(bad), null, bad);
+    }
+  });
+});
+
+describe("validatePassphrase", () => {
+  it("wants twelve characters, counted as a person counts them", () => {
+    assert.equal(validatePassphrase("eleven char").ok, false);
+    assert.equal(validatePassphrase("twelve chars").ok, true);
+    // Padding does not count toward the length, since the KDF never sees it.
+    assert.equal(validatePassphrase("  eleven char  ").ok, false);
+    // Twelve emoji are twelve characters, not twenty-four UTF-16 units.
+    assert.equal(validatePassphrase("\u{1F511}".repeat(11)).ok, false);
+    assert.equal(validatePassphrase("\u{1F511}".repeat(12)).ok, true);
+  });
+
+  it("caps what is fed to the KDF", () => {
+    assert.equal(validatePassphrase("x".repeat(256)).ok, true);
+    assert.equal(validatePassphrase("x".repeat(257)).ok, false);
   });
 });
 

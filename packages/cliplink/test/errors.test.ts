@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import { describeError } from "../src/cli/errors.ts";
 import { KeyError } from "../src/cli/key.ts";
-import { RoomKeyMismatchError } from "../src/index.ts";
+import { RoomIsOpenError, RoomKeyMismatchError } from "../src/index.ts";
 
 /**
  * What the CLI prints when something reaches the top of a command. The
@@ -12,12 +12,19 @@ import { RoomKeyMismatchError } from "../src/index.ts";
  * misses that must *not* be rewritten.
  */
 describe("describeError", () => {
+  it("says an open room is open, and how to join it knowingly", () => {
+    const message = describeError(new RoomIsOpenError());
+
+    assert.match(message, /not end-to-end encrypted/);
+    assert.match(message, /--open/);
+  });
+
   it("says a wrong key is a wrong key, in terms of what to go and check", () => {
     const message = describeError(new RoomKeyMismatchError());
 
     assert.equal(
       message,
-      "That key does not open this room. Check the link or key you were given.",
+      "That key or passphrase does not open this room. Check the link, key or passphrase you were given.",
     );
     // The error's own wording names the room; the CLI's names the link or key
     // the person was handed, which is the thing they can act on.

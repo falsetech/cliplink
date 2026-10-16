@@ -7,7 +7,11 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { parseArgs, type ParsedArgs } from "../src/cli/args.ts";
 import { readSavedRooms, saveRoom } from "../src/cli/config.ts";
 import { openSession } from "../src/cli/room.ts";
-import { deriveOpenRoomKey, generateRoomKey } from "../src/index.ts";
+import {
+  deriveOpenRoomKey,
+  deriveRoomKeyFromPassphrase,
+  generateRoomKey,
+} from "../src/index.ts";
 
 /**
  * `openSession` is where the CLI decides which room it is talking to and which
@@ -24,20 +28,33 @@ const CODE = "X7KP2M";
 const BASE = "https://cliplink.test";
 
 function json(body: unknown, status = 200) {
-  return { ok: status >= 200 && status < 300, json: async () => body } as unknown as Response;
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+  } as unknown as Response;
 }
 
 /** Just the room-creating half of the API; joining reaches no server. */
 class FakeServer {
   ttlSeconds = 21_600;
   code = CODE;
+  /** Codes a create may not claim. */
+  taken = new Set<string>();
   creates: Array<Record<string, unknown>> = [];
 
   fetch = async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input));
     if (url.pathname === "/rooms") {
-      this.creates.push(JSON.parse(String(init?.body ?? "{}")));
-      return json({ code: this.code, ttlSeconds: this.ttlSeconds });
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      this.creates.push(body);
+      if (typeof body.code === "string" && this.taken.has(body.code)) {
+        return json(
+          { error: "Conflict", code: "room_code_taken", details: "That room code is already in use." },
+          409,
+        );
+      }
+      return json({ code: body.code ?? this.code, ttlSeconds: this.ttlSeconds });
     }
     throw new Error(`Unexpected request to ${url}`);
   };
@@ -147,6 +164,106 @@ describe("openSession", () => {
       assert.ok(saved.expiresAt !== undefined);
       assert.ok(saved.expiresAt >= before + 3_600_000);
       assert.ok(saved.expiresAt <= after + 3_600_000);
+    });
+  });
+
+  describe("choosing the code or the passphrase", () => {
+    const PASSPHRASE = "correct horse battery staple";
+
+    /** A prompt that answers from a script, and records what it was asked. */
+    function scripted(...answers: string[]) {
+      const asked: string[] = [];
+      return {
+        asked,
+        readSecret: async (prompt: string) => {
+          asked.push(prompt);
+          return answers.shift() ?? "";
+        },
+      };
+    }
+
+    it("claims the code given as --code", async () => {
+      const session = await openSession(argsFor(["send", "hi", "--code", "mydesk"]));
+
+      assert.equal(server.creates[0].code, "MYDESK");
+      assert.equal(session.code, "MYDESK");
+      assert.equal(session.url, `${BASE}/room/MYDESK#k=${session.key.encoded}`);
+      assert.equal(session.keySource, "generated");
+    });
+
+    it("says so when the code is taken", async () => {
+      server.taken.add("MYDESK");
+
+      await assert.rejects(
+        openSession(argsFor(["send", "hi", "--code", "MYDESK"])),
+        /Room MYDESK is already in use/,
+      );
+    });
+
+    it("derives the key from CLIPLINK_PASSPHRASE, and never sends it", async () => {
+      const args = argsFor(["send", "hi", "--code", "MYDESK"]);
+      args.passphrase = PASSPHRASE;
+
+      const session = await openSession(args);
+
+      const expected = await deriveRoomKeyFromPassphrase(PASSPHRASE, "MYDESK");
+      assert.equal(session.key.encoded, expected.encoded);
+      assert.equal(session.keySource, "passphrase");
+      assert.doesNotMatch(JSON.stringify(server.creates[0]), /horse/);
+    });
+
+    it("creates an --open room, claiming --code, with no key in the link", async () => {
+      const session = await openSession(argsFor(["send", "hi", "--open", "--code", "mynotes"]));
+
+      assert.deepEqual(server.creates[0], { code: "MYNOTES" });
+      assert.equal(session.keySource, "open");
+      assert.equal(session.url, `${BASE}/room/MYNOTES`);
+      assert.equal(session.key.encoded, (await deriveOpenRoomKey("MYNOTES")).encoded);
+    });
+
+    it("creates an --open room with a server-picked code", async () => {
+      const session = await openSession(argsFor(["send", "hi", "--open"]));
+
+      assert.deepEqual(server.creates[0], {});
+      assert.equal(session.code, CODE);
+      assert.equal(session.url, `${BASE}/room/${CODE}`);
+    });
+
+    it("asks twice for --passphrase when creating, and stops on a mismatch", async () => {
+      const prompt = scripted(PASSPHRASE, `${PASSPHRASE}!`);
+
+      await assert.rejects(
+        openSession(argsFor(["send", "hi", "--passphrase"]), prompt),
+        /do not match/,
+      );
+      assert.equal(prompt.asked.length, 2);
+      assert.deepEqual(server.creates, []);
+    });
+
+    it("creates under a generated code with a confirmed --passphrase", async () => {
+      const prompt = scripted(PASSPHRASE, PASSPHRASE);
+
+      const session = await openSession(argsFor(["send", "hi", "--passphrase"]), prompt);
+
+      assert.equal(session.code, server.creates[0].code);
+      const expected = await deriveRoomKeyFromPassphrase(PASSPHRASE, session.code);
+      assert.equal(session.key.encoded, expected.encoded);
+    });
+
+    it("asks once when joining, and the passphrase outranks a saved key", async () => {
+      const saved = await generateRoomKey();
+      await saveRoom(
+        { code: "MYDESK", key: saved.encoded, baseUrl: BASE, savedAt: Date.now() },
+        { CLIPLINK_CONFIG_DIR: dir },
+      );
+      const prompt = scripted(PASSPHRASE);
+
+      const session = await openSession(argsFor(["recv", "-r", "MYDESK", "--passphrase"]), prompt);
+
+      assert.equal(prompt.asked.length, 1);
+      assert.equal(session.keySource, "passphrase");
+      assert.equal(session.key.check, "DWFJZQ0C84238");
+      assert.deepEqual(server.creates, []);
     });
   });
 

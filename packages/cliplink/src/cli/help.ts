@@ -55,12 +55,18 @@ KEYS
     3. --save, then rejoin by code     ~/.config/cliplink/rooms.json, 0600
     4. --key <key>                     lands in shell history and ps
 
+  Or derive the key from a passphrase, so the room opens anywhere from its
+  code and the passphrase alone. --passphrase asks on the terminal (twice
+  when creating); CLIPLINK_PASSPHRASE is the non-interactive route. It is
+  only as strong as it is long: the server holds the key's fingerprint.
+
   --open rooms derive their key from the room code. The server sees the
   code, so those are encrypted at rest but NOT end-to-end.
 
 ENVIRONMENT
   CLIPLINK_ROOM        Default --room
   CLIPLINK_ROOM_KEY    Default --key
+  CLIPLINK_PASSPHRASE  Passphrase to derive the key from
   CLIPLINK_URL         Default --url
   CLIPLINK_CONFIG_DIR  Overrides where --save writes
   NO_COLOR             Set to anything: same as --no-color
@@ -74,6 +80,7 @@ EXAMPLES
   cliplink recv -r X7KP2M --json          one JSON object per clip
   cliplink recv -r X7KP2M --all           everything the room still holds
   cliplink watch                          share this clipboard with a new room
+  cliplink watch --code MYDESK --passphrase   a room you can reopen by name
   cliplink watch -r X7KP2M --recv-only    copy what arrives, send nothing
   cliplink link -r X7KP2M                 re-show the link and QR for a room
   cliplink rooms --prune                  list saved rooms, dropping dead ones

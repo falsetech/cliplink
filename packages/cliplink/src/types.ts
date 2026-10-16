@@ -64,6 +64,13 @@ export type ApiError = {
 };
 
 export type CreateRoomRequest = {
+  /**
+   * The code the creator wants, already canonical. Absent, the server
+   * allocates one. Allowed for an open room too, whose key is its code: a
+   * chosen code there is a key someone else can guess, which the creator is
+   * told before they choose one.
+   */
+  code?: RoomCode;
   ttlSeconds?: number;
   /** Fingerprint of the key the creator generated. Never the key itself. */
   keyCheck?: string;
@@ -234,13 +241,26 @@ export type WsServerMessage =
  * one of these into the plaintext `TransportClient` the UI consumes, so the
  * UI's retry and backoff state machine never learns that encryption happened.
  */
+/**
+ * Which room, of every room that has had a code: its `createdAt`. A room that
+ * expires can be made again under the same code, by anyone, and a request
+ * that names only the code would be answered by whichever room has it now.
+ * Given this, a server answers only from the room it names, and otherwise as
+ * though the room were gone. Ignored by a server that predates it.
+ */
+export type RoomGeneration = number;
+
 export type SealedTransport = {
   connect: (roomCode: RoomCode) => Promise<GetRoomResponse>;
   sendClip: (
     roomCode: RoomCode,
     payload: CreateClipRequest,
   ) => Promise<CreateClipResponse>;
-  pollClips: (roomCode: RoomCode, afterId: number) => Promise<PollClipsResponse>;
+  pollClips: (
+    roomCode: RoomCode,
+    afterId: number,
+    generation?: RoomGeneration,
+  ) => Promise<PollClipsResponse>;
   /** `token` is the room key's erase token, which is what authorises it. */
   eraseClips: (
     roomCode: RoomCode,
@@ -261,6 +281,7 @@ export type SealedTransport = {
       onPeerLeft?: (from: PeerId) => void;
       onDisconnect: (reason: StreamDisconnectReason) => void;
     },
+    generation?: RoomGeneration,
   ) => (() => void) | null;
   /** Synchronous, so a caller can know there is a socket before it seals. */
   canSend: () => boolean;

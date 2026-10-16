@@ -194,7 +194,7 @@ export async function watch(
         send(validated.text);
       });
 
-    const finish = () => {
+    const finish = (code = 0) => {
       if (finished) {
         return;
       }
@@ -211,18 +211,21 @@ export async function watch(
           await Promise.all(pending);
         }
         session.transport.disconnect();
-        resolve(0);
+        resolve(code);
       })();
     };
 
-    signal?.addEventListener("abort", finish, { once: true });
+    signal?.addEventListener("abort", () => finish(), { once: true });
     if (signal?.aborted) {
       finish();
       return;
     }
 
     if (receiving) {
-      stop = listen(session, report, cursor, receive, () => finished);
+      stop = listen(session, report, cursor, receive, () => finished, () => {
+        report.warn(`Room ${session.code} has expired, or its code now belongs to another room.`);
+        finish(1);
+      });
     }
     if (sending) {
       pollTimer = setInterval(() => {

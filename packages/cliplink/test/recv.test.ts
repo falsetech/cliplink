@@ -34,7 +34,11 @@ const BASE = "https://cliplink.test";
 const RETRY_DELAYS_MS = [2_000, 4_000, 8_000, 15_000, 15_000];
 
 function json(body: unknown, status = 200) {
-  return { ok: status >= 200 && status < 300, json: async () => body } as unknown as Response;
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+  } as unknown as Response;
 }
 
 /** The room API, with the clips it holds already sealed. */
@@ -758,6 +762,28 @@ describe("recv", () => {
       server.onPoll = down;
       tick(POLL_INTERVAL_MS);
       await waitFor(() => warns.length === 2, "the second warning");
+    });
+  });
+
+  describe("when the room goes", () => {
+    it("names the room it joined on its socket, so a later room under the code is not mistaken for it", async () => {
+      await start();
+
+      assert.match(FakeSocket.last.url, /created=0\b/);
+    });
+
+    it("stops, says why, and exits 1 rather than polling a room that is not there", async () => {
+      const { warns, result } = await start();
+      FakeSocket.last.fail();
+      server.onPoll = async () =>
+        json({ error: "Room not found.", code: "room_not_found" }, 404);
+
+      tick(POLL_INTERVAL_MS);
+
+      assert.equal(await result, 1);
+      assert.deepEqual(warns, [
+        `Room ${CODE} has expired, or its code now belongs to another room.`,
+      ]);
     });
   });
 

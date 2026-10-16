@@ -26,22 +26,90 @@ function resolveEraseCheck(source: EraseCheckSource | undefined, code: string) {
   return typeof source === "function" ? source(code) : source;
 }
 
-type StorageAdapter = {
+export type CreateRoomParams = {
+  /** Claim exactly this code. Absent, one is allocated. */
+  code?: string;
+  ttlSeconds?: number;
+  keyCheck?: string;
   /**
-   * `eraseCheck` may be a function of the room code, for the one kind of room
-   * whose check depends on a code that does not exist until this allocates it.
+   * May be a function of the room code, for the one kind of room whose check
+   * depends on a code that does not exist until this allocates it.
    */
-  createRoom(
-    ttlSeconds?: number,
-    keyCheck?: string,
-    eraseCheck?: EraseCheckSource,
-  ): Promise<Room>;
+  eraseCheck?: EraseCheckSource;
+};
+
+/** The code asked for belongs to a room that is still alive. */
+export class RoomCodeTakenError extends Error {
+  constructor(code: string) {
+    super(`Room code ${code} is taken`);
+    this.name = "RoomCodeTakenError";
+  }
+}
+
+/** Everything a new room is written with. */
+type NewRoom = {
+  code: string;
+  createdAt: number;
+  ttlSeconds: number;
+  keyCheck: string | null;
+  eraseCheck: string | null;
+};
+
+/**
+ * Writes a room under its code only if no live room holds that code, as one
+ * step. False means taken. Both allocation and a chosen code go through this,
+ * so neither can overwrite a room another request created a moment earlier.
+ */
+type ClaimRoom = (room: NewRoom) => Promise<boolean>;
+
+const ALLOCATION_ATTEMPTS = 10;
+
+async function createRoomWith(
+  claim: ClaimRoom,
+  { code, ttlSeconds = ROOM_TTL_SECONDS, keyCheck, eraseCheck }: CreateRoomParams,
+): Promise<Room> {
+  const attempts = code ? 1 : ALLOCATION_ATTEMPTS;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const candidate = code ?? generateRoomCode();
+    const room: NewRoom = {
+      code: candidate,
+      createdAt: Date.now(),
+      ttlSeconds,
+      keyCheck: keyCheck ?? null,
+      // Resolved before the claim, so the claim itself has nothing to wait on.
+      eraseCheck: (await resolveEraseCheck(eraseCheck, candidate)) ?? null,
+    };
+    if (await claim(room)) {
+      return {
+        code: room.code,
+        createdAt: room.createdAt,
+        ttlSeconds,
+        keyCheck: room.keyCheck,
+        clips: [],
+      };
+    }
+  }
+
+  if (code) {
+    throw new RoomCodeTakenError(code);
+  }
+  throw new Error("Failed to allocate a unique room code");
+}
+
+type StorageAdapter = {
+  /** Throws `RoomCodeTakenError` when a chosen `code` is in use. */
+  createRoom(params?: CreateRoomParams): Promise<Room>;
   getRoom(code: string): Promise<StoredRoom | null>;
   appendClip(code: string, clip: Clip): Promise<Room | null>;
+  /**
+   * `createdAt` comes with the clips because it is what tells one room from
+   * the next one made under the same code once the first has expired — the
+   * code alone cannot.
+   */
   getClipsAfter(
     code: string,
     afterId: number,
-  ): Promise<{ clips: Clip[]; eraseGen: number } | null>;
+  ): Promise<{ clips: Clip[]; eraseGen: number; createdAt: number } | null>;
   /**
    * Removes clips and counts the deletion. Like every read, and unlike
    * `appendClip`, it must not extend the room's TTL: taking things out of a
@@ -117,29 +185,26 @@ function readMemoryMeta(code: string): MemoryMeta | null {
   return meta;
 }
 
-const memoryAdapter: StorageAdapter = {
-  async createRoom(ttlSeconds = ROOM_TTL_SECONDS, keyCheck, eraseCheck) {
-    const store = getMemoryMetaStore();
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      const code = generateRoomCode();
-      if (!readMemoryMeta(code)) {
-        const createdAt = Date.now();
-        store.set(code, {
-          code,
-          createdAt,
-          ttlSeconds,
-          keyCheck: keyCheck ?? null,
-          eraseCheck: (await resolveEraseCheck(eraseCheck, code)) ?? null,
-          eraseGen: 0,
-          expiresAt: createdAt + ttlSeconds * 1000,
-        });
-        getMemoryClipsStore().set(code, []);
-        return { code, createdAt, ttlSeconds, keyCheck: keyCheck ?? null, clips: [] };
-      }
-    }
+/**
+ * Synchronous from the check to the write, which on one event loop is what
+ * makes it a single step: no other request can run in between.
+ */
+async function claimMemoryRoom(room: NewRoom) {
+  if (readMemoryMeta(room.code)) {
+    return false;
+  }
 
-    throw new Error("Failed to allocate a unique room code");
-  },
+  getMemoryMetaStore().set(room.code, {
+    ...room,
+    eraseGen: 0,
+    expiresAt: room.createdAt + room.ttlSeconds * 1000,
+  });
+  getMemoryClipsStore().set(room.code, []);
+  return true;
+}
+
+const memoryAdapter: StorageAdapter = {
+  createRoom: (params = {}) => createRoomWith(claimMemoryRoom, params),
 
   async getRoom(code) {
     const meta = readMemoryMeta(code);
@@ -188,6 +253,7 @@ const memoryAdapter: StorageAdapter = {
     return {
       clips: clips.filter((clip) => clip.id > afterId).sort((a, b) => a.id - b.id),
       eraseGen: meta.eraseGen,
+      createdAt: meta.createdAt,
     };
   },
 
@@ -302,35 +368,56 @@ end
 return {tostring(gen), removed}
 `;
 
+/**
+ * Claims a room code: check, write, expire, as one script. As separate
+ * commands, two creators could both see the code free and the second would
+ * overwrite the first's key fingerprint — and a crash between the write and
+ * the expire would leave a room that never expires. A clip list left behind
+ * under the code is dropped, so a claimed room starts empty.
+ *
+ * KEYS: meta, clips. ARGV: code, createdAt, ttlSeconds, keyCheck, eraseCheck.
+ * Returns 1 when claimed, 0 when the code is taken.
+ */
+const CLAIM_ROOM_SCRIPT = `
+if redis.call('EXISTS', KEYS[1]) == 1 then
+  return 0
+end
+redis.call('HSET', KEYS[1],
+  'code', ARGV[1],
+  'createdAt', ARGV[2],
+  'ttlSeconds', ARGV[3],
+  'keyCheck', ARGV[4],
+  'eraseCheck', ARGV[5],
+  'eraseGen', '0')
+redis.call('EXPIRE', KEYS[1], ARGV[3])
+redis.call('DEL', KEYS[2])
+return 1
+`;
+
 function createRedisAdapter(): StorageAdapter {
   return {
-    async createRoom(ttlSeconds = ROOM_TTL_SECONDS, keyCheck, eraseCheck) {
+    async createRoom(params = {}) {
       const redis = getRedis();
       if (!redis) {
         throw new Error("Redis client unavailable");
       }
 
-      for (let attempt = 0; attempt < 10; attempt += 1) {
-        const code = generateRoomCode();
-        const exists = await redis.exists(metaKey(code));
-        if (!exists) {
-          const createdAt = Date.now();
-          await redis.hset(metaKey(code), {
-            code,
-            createdAt,
-            ttlSeconds,
-            // Empty rather than absent: hset cannot store undefined, and an
-            // empty string reads back as "this room has no key".
-            keyCheck: keyCheck ?? "",
-            eraseCheck: (await resolveEraseCheck(eraseCheck, code)) ?? "",
-            eraseGen: 0,
-          });
-          await redis.expire(metaKey(code), ttlSeconds);
-          return { code, createdAt, ttlSeconds, keyCheck: keyCheck ?? null, clips: [] };
-        }
-      }
-
-      throw new Error("Failed to allocate a unique room code");
+      return createRoomWith(async (room) => {
+        const claimed = await redis.eval<string[], number>(
+          CLAIM_ROOM_SCRIPT,
+          [metaKey(room.code), clipsKey(room.code)],
+          [
+            room.code,
+            String(room.createdAt),
+            String(room.ttlSeconds),
+            // Empty rather than absent: an empty string reads back as "this
+            // room has no key".
+            room.keyCheck ?? "",
+            room.eraseCheck ?? "",
+          ],
+        );
+        return Number(claimed) === 1;
+      }, params);
     },
 
     async getRoom(code) {
@@ -340,14 +427,16 @@ function createRedisAdapter(): StorageAdapter {
       }
 
       const meta = await redis.hgetall<{
-        code: string;
+        code: unknown;
         createdAt: number;
         ttlSeconds: number;
         keyCheck?: string;
         eraseCheck?: string;
         eraseGen?: number;
       }>(metaKey(code));
-      if (!meta || !meta.code) {
+      // Present or absent, not truthy: the client parses what it reads back
+      // as JSON, and a chosen code like 0E0000 comes back as the number 0.
+      if (meta?.code == null) {
         return null;
       }
 
@@ -358,7 +447,10 @@ function createRedisAdapter(): StorageAdapter {
         .sort((a, b) => a.id - b.id);
 
       return {
-        code: meta.code,
+        // The code asked for, not the stored copy: the client parses what it
+        // reads back as JSON, and a code of digits alone would come back as a
+        // number — rounded, past sixteen of them.
+        code,
         createdAt: Number(meta.createdAt),
         ttlSeconds: Number(meta.ttlSeconds),
         keyCheck: meta.keyCheck ? String(meta.keyCheck) : null,
@@ -398,14 +490,16 @@ function createRedisAdapter(): StorageAdapter {
         throw new Error("Redis client unavailable");
       }
 
-      // The existence check and the deletion count in one read: `code` is
-      // on every room, so a null there is a room that is gone.
-      const meta = await redis.hmget<{ code: string | null; eraseGen: number | null }>(
-        metaKey(code),
-        "code",
-        "eraseGen",
-      );
-      if (!meta || !meta.code) {
+      // The existence check, the deletion count and which room this is, in
+      // one read: `code` is on every room, so a null there is a room that is
+      // gone.
+      const meta = await redis.hmget<{
+        code: unknown;
+        eraseGen: number | null;
+        createdAt: number | null;
+      }>(metaKey(code), "code", "eraseGen", "createdAt");
+      // See getRoom: present, not truthy.
+      if (meta?.code == null) {
         return null;
       }
 
@@ -418,6 +512,7 @@ function createRedisAdapter(): StorageAdapter {
           .filter((clip): clip is Clip => clip !== null)
           .sort((a, b) => a.id - b.id),
         eraseGen: Number(meta.eraseGen ?? 0) || 0,
+        createdAt: Number(meta.createdAt ?? 0),
       };
     },
 
@@ -487,8 +582,7 @@ function activeAdapter(): StorageAdapter {
 }
 
 export const storage: StorageAdapter = {
-  createRoom: (ttlSeconds, keyCheck, eraseCheck) =>
-    activeAdapter().createRoom(ttlSeconds, keyCheck, eraseCheck),
+  createRoom: (params) => activeAdapter().createRoom(params),
   getRoom: (code) => activeAdapter().getRoom(code),
   appendClip: (code, clip) => activeAdapter().appendClip(code, clip),
   getClipsAfter: (code, afterId) => activeAdapter().getClipsAfter(code, afterId),
