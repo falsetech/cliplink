@@ -95,7 +95,10 @@ export async function recv(
       }, seconds * 1000);
     }
 
-    stop = listen(session, report, cursor, emit, () => finished);
+    stop = listen(session, report, cursor, emit, () => finished, () => {
+      report.warn(`Room ${session.code} has expired, or its code now belongs to another room.`);
+      finish(1);
+    });
   });
 }
 

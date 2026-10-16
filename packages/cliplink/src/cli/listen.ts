@@ -1,4 +1,4 @@
-import { POLL_INTERVAL_MS, type Clip } from "../index.ts";
+import { POLL_INTERVAL_MS, RoomGoneError, type Clip } from "../index.ts";
 
 import type { ParsedArgs } from "./args.ts";
 import { createRandomPeerId } from "./identity.ts";
@@ -74,6 +74,11 @@ export function listen(
   cursor: Cursor,
   emit: (clips: Clip[]) => void,
   isFinished: () => boolean,
+  /**
+   * The room expired, or another room took its code. Not a failure to wait
+   * out like the rest: there is nothing left here to reach.
+   */
+  onGone: () => void,
 ): Stop {
   const peerId = createRandomPeerId();
   let streamCleanup: (() => void) | null = null;
@@ -103,6 +108,11 @@ export function listen(
       }
       emit(clips);
     } catch (error) {
+      if (error instanceof RoomGoneError) {
+        stopPolling();
+        onGone();
+        return;
+      }
       // Once per run of failures, not once per poll. A server that is down
       // stays down, and a line every 1.5s for as long as that lasts buries
       // the clips in the scrollback and the first line that said why.

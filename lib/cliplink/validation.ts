@@ -13,6 +13,7 @@ export {
   validateKeyCheck,
   validatePassphrase,
   validatePeerId,
+  readRoomGeneration,
   validateRequestedRoomCode,
   validateRoomCode,
   validateRoomTtl,

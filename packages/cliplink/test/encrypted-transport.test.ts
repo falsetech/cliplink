@@ -14,10 +14,12 @@ import {
 } from "../src/crypto.ts";
 import {
   createEncryptedTransport,
+  RoomGoneError,
   RoomIsOpenError,
   RoomKeyMismatchError,
   UNDECRYPTABLE_TEXT,
 } from "../src/encrypted-transport.ts";
+import { ApiRequestError } from "../src/http.ts";
 import { CIPHERTEXT_PATTERN } from "../src/protocol.ts";
 import type { Clip, GetRoomResponse, SealedTransport, SignalPayload } from "../src/types.ts";
 import { settle, waitFor } from "./support.ts";
@@ -38,7 +40,9 @@ function fakeWire() {
     room: { code: ROOM, createdAt: 0, ttlSeconds: 21_600 } as GetRoomResponse["room"],
     roomClips: [] as Clip[],
     polled: [] as Clip[],
-    pollArgs: [] as Array<{ code: string; afterId: number }>,
+    pollArgs: [] as Array<{ code: string; afterId: number; generation?: number }>,
+    /** Answer polls as a server whose room under this code is gone. */
+    pollGone: false,
     canSend: true,
     sentClips: [] as Array<{
       code: string;
@@ -55,7 +59,12 @@ function fakeWire() {
     connects: 0,
     erases: [] as Array<{ code: string; token: string; request: unknown }>,
     eraseResponse: { ids: [] as number[], gen: 0 },
-    streamArgs: null as { code: string; afterId: number; peerId: string } | null,
+    streamArgs: null as {
+      code: string;
+      afterId: number;
+      peerId: string;
+      generation?: number;
+    } | null,
     handlers: null as Handlers | null,
     streamReturn: (() => {}) as (() => void) | null,
     disconnects: 0,
@@ -84,15 +93,27 @@ function fakeWire() {
         expiresAt: 4_242,
       };
     },
-    async pollClips(code, afterId) {
-      state.pollArgs.push({ code, afterId });
+    async pollClips(code, afterId, generation) {
+      state.pollArgs.push({
+        code,
+        afterId,
+        ...(generation === undefined ? {} : { generation }),
+      });
+      if (state.pollGone) {
+        throw new ApiRequestError("Room not found.", 404, "room_not_found");
+      }
       return {
         clips: state.polled,
         ...(state.pollGen === undefined ? {} : { eraseGen: state.pollGen }),
       };
     },
-    streamClips(code, afterId, peerId, handlers) {
-      state.streamArgs = { code, afterId, peerId };
+    streamClips(code, afterId, peerId, handlers, generation) {
+      state.streamArgs = {
+        code,
+        afterId,
+        peerId,
+        ...(generation === undefined ? {} : { generation }),
+      };
       state.handlers = handlers;
       return state.streamReturn;
     },
@@ -807,6 +828,48 @@ describe("createEncryptedTransport", () => {
       assert.equal(clips[0].text, UNDECRYPTABLE_TEXT);
       assert.equal("from" in clips[0], false);
       assert.equal("meta" in clips[0], false);
+    });
+  });
+
+  describe("which room", () => {
+    it("names the room it connected to on every poll and socket after", async () => {
+      const { transport, state } = setup();
+      state.room = { ...state.room, createdAt: 1_700_000_123 };
+      await transport.connect(ROOM);
+
+      await transport.pollClips(ROOM, 6);
+      stream(transport);
+
+      assert.deepEqual(state.pollArgs, [
+        { code: ROOM, afterId: 6, generation: 1_700_000_123 },
+      ]);
+      assert.equal(state.streamArgs?.generation, 1_700_000_123);
+    });
+
+    it("names no room before it has connected to one", async () => {
+      const { transport, state } = setup();
+
+      await transport.pollClips(ROOM, 0);
+
+      assert.deepEqual(state.pollArgs, [{ code: ROOM, afterId: 0 }]);
+    });
+
+    it("forgets the room when the code changes", async () => {
+      const { transport, state } = setup();
+      state.room = { ...state.room, createdAt: 1_700_000_123 };
+      await transport.connect(ROOM);
+
+      transport.setRoomKey(OTHER_ROOM, key);
+      await transport.pollClips(OTHER_ROOM, 0);
+
+      assert.deepEqual(state.pollArgs, [{ code: OTHER_ROOM, afterId: 0 }]);
+    });
+
+    it("says a room is gone when a poll finds it gone", async () => {
+      const { transport, state } = setup();
+      state.pollGone = true;
+
+      await assert.rejects(transport.pollClips(ROOM, 0), RoomGoneError);
     });
   });
 

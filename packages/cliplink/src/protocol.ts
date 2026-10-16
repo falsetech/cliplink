@@ -77,3 +77,6 @@ export const CIPHERTEXT_PATTERN = /^v1\.[A-Za-z0-9_-]+$/;
  * not left — its other socket is already open — so no `peer-left` goes out.
  */
 export const SOCKET_HANDOFF_CLOSE_CODE = 4001;
+
+/** The query parameter a poll or socket names its room's generation in. */
+export const ROOM_GENERATION_PARAM = "created";

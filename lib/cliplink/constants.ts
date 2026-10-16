@@ -105,3 +105,10 @@ export const SOCKET_HANDOFF_LEAD_MS = 30_000;
  * any other way has no such limit, and its sockets are left alone.
  */
 export const SOCKET_ASSUMED_MAX_DURATION_MS = 300_000;
+/**
+ * How often a socket checks that its room is still the one it opened on. A
+ * socket is subscribed by code, and a room that expires can be made again
+ * under the same code by anyone; without a look, a socket held open across
+ * that would carry the new room's traffic as though nothing had changed.
+ */
+export const SOCKET_ROOM_CHECK_MS = 30_000;

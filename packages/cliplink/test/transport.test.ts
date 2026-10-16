@@ -64,6 +64,15 @@ describe("createHttpClient", () => {
     assert.equal(calls[1].url, "https://second.example/rooms/X7KP2M/clips?after=7");
   });
 
+  it("names the room's generation on a poll, when given one", async () => {
+    const { calls, fetchImpl } = recordingFetch({ clips: [] });
+    const client = createHttpClient({ baseUrl: BASE, fetch: fetchImpl });
+
+    await client.pollClipsRequest("X7KP2M", 7, 1_700_000_123);
+
+    assert.equal(calls[0].url, `${BASE}/rooms/X7KP2M/clips?after=7&created=1700000123`);
+  });
+
   it("posts a clip as JSON", async () => {
     const { calls, fetchImpl } = recordingFetch({ clip: { id: 1 } });
     const client = createHttpClient({ baseUrl: BASE, fetch: fetchImpl });
@@ -288,6 +297,26 @@ function connect(baseUrl: string) {
 }
 
 describe("createWebSocketTransport", () => {
+  it("names the room's generation, when given one, on every socket", () => {
+    const transport = createWebSocketTransport({
+      baseUrl: BASE,
+      WebSocket: FakeSocket as unknown as typeof globalThis.WebSocket,
+    });
+    transport.streamClips(
+      "X7KP2M",
+      12,
+      "peer-abcdef",
+      { onClips: () => {}, onDisconnect: () => {} },
+      1_700_000_123,
+    );
+
+    assert.equal(
+      FakeSocket.last?.url,
+      "wss://cliplink.example/rooms/X7KP2M/socket?after=12&peer=peer-abcdef&created=1700000123",
+    );
+    transport.disconnect();
+  });
+
   it("upgrades https to wss against the configured origin", () => {
     const { socket } = connect(BASE);
     assert.equal(

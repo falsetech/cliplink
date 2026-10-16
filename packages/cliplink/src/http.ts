@@ -9,8 +9,10 @@ import type {
   GetRoomResponse,
   PollClipsResponse,
   RoomCode,
+  RoomGeneration,
   TransportOptions,
 } from "./types.ts";
+import { ROOM_GENERATION_PARAM } from "./protocol.ts";
 
 /** Resolved per call, so a lazy origin stays lazy. See `TransportOptions`. */
 export function resolveBaseUrl(baseUrl: TransportOptions["baseUrl"]) {
@@ -70,6 +72,7 @@ export type HttpClient = {
   pollClipsRequest: (
     roomCode: RoomCode,
     afterId: number,
+    generation?: RoomGeneration,
   ) => Promise<PollClipsResponse>;
   eraseClipsRequest: (
     roomCode: RoomCode,
@@ -114,9 +117,13 @@ export function createHttpClient({
       return parseResponse<CreateClipResponse>(response);
     },
 
-    async pollClipsRequest(roomCode, afterId) {
+    async pollClipsRequest(roomCode, afterId, generation) {
+      const params = new URLSearchParams({ after: String(afterId) });
+      if (generation !== undefined) {
+        params.set(ROOM_GENERATION_PARAM, String(generation));
+      }
       const response = await fetchImpl(
-        url(`/rooms/${roomCode}/clips?after=${afterId}`),
+        url(`/rooms/${roomCode}/clips?${params}`),
         { cache: "no-store" },
       );
       return parseResponse<PollClipsResponse>(response);

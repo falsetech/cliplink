@@ -101,10 +101,15 @@ type StorageAdapter = {
   createRoom(params?: CreateRoomParams): Promise<Room>;
   getRoom(code: string): Promise<StoredRoom | null>;
   appendClip(code: string, clip: Clip): Promise<Room | null>;
+  /**
+   * `createdAt` comes with the clips because it is what tells one room from
+   * the next one made under the same code once the first has expired — the
+   * code alone cannot.
+   */
   getClipsAfter(
     code: string,
     afterId: number,
-  ): Promise<{ clips: Clip[]; eraseGen: number } | null>;
+  ): Promise<{ clips: Clip[]; eraseGen: number; createdAt: number } | null>;
   /**
    * Removes clips and counts the deletion. Like every read, and unlike
    * `appendClip`, it must not extend the room's TTL: taking things out of a
@@ -248,6 +253,7 @@ const memoryAdapter: StorageAdapter = {
     return {
       clips: clips.filter((clip) => clip.id > afterId).sort((a, b) => a.id - b.id),
       eraseGen: meta.eraseGen,
+      createdAt: meta.createdAt,
     };
   },
 
@@ -484,13 +490,14 @@ function createRedisAdapter(): StorageAdapter {
         throw new Error("Redis client unavailable");
       }
 
-      // The existence check and the deletion count in one read: `code` is
-      // on every room, so a null there is a room that is gone.
-      const meta = await redis.hmget<{ code: unknown; eraseGen: number | null }>(
-        metaKey(code),
-        "code",
-        "eraseGen",
-      );
+      // The existence check, the deletion count and which room this is, in
+      // one read: `code` is on every room, so a null there is a room that is
+      // gone.
+      const meta = await redis.hmget<{
+        code: unknown;
+        eraseGen: number | null;
+        createdAt: number | null;
+      }>(metaKey(code), "code", "eraseGen", "createdAt");
       // See getRoom: present, not truthy.
       if (meta?.code == null) {
         return null;
@@ -505,6 +512,7 @@ function createRedisAdapter(): StorageAdapter {
           .filter((clip): clip is Clip => clip !== null)
           .sort((a, b) => a.id - b.id),
         eraseGen: Number(meta.eraseGen ?? 0) || 0,
+        createdAt: Number(meta.createdAt ?? 0),
       };
     },
 

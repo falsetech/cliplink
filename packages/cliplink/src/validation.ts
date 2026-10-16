@@ -16,6 +16,7 @@ import {
   MAX_SIGNAL_BYTES,
   MIN_ROOM_CODE_LENGTH,
   MIN_ROOM_TTL_SECONDS,
+  ROOM_GENERATION_PARAM,
   ROOM_KEY_CHECK_CHARS,
   ROOM_TTL_SECONDS,
 } from "./protocol.ts";
@@ -57,6 +58,21 @@ export function validateRequestedRoomCode(input: unknown) {
 }
 
 export { validatePassphrase } from "./passphrase.ts";
+
+/**
+ * The room a poll or socket names, from its query string: a `createdAt`, or
+ * null when none was given — a client that predates it, which gets whatever
+ * room has the code, as it always did.
+ */
+export function readRoomGeneration(params: URLSearchParams) {
+  const raw = params.get(ROOM_GENERATION_PARAM);
+  // Empty is absent, not zero, which is what Number would make of it.
+  if (!raw) {
+    return null;
+  }
+  const generation = Number(raw);
+  return Number.isSafeInteger(generation) && generation >= 0 ? generation : null;
+}
 
 /**
  * All the server can check. It holds ciphertext it cannot open, so "is this

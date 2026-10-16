@@ -20,6 +20,7 @@ import type {
 } from "@/lib/cliplink/types";
 import {
   parseEraseRequest,
+  readRoomGeneration,
   validateClipBurn,
   validateClipCiphertext,
   validateClipMeta,
@@ -41,8 +42,10 @@ export async function GET(
     return errorResponse(400, "invalid_room_code", "Invalid room code.");
   }
 
-  const after = Number(new URL(request.url).searchParams.get("after") ?? "0");
+  const { searchParams } = new URL(request.url);
+  const after = Number(searchParams.get("after") ?? "0");
   const afterId = Number.isFinite(after) && after >= 0 ? after : 0;
+  const generation = readRoomGeneration(searchParams);
 
   let found;
   try {
@@ -51,11 +54,16 @@ export async function GET(
     return storageErrorResponse(error);
   }
 
-  if (!found) {
+  // A room under this code that is not the one asked about is, to the asker,
+  // a room that is gone: theirs expired, and someone made another.
+  if (!found || (generation !== null && found.createdAt !== generation)) {
     return errorResponse(404, "room_not_found", "Room not found.");
   }
 
-  const response: PollClipsResponse = found;
+  const response: PollClipsResponse = {
+    clips: found.clips,
+    eraseGen: found.eraseGen,
+  };
   return noStoreJson(response);
 }
 

@@ -31,6 +31,7 @@ import {
   validateKeyCheck,
   validatePeerId,
   validatePassphrase,
+  readRoomGeneration,
   validateRequestedRoomCode,
   validateRoomCode,
   validateRoomTtl,
@@ -78,6 +79,18 @@ describe("validateRequestedRoomCode", () => {
     assert.deepEqual(validateRequestedRoomCode("MYDESK"), { ok: true, code: "MYDESK" });
     for (const input of ["mydesk", "MY-DESK", "ABC", "A".repeat(17), ...NOT_STRINGS]) {
       assert.equal(validateRequestedRoomCode(input).ok, false, String(input));
+    }
+  });
+});
+
+describe("readRoomGeneration", () => {
+  const read = (query: string) => readRoomGeneration(new URLSearchParams(query));
+
+  it("reads a creation time, and nothing else, as the room asked about", () => {
+    assert.equal(read("created=1700000123"), 1_700_000_123);
+    assert.equal(read("after=4"), null);
+    for (const bad of ["created=", "created=abc", "created=-1", "created=1.5", "created=1e400"]) {
+      assert.equal(read(bad), null, bad);
     }
   });
 });

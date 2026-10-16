@@ -260,6 +260,11 @@ export default function CliplinkApp({
       files.announce();
     },
     onRealtimeClose: () => presence.reset(),
+    onRoomGone: () =>
+      leaveRoom(
+        "This room has expired, or its code now belongs to another room.",
+        "error",
+      ),
     onSignal: (from, payload) => {
       presence.handleSignal(from, payload);
       files.handleSignal(from, payload);
@@ -801,7 +806,10 @@ export default function CliplinkApp({
     leaveRoom();
   }
 
-  function leaveRoom() {
+  function leaveRoom(
+    message = "Left room.",
+    tone: "info" | "error" = "info",
+  ) {
     files.reset();
     room.leave();
     editor.reset();
@@ -813,7 +821,7 @@ export default function CliplinkApp({
     setRoomKeyEncoded(null);
     setOpenRoom(false);
     updateUrl(null, null);
-    pushToast("Left room.", "info");
+    pushToast(message, tone);
   }
 
   async function sendClip() {

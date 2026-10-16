@@ -27,6 +27,7 @@ export {
 } from "./crypto.ts";
 export {
   createEncryptedTransport,
+  RoomGoneError,
   RoomIsOpenError,
   RoomKeyMismatchError,
   UNDECRYPTABLE_TEXT,
@@ -71,6 +72,7 @@ export {
   MIN_ROOM_TTL_SECONDS,
   POLL_INTERVAL_MS,
   ROOM_CODE_LENGTH,
+  ROOM_GENERATION_PARAM,
   ROOM_KEY_CHARS,
   ROOM_KEY_CHECK_CHARS,
   ROOM_TTL_SECONDS,
@@ -82,6 +84,7 @@ export {
   parseClipMeta,
   parseEraseRequest,
   parseSignalPayload,
+  readRoomGeneration,
   validateClipBurn,
   validateClipCiphertext,
   validateClipMeta,
@@ -114,6 +117,7 @@ export type {
   Room,
   RoomCapability,
   RoomCode,
+  RoomGeneration,
   RoomStatus,
   RtcCandidate,
   RtcDescription,
